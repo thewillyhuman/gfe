@@ -1,0 +1,32 @@
+# Build artifacts
+/target
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rust
+**/*.rs.bk
+
+# Environment
+.env
+.env.*
+.claude/
+
+# Local certs & working config — dummy/self-signed material, never commit keys.
+# The committed examples are config/gfe.example.toml + config/gfe-dynamic.example.json.
+*.pem
+*.key
+/config/certs/
+/config/gfe-dynamic.json
+
+# Local state
+/var

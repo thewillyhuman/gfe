@@ -1,0 +1,46 @@
+# GFE Node Configuration (bootstrap)
+# Deserialized by gfe-types/src/config.rs (NodeConfig).
+#
+# The hot-reloadable part (listeners, routes, pools, certificates) lives in the
+# JSON file referenced by [control_plane].config_file — see
+# config/gfe-dynamic.example.json.
+
+[node]
+id            = "gfe-node-01"
+loopback_vip  = "188.184.100.10"      # service VIP on this node's loopback (DSR; see spec §11)
+metrics_addr  = "127.0.0.1:9101"      # /healthz, /readyz, /metrics; use 0.0.0.0:9101 for remote scrape
+worker_threads = 0                     # 0 = Tokio default (= number of CPUs)
+
+[control_plane]
+config_file     = "/Users/gfacundo/repos/github.com/thewillyhuman/gfe/config/gfe-dynamic.json"   # listeners/routes/pools/certs; watched via inotify
+local_cache     = "/tmp/gfe-config-cache.json"
+reload_debounce = "250ms"
+
+[tls]
+min_version = "1.2"                     # "1.2" or "1.3"
+hsts        = "max-age=31536000; includeSubDomains"
+# ticket_key_file = "/etc/gfe/tls-ticket-keys"   # fleet-shared resumption keys (Phase 3)
+
+[limits]
+max_connections           = 100000
+max_connections_listener  = 50000
+max_header_bytes          = 65536
+max_h2_concurrent_streams = 256
+max_upstream_connections  = 20000
+
+[timeouts]
+tls_handshake       = "10s"
+request_header      = "10s"
+upstream_connect    = "3s"
+upstream_first_byte = "30s"
+request_total       = "60s"
+client_idle         = "75s"
+drain_deadline      = "30s"
+
+[health_check_defaults]
+type                = "http"
+interval            = "5s"
+timeout             = "2s"
+healthy_threshold   = 2
+unhealthy_threshold = 3
+path                = "/healthz"

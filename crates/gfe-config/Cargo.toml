@@ -1,0 +1,24 @@
+[package]
+name = "gfe-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gfe-types = { workspace = true }
+gfe-router = { workspace = true }
+gfe-tls = { workspace = true }
+gfe-upstream = { workspace = true }
+gfe-proxy = { workspace = true }
+gfe-metrics = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+arc-swap = { workspace = true }
+notify = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+rcgen = { workspace = true }

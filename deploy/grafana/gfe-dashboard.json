@@ -1,0 +1,147 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "schemaVersion": 39,
+  "title": "GFE — General Front End",
+  "tags": ["gfe", "proxy", "tls"],
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(gfe_connections_active, instance)",
+        "refresh": 2,
+        "includeAll": true
+      },
+      {
+        "name": "host",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(gfe_requests_total{instance=~\"$instance\"}, host)",
+        "refresh": 2,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "pool",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(gfe_upstream_requests_total{instance=~\"$instance\"}, pool)",
+        "refresh": 2,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "title": "Request rate by route", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (route) (rate(gfe_requests_total{instance=~\"$instance\", host=~\"$host\"}[1m]))", "legendFormat": "{{route}}" }
+      ]
+    },
+    {
+      "id": 2, "title": "Request rate by host (DNS alias)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (host) (rate(gfe_requests_total{instance=~\"$instance\"}[1m]))", "legendFormat": "{{host}}" }
+      ]
+    },
+    {
+      "id": 3, "title": "Request p95 latency by route", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, route) (rate(gfe_request_duration_seconds_bucket{instance=~\"$instance\", host=~\"$host\"}[5m])))", "legendFormat": "{{route}}" }
+      ]
+    },
+    {
+      "id": 4, "title": "5xx rate by route", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (route) (rate(gfe_requests_total{instance=~\"$instance\", status=~\"5..\"}[1m]))", "legendFormat": "{{route}}" }
+      ]
+    },
+    {
+      "id": 5, "title": "Active connections", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "gfe_connections_active{instance=~\"$instance\"}", "legendFormat": "{{instance}}" } ]
+    },
+    {
+      "id": 6, "title": "TLS handshakes/s by result", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "sum by (result) (rate(gfe_tls_handshakes_total{instance=~\"$instance\"}[1m]))", "legendFormat": "{{result}}" } ]
+    },
+    {
+      "id": 7, "title": "TLS handshake p95", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "histogram_quantile(0.95, sum by (le) (rate(gfe_tls_handshake_duration_seconds_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "p95" } ]
+    },
+    {
+      "id": 8, "title": "Upstream request rate by backend", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (pool, backend) (rate(gfe_upstream_requests_total{instance=~\"$instance\", pool=~\"$pool\"}[1m]))", "legendFormat": "{{pool}}/{{backend}}" }
+      ]
+    },
+    {
+      "id": 9, "title": "Upstream p95 latency by backend", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, backend) (rate(gfe_upstream_request_duration_seconds_bucket{instance=~\"$instance\", pool=~\"$pool\"}[5m])))", "legendFormat": "{{backend}}" }
+      ]
+    },
+    {
+      "id": 10, "title": "Upstream 5xx + connect errors", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (backend) (rate(gfe_upstream_requests_total{instance=~\"$instance\", pool=~\"$pool\", status=~\"5..\"}[1m]))", "legendFormat": "5xx {{backend}}" },
+        { "expr": "sum(rate(gfe_upstream_connect_errors_total{instance=~\"$instance\"}[1m]))", "legendFormat": "connect errors" },
+        { "expr": "sum(rate(gfe_no_healthy_upstream_total{instance=~\"$instance\"}[1m]))", "legendFormat": "no healthy upstream" }
+      ]
+    },
+    {
+      "id": 11, "title": "Backend health (1=healthy)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "gfe_backend_health_status{instance=~\"$instance\", pool=~\"$pool\"}", "legendFormat": "{{pool}}/{{backend}}" }
+      ]
+    },
+    {
+      "id": 12, "title": "Days until cert expiry", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "d" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "(gfe_cert_expiry_timestamp{instance=~\"$instance\"} - time()) / 86400", "legendFormat": "{{sni}}" } ]
+    },
+    {
+      "id": 13, "title": "Config reload errors (total)", "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "sum(gfe_config_reload_errors_total{instance=~\"$instance\"})" } ]
+    },
+    {
+      "id": 14, "title": "Draining backends", "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "sum(gfe_backend_draining{instance=~\"$instance\"})" } ]
+    }
+  ]
+}

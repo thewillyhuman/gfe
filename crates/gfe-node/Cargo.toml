@@ -1,0 +1,40 @@
+[package]
+name = "gfe-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "gfe-node"
+path = "src/main.rs"
+
+[dependencies]
+gfe-types = { workspace = true }
+gfe-config = { workspace = true }
+gfe-controller = { workspace = true }
+gfe-proxy = { workspace = true }
+gfe-metrics = { workspace = true }
+gfe-tls = { workspace = true }
+gfe-router = { workspace = true }
+gfe-upstream = { workspace = true }
+tokio = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+arc-swap = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+gfe-health = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+tokio-rustls = { workspace = true }
+http = { workspace = true }
+webpki-roots = { workspace = true }

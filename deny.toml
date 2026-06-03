@@ -1,0 +1,82 @@
+# cargo-deny configuration. See https://embarkstudios.github.io/cargo-deny/
+#
+# Run locally with `cargo deny check`. CI runs the same command in
+# `.github/workflows/supply-chain.yml`.
+
+[graph]
+# Restrict checks to the targets we actually ship to. This avoids dragging
+# in Windows-only / WASM-only deps when evaluating advisories or licenses.
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "aarch64-apple-darwin" },
+]
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/RustSec/advisory-db"]
+yanked = "deny"
+# Each entry below is a transitive `unmaintained` we cannot fix without
+# changing a top-level dep. Reviewed and accepted at PR time; revisit on
+# every quarterly dep audit (`cargo deny check 2>&1 | grep -i RUSTSEC`).
+ignore = [
+    # `instant` unmaintained; pulled in by `notify` 7.0.0 → `notify-types`.
+    # Resolves when upstream `notify` migrates to `web-time`.
+    { id = "RUSTSEC-2024-0384", reason = "transitive via notify; awaiting upstream migration to web-time" },
+]
+
+[licenses]
+# Allowlist approach: only licenses listed here pass. New transitive deps
+# with an exotic license must be added explicitly so the implication is
+# reviewed at PR time, not discovered at audit time.
+#
+# `unused-allowed-license = "allow"` silences "license in the allowlist
+# but no crate uses it" warnings — those are config noise.
+unused-allowed-license = "allow"
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    # `webpki-roots` ships Mozilla's root cert bundle under CDLA. The
+    # license covers the *data*, not code, and is permissive for
+    # redistribution.
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+exceptions = []
+
+[bans]
+# Multi-versions is `warn` — an optimisation hint, not a correctness gate.
+multiple-versions = "warn"
+# `wildcards = "deny"` is the goal, but cargo-deny 0.16.x flags
+# `workspace = true` path deps as wildcards. `allow-wildcard-paths = true`
+# exempts path-based deps (the workspace case) without weakening the
+# crates.io check.
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+    # `openssl-sys` is a foot-gun on cross-compiles; we use rustls (ring) everywhere.
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+]
+skip-tree = []
+
+[sources]
+# Refuse anything fetched from outside crates.io. If we ever need a git
+# dep, add it explicitly here so the choice is reviewed.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

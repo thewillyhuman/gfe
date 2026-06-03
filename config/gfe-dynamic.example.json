@@ -1,0 +1,54 @@
+{
+  "certificates": [
+    {
+      "sni": ["atlas.example.org", "*.atlas.example.org"],
+      "cert_file": "/etc/gfe/certs/atlas.example.org.fullchain.pem",
+      "key_file": "/etc/gfe/certs/atlas.example.org.key.pem"
+    },
+    {
+      "default": true,
+      "cert_file": "/etc/gfe/certs/default.fullchain.pem",
+      "key_file": "/etc/gfe/certs/default.key.pem"
+    }
+  ],
+  "listeners": [
+    { "id": "https", "address": "188.184.100.10", "port": 443, "protocol": "https" },
+    { "id": "http", "address": "188.184.100.10", "port": 80, "protocol": "http" }
+  ],
+  "routes": [
+    {
+      "id": "atlas-web",
+      "listener": "https",
+      "host": "atlas.example.org",
+      "path_prefix": "/",
+      "action": { "forward": "atlas-web-pool" }
+    },
+    {
+      "id": "http-to-https",
+      "listener": "http",
+      "host": "*",
+      "path_prefix": "/",
+      "action": { "redirect": { "scheme": "https", "status": 308 } }
+    }
+  ],
+  "pools": [
+    {
+      "id": "atlas-web-pool",
+      "scheme": "https",
+      "lb_policy": "round_robin",
+      "upstreams": [
+        { "host": "188.185.10.1", "port": 8443, "weight": 1 },
+        { "host": "188.185.10.2", "port": 8443, "weight": 1 },
+        { "host": "10.254.0.5", "port": 8443, "weight": 1 }
+      ],
+      "health_check": {
+        "type": "https",
+        "path": "/healthz",
+        "interval": "5s",
+        "timeout": "2s",
+        "healthy_threshold": 2,
+        "unhealthy_threshold": 3
+      }
+    }
+  ]
+}

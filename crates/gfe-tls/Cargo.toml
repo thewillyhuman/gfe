@@ -1,0 +1,26 @@
+[package]
+name = "gfe-tls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gfe-types = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+x509-parser = { workspace = true }
+arc-swap = { workspace = true }
+dashmap = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+rcgen = { workspace = true }
+criterion = { workspace = true }
+gfe-types = { workspace = true }
+rustls-pemfile = { workspace = true }
+
+[[bench]]
+name = "handshake"
+harness = false

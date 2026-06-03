@@ -1,0 +1,96 @@
+[workspace]
+members = [
+    "crates/gfe-types",
+    "crates/gfe-metrics",
+    "crates/gfe-router",
+    "crates/gfe-tls",
+    "crates/gfe-upstream",
+    "crates/gfe-proxy",
+    "crates/gfe-config",
+    "crates/gfe-node",
+    "crates/gfe-health",
+    "crates/gfe-controller",
+    "crates/gfe-trace",
+    "crates/gfe-loadtest",
+    # Crates are added to this list as they are implemented (see roadmap in
+    # .docs/spec.md). The full set: gfe-metrics, gfe-tls, gfe-router,
+    # gfe-upstream, gfe-proxy, gfe-health, gfe-config, gfe-controller,
+    # gfe-node, gfe-trace.
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+# Internal workspace crates, not crates.io publications.
+publish = false
+# Minimum supported Rust version (floor, not target). CI tracks stable.
+rust-version = "1.87"
+
+[workspace.dependencies]
+# Workspace crates
+gfe-types = { path = "crates/gfe-types" }
+gfe-metrics = { path = "crates/gfe-metrics" }
+gfe-tls = { path = "crates/gfe-tls" }
+gfe-router = { path = "crates/gfe-router" }
+gfe-upstream = { path = "crates/gfe-upstream" }
+gfe-proxy = { path = "crates/gfe-proxy" }
+gfe-health = { path = "crates/gfe-health" }
+gfe-config = { path = "crates/gfe-config" }
+gfe-controller = { path = "crates/gfe-controller" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP server + client
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["ring", "http1", "http2", "webpki-tokio", "tls12", "logging"] }
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+
+# TLS. Pin the `ring` crypto provider (default-features off) so we avoid the
+# aws-lc-rs C/cmake build; this keeps the build to "Rust + a C compiler for
+# ring's asm" only, matching lb's commodity-build philosophy.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pemfile = "2"
+rustls-native-certs = "0.8"
+webpki-roots = "0.26"
+x509-parser = "0.16"
+rcgen = "0.13"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# Metrics
+prometheus-client = "0.23"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Concurrency
+arc-swap = "1"
+dashmap = "6"
+
+# File watching (hot reload)
+notify = "7"
+
+# Async traits
+async-trait = "0.1"
+
+# Utilities
+rand = "0.8"
+criterion = { version = "0.5", features = ["html_reports"] }

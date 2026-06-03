@@ -1,0 +1,30 @@
+[package]
+name = "gfe-upstream"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gfe-types = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+webpki-roots = { workspace = true }
+dashmap = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+rcgen = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "selection"
+harness = false
