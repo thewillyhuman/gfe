@@ -89,7 +89,8 @@ impl RouteTable {
                 sort_routes(&mut hr.routes);
             }
             sort_routes(&mut lr.any_host.routes);
-            lr.wildcard_hosts.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+            lr.wildcard_hosts
+                .sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
         }
         RouteTable {
             listeners,
@@ -146,7 +147,7 @@ fn insert_route(lr: &mut ListenerRoutes, route: &Route) {
 }
 
 fn sort_routes(routes: &mut [CompiledRoute]) {
-    routes.sort_by(|a, b| b.path_prefix.len().cmp(&a.path_prefix.len()));
+    routes.sort_by_key(|r| std::cmp::Reverse(r.path_prefix.len()));
 }
 
 #[cfg(test)]

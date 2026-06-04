@@ -24,6 +24,11 @@ ignore = [
     # `instant` unmaintained; pulled in by `notify` 7.0.0 → `notify-types`.
     # Resolves when upstream `notify` migrates to `web-time`.
     { id = "RUSTSEC-2024-0384", reason = "transitive via notify; awaiting upstream migration to web-time" },
+    # `rustls-pemfile` unmaintained (repo archived Aug 2025). We use it directly
+    # for PEM cert/key parsing in gfe-tls and gfe-upstream. It is a thin wrapper
+    # over the same code now exposed by `rustls-pki-types` (PemObject); migration
+    # is tracked. Unmaintained-not-vulnerable, so accepted in the interim.
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; used directly, migration to rustls-pki-types PemObject tracked" },
 ]
 
 [licenses]

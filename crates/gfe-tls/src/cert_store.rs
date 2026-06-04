@@ -53,7 +53,9 @@ impl CertStore {
                 }
             }
         }
-        store.wildcard.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        store
+            .wildcard
+            .sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
         Ok(store)
     }
 
