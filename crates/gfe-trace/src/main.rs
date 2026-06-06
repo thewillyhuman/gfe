@@ -36,6 +36,12 @@ struct Args {
     /// Restrict the trace to a single entry listener id (default: every listener).
     #[arg(long)]
     listener: Option<String>,
+    /// Routing assertion(s) to check instead of printing the trace tree. Form:
+    /// `HOST/PATH=forward:POOL` | `=redirect` | `=fixed:STATUS` | `=none`.
+    /// May be repeated; the process exits non-zero if any assertion fails
+    /// (offline routing assertions for CI, spec §5/§12).
+    #[arg(long = "assert")]
+    asserts: Vec<String>,
 }
 
 struct Ctx<'a> {
@@ -89,6 +95,24 @@ fn main() -> Result<()> {
         host: &args.host,
         path: &args.path,
     };
+
+    // Assertion mode (CI): evaluate expectations and exit non-zero on failure.
+    if !args.asserts.is_empty() {
+        let mut failed = 0;
+        for spec in &args.asserts {
+            let assertion =
+                Assertion::parse(spec).with_context(|| format!("parsing assertion '{spec}'"))?;
+            let ok = assertion.check(&table, &dynamic.listeners);
+            println!("{} {spec}", if ok { "PASS" } else { "FAIL" });
+            if !ok {
+                failed += 1;
+            }
+        }
+        if failed > 0 {
+            anyhow::bail!("{failed} routing assertion(s) failed");
+        }
+        return Ok(());
+    }
 
     println!("trace  host={}  path={}", args.host, args.path);
 
@@ -239,6 +263,74 @@ fn render_redirect(
     }
 }
 
+// ───────────────────────── routing assertions (CI) ─────────────────────────
+
+/// The expected outcome of routing a request.
+#[derive(Debug, PartialEq, Eq)]
+enum Expect {
+    Forward(String),
+    Redirect,
+    Fixed(u16),
+    None,
+}
+
+/// A single routing assertion: a host+path and the action it must resolve to.
+#[derive(Debug, PartialEq, Eq)]
+struct Assertion {
+    host: String,
+    path: String,
+    expect: Expect,
+}
+
+impl Assertion {
+    /// Parse `HOST/PATH=forward:POOL` | `=redirect` | `=fixed:STATUS` | `=none`.
+    fn parse(spec: &str) -> Result<Assertion> {
+        let (left, right) = spec
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("expected HOST/PATH=ACTION"))?;
+        let (host, path) = match left.find('/') {
+            Some(i) => (left[..i].to_string(), left[i..].to_string()),
+            None => (left.to_string(), "/".to_string()),
+        };
+        if host.is_empty() {
+            anyhow::bail!("empty host");
+        }
+        let expect = match right.trim() {
+            "none" => Expect::None,
+            "redirect" => Expect::Redirect,
+            r if r.starts_with("forward:") => Expect::Forward(r["forward:".len()..].to_string()),
+            r if r.starts_with("fixed:") => Expect::Fixed(
+                r["fixed:".len()..]
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("invalid fixed status"))?,
+            ),
+            other => anyhow::bail!("unknown action '{other}'"),
+        };
+        Ok(Assertion { host, path, expect })
+    }
+
+    /// Check the assertion against the compiled route table across all listeners.
+    fn check(&self, table: &RouteTable, listeners: &[Listener]) -> bool {
+        let matched: Vec<&RouteAction> = listeners
+            .iter()
+            .filter_map(|l| table.match_request(&l.id, &self.host, &self.path))
+            .map(|r| &r.action)
+            .collect();
+        match &self.expect {
+            Expect::None => matched.is_empty(),
+            Expect::Forward(pool) => matched
+                .iter()
+                .any(|a| matches!(a, RouteAction::Forward(p) if p == pool)),
+            Expect::Redirect => matched
+                .iter()
+                .any(|a| matches!(a, RouteAction::Redirect(_))),
+            Expect::Fixed(status) => matched
+                .iter()
+                .any(|a| matches!(a, RouteAction::Fixed(f) if f.status == *status)),
+        }
+    }
+}
+
 fn scheme_label(s: gfe_types::Scheme) -> &'static str {
     match s {
         gfe_types::Scheme::Http => "http",
@@ -251,5 +343,102 @@ fn policy_label(p: LbPolicy) -> &'static str {
         LbPolicy::RoundRobin => "round_robin",
         LbPolicy::LeastRequest => "least_request",
         LbPolicy::RingHash => "ring_hash",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gfe_types::{DynamicConfig, RedirectAction, Route, RouteId};
+
+    fn dynamic() -> DynamicConfig {
+        DynamicConfig {
+            certificates: vec![],
+            listeners: vec![
+                Listener {
+                    id: ListenerId("https".into()),
+                    address: "0.0.0.0".parse().unwrap(),
+                    port: 443,
+                    protocol: ListenProtocol::Https,
+                },
+                Listener {
+                    id: ListenerId("http".into()),
+                    address: "0.0.0.0".parse().unwrap(),
+                    port: 80,
+                    protocol: ListenProtocol::Http,
+                },
+            ],
+            routes: vec![
+                Route {
+                    id: RouteId("web".into()),
+                    listener: ListenerId("https".into()),
+                    host: "atlas.example.org".into(),
+                    path_prefix: "/".into(),
+                    action: RouteAction::Forward("atlas-web".into()),
+                },
+                Route {
+                    id: RouteId("redir".into()),
+                    listener: ListenerId("http".into()),
+                    host: "*".into(),
+                    path_prefix: "/".into(),
+                    action: RouteAction::Redirect(RedirectAction {
+                        scheme: "https".into(),
+                        status: 308,
+                    }),
+                },
+            ],
+            pools: vec![],
+        }
+    }
+
+    #[test]
+    fn parse_forward() {
+        let a = Assertion::parse("atlas.example.org/=forward:atlas-web").unwrap();
+        assert_eq!(a.host, "atlas.example.org");
+        assert_eq!(a.path, "/");
+        assert_eq!(a.expect, Expect::Forward("atlas-web".into()));
+    }
+
+    #[test]
+    fn parse_path_and_actions() {
+        assert_eq!(
+            Assertion::parse("h/api=fixed:204").unwrap().expect,
+            Expect::Fixed(204)
+        );
+        assert_eq!(
+            Assertion::parse("h/=redirect").unwrap().expect,
+            Expect::Redirect
+        );
+        assert_eq!(Assertion::parse("h/=none").unwrap().expect, Expect::None);
+        assert!(Assertion::parse("h/api").is_err());
+    }
+
+    #[test]
+    fn forward_assertion_passes_and_fails() {
+        let cfg = dynamic();
+        let table = RouteTable::compile(&cfg);
+        assert!(Assertion::parse("atlas.example.org/=forward:atlas-web")
+            .unwrap()
+            .check(&table, &cfg.listeners));
+        // Wrong pool fails.
+        assert!(!Assertion::parse("atlas.example.org/=forward:other")
+            .unwrap()
+            .check(&table, &cfg.listeners));
+    }
+
+    #[test]
+    fn redirect_and_none_assertions() {
+        let cfg = dynamic();
+        let table = RouteTable::compile(&cfg);
+        assert!(Assertion::parse("anything.example.org/=redirect")
+            .unwrap()
+            .check(&table, &cfg.listeners));
+        // A host with no matching route on any listener → none. (The http
+        // listener has a `*` redirect, so use a path that still matches `*`?)
+        // Every host matches the http `*` redirect, so `none` is only true when
+        // no listener matches; assert a forward host is NOT "none".
+        assert!(!Assertion::parse("atlas.example.org/=none")
+            .unwrap()
+            .check(&table, &cfg.listeners));
     }
 }
