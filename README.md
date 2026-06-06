@@ -187,7 +187,11 @@ crates/
   gfe-controller/   Orchestrator: config + health + cache + hot-reload
   gfe-metrics/      Prometheus counters/gauges/histograms
   gfe-node/         Main binary: proxy + controller + ops server
-  gfe-trace/        Offline routing-decision tracer CLI
+  gfe-trace/        Offline routing-decision tracer + CI routing assertions
+  gfe-cp-types/     Control-plane domain + agent/operator wire types
+  gfe-cp/           Control plane: store, render, validate, revisions, rollout, API
+  gfe-agent/        Per-node pull agent: fetch target, write certs, atomic swap
+  gfectl/           Operator CLI over the control-plane API
 config/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
@@ -210,9 +214,51 @@ cargo bench -p gfe-tls --bench handshake
 ./scripts/loadtest.sh 64 6      # end-to-end load test (mock upstream + real node)
 ```
 
+## Control plane (`gfe-cp`)
+
+The data plane above is file-configured; the control plane keeps the desired
+state of every fleet in one place, renders the node-facing files, and reconciles
+them onto running nodes via a per-node pull agent. See
+**[control-plane spec](.docs/gfe-cp-spec.md)**.
+
+```bash
+# Start the controller (state in a JSON store; certs envelope-encrypted at rest)
+gfe-cp --gen-master-key > master.key
+gfe-cp --addr 0.0.0.0:8080 --store cp.json --master-key-file master.key --token $TOK
+
+# Declare desired state with the CLI
+export GFE_CP_URL=http://localhost:8080 GFE_CP_TOKEN=$TOK
+gfectl fleet create atlas-prod --vip 188.184.100.10 --tls-min 1.3
+gfectl node add atlas-prod gfe-node-01 --mgmt-addr 10.0.0.5
+gfectl listener add atlas-prod https --addr 188.184.100.10 --port 443 --https
+gfectl cert add atlas-prod --default --cert fullchain.pem --key key.pem
+gfectl pool add atlas-prod web --scheme https --lb ring_hash
+gfectl backend add atlas-prod web 188.185.10.1:8443
+gfectl route add atlas-prod web --listener https --host atlas.example.org --forward web
+gfectl fleet diff atlas-prod        # rendered desired-vs-target diff
+gfectl fleet publish atlas-prod     # validate, snapshot an immutable revision, roll out
+gfectl fleet status atlas-prod      # per-node applied revision + rollout phase
+gfectl fleet rollback atlas-prod --to 41
+
+# On each node, the pull agent materializes certs + atomically swaps the JSON
+gfe-agent --cp-url http://gfe-cp:8080 --token $TOK \
+          --fleet atlas-prod --node-id gfe-node-01 \
+          --config-file /etc/gfe/gfe-dynamic.json --static-toml /etc/gfe/gfe.toml \
+          --restart-cmd 'systemctl restart gfe-node'
+```
+
+Rendering reuses the node's own `gfe-types` + `gfe-config::validate`, so a
+revision is byte-acceptable to the node and validated identically before it ever
+ships. Rollout is canary → waves with a bake window and auto-halt; backend
+register/deregister is idempotent and debounced; certs are content-addressed and
+encrypted at rest. The spec's Postgres/gRPC/KMS/mTLS/SSO map onto seams here (a
+file/in-memory store, HTTP/JSON, a local AEAD sealer, a bearer token) so the
+whole system builds and unit-tests with no external services.
+
 ## Documentation
 
-- **[Design specification](.docs/spec.md)** — full architecture and protocol details.
+- **[Data-plane spec](.docs/spec.md)** — proxy architecture and protocol details.
+- **[Control-plane spec](.docs/gfe-cp-spec.md)** — config management + deployment.
 
 ## License
 
