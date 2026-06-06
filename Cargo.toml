@@ -12,6 +12,9 @@ members = [
     "crates/gfe-controller",
     "crates/gfe-trace",
     "crates/gfe-loadtest",
+    # Control plane (see .docs/gfe-cp-spec.md): desired-state config management,
+    # rendering, revisions, rollout, and the pull agent + CLI.
+    "crates/gfe-cp-types",
     # Crates are added to this list as they are implemented (see roadmap in
     # .docs/spec.md). The full set: gfe-metrics, gfe-tls, gfe-router,
     # gfe-upstream, gfe-proxy, gfe-health, gfe-config, gfe-controller,
@@ -39,6 +42,7 @@ gfe-proxy = { path = "crates/gfe-proxy" }
 gfe-health = { path = "crates/gfe-health" }
 gfe-config = { path = "crates/gfe-config" }
 gfe-controller = { path = "crates/gfe-controller" }
+gfe-cp-types = { path = "crates/gfe-cp-types" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -61,6 +65,10 @@ rustls-native-certs = "0.8"
 webpki-roots = "0.26"
 x509-parser = "0.16"
 rcgen = "0.13"
+# Crypto primitives for the control plane: SHA-256 content hashing, AEAD
+# envelope encryption of cert material at rest, and CSPRNG. Already in the tree
+# via rustls (the pinned `ring` provider), so no new C/asm build surface.
+ring = "0.17"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
