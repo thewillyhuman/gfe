@@ -17,6 +17,7 @@ members = [
     "crates/gfe-cp-types",
     "crates/gfe-cp",
     "crates/gfe-agent",
+    "crates/gfectl",
     # Crates are added to this list as they are implemented (see roadmap in
     # .docs/spec.md). The full set: gfe-metrics, gfe-tls, gfe-router,
     # gfe-upstream, gfe-proxy, gfe-health, gfe-config, gfe-controller,
