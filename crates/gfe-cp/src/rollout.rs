@@ -3,7 +3,7 @@
 //! nodes report success or failure.
 //!
 //! The model is deterministic over observed node state + the fleet's
-//! [`RolloutPolicy`]. Nodes are ordered by id; the first `admitted` of them may
+//! `RolloutPolicy`. Nodes are ordered by id; the first `admitted` of them may
 //! hold the target. Admission starts at the canary size and grows by waves once
 //! the currently-admitted nodes have cleared (applied the target, reloaded OK,
 //! and stayed healthy) and the bake window has elapsed. A node that fails to

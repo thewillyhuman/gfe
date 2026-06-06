@@ -58,6 +58,9 @@ pub struct Agent {
     fleet: String,
     node_id: String,
     paths: Paths,
+    /// Shell command to restart `gfe-node` after a static (cold) change. When
+    /// unset, the agent writes the TOML and logs that a restart is required.
+    restart_cmd: Option<String>,
 }
 
 /// The outcome of one [`Agent::tick`].
@@ -86,7 +89,15 @@ impl Agent {
             fleet: fleet.into(),
             node_id: node_id.into(),
             paths,
+            restart_cmd: None,
         }
+    }
+
+    /// Set the shell command used to restart `gfe-node` after a static (cold)
+    /// change. Builder-style so [`new`](Agent::new) stays stable.
+    pub fn with_restart_cmd(mut self, cmd: Option<String>) -> Self {
+        self.restart_cmd = cmd;
+        self
     }
 
     /// Run one fetch → apply → report cycle. `current_seq` is the revision the
@@ -102,13 +113,19 @@ impl Agent {
             GetTargetResponse::UpToDate => Ok(Tick::UpToDate),
             GetTargetResponse::Target(target) => {
                 let seq = target.seq;
-                let reload_state = match apply(&target, &self.paths) {
+                let mut reload_state = match apply(&target, &self.paths) {
                     Ok(()) => ReloadState::Ok,
                     Err(e) => {
                         tracing::error!(error = %e, seq, "failed to apply revision");
                         ReloadState::Failed
                     }
                 };
+                // A static (cold) change needs a node restart to take effect
+                // (spec §8.3); the rollout only advances once the restart lands.
+                if reload_state == ReloadState::Ok && target.static_only && !self.restart_node(seq)
+                {
+                    reload_state = ReloadState::Failed;
+                }
                 // Report regardless: a FAILED report drives the orchestrator's
                 // auto-halt (spec §8.2).
                 let healthy = matches!(reload_state, ReloadState::Ok);
@@ -126,6 +143,36 @@ impl Agent {
                         "revision {seq} failed to apply"
                     )))),
                 }
+            }
+        }
+    }
+
+    /// Restart `gfe-node` for a static change. Returns whether the node is
+    /// considered restarted: runs `restart_cmd` if configured (success = exit
+    /// 0); otherwise logs that a restart is required and assumes an external
+    /// supervisor handles it.
+    fn restart_node(&self, seq: i64) -> bool {
+        match &self.restart_cmd {
+            Some(cmd) => {
+                tracing::info!(seq, %cmd, "restarting gfe-node for static change");
+                match std::process::Command::new("sh").arg("-c").arg(cmd).status() {
+                    Ok(status) if status.success() => true,
+                    Ok(status) => {
+                        tracing::error!(seq, ?status, "restart command failed");
+                        false
+                    }
+                    Err(e) => {
+                        tracing::error!(seq, error = %e, "restart command could not run");
+                        false
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    seq,
+                    "static change written; node restart required (no --restart-cmd configured)"
+                );
+                true
             }
         }
     }
@@ -307,6 +354,29 @@ mod tests {
         apply(&target("{}", false), &paths).unwrap();
         assert_eq!(std::fs::read_to_string(&cert_path).unwrap(), "TAMPERED");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn agent_with(restart: Option<&str>) -> Agent {
+        Agent::new(
+            "http://127.0.0.1:1",
+            None,
+            "f",
+            "n",
+            Paths {
+                config_file: "/tmp/x.json".into(),
+                static_toml: None,
+                prefix: None,
+            },
+        )
+        .with_restart_cmd(restart.map(String::from))
+    }
+
+    #[test]
+    fn restart_node_reflects_command_exit() {
+        assert!(agent_with(Some("true")).restart_node(1));
+        assert!(!agent_with(Some("false")).restart_node(1));
+        // No command configured: assume an external supervisor restarts.
+        assert!(agent_with(None).restart_node(1));
     }
 
     #[test]

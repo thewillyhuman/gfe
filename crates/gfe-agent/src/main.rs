@@ -30,6 +30,11 @@ struct Args {
     /// Bearer token for the agent API. Falls back to `GFE_AGENT_TOKEN`.
     #[arg(long)]
     token: Option<String>,
+    /// Shell command to restart gfe-node after a static (cold) config change
+    /// (e.g. `systemctl restart gfe-node`). Without it, a static change is
+    /// written but the agent only logs that a restart is required.
+    #[arg(long)]
+    restart_cmd: Option<String>,
     /// Poll interval in seconds.
     #[arg(long, default_value_t = 5)]
     interval: u64,
@@ -54,7 +59,8 @@ fn main() -> Result<()> {
             static_toml: args.static_toml,
             prefix: args.cert_prefix,
         },
-    );
+    )
+    .with_restart_cmd(args.restart_cmd);
 
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(run(agent, Duration::from_secs(args.interval)));

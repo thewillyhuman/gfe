@@ -559,6 +559,20 @@ fn get_target(store: &Store, req: &GetTargetRequest) -> Response<Full<Bytes>> {
         });
     }
 
+    // Static (cold) change detection (spec §8.3): if the dynamic JSON is
+    // unchanged from what this node already runs but the static TOML differs,
+    // the change needs a restart, not a hot swap.
+    let static_only = match node.applied_seq {
+        Some(prev) if prev != revision.seq => match store.get_revision(&req.fleet, prev) {
+            Ok(p) => {
+                p.dynamic_json == revision.dynamic_json
+                    && p.static_template != revision.static_template
+            }
+            Err(_) => false,
+        },
+        _ => false,
+    };
+
     let static_toml = render_node_toml(&node, fleet.vip, &revision.static_template);
     let target = TargetRevision {
         seq: revision.seq,
@@ -566,7 +580,7 @@ fn get_target(store: &Store, req: &GetTargetRequest) -> Response<Full<Bytes>> {
         dynamic_json: revision.dynamic_json,
         static_toml,
         certs,
-        static_only: false,
+        static_only,
     };
     json(StatusCode::OK, &GetTargetResponse::Target(Box::new(target)))
 }
@@ -801,5 +815,64 @@ mod tests {
         // Node observed state reflects the report.
         let n = s.store.get_node("f", "n1").unwrap();
         assert_eq!(n.applied_seq, Some(1));
+    }
+
+    #[test]
+    fn static_only_change_is_flagged_for_restart() {
+        let s = state();
+        for body in [
+            br#"{"name":"f","vip":"10.0.0.1"}"#.as_slice(),
+            br#"{"fleet":"f","gfe_node_id":"n1","mgmt_addr":"10.0.0.5"}"#.as_slice(),
+        ]
+        .iter()
+        .zip([vec!["fleets"], vec!["fleets", "f", "nodes"]])
+        {
+            operator(&s, &Method::POST, &body.1, body.0);
+        }
+        operator(
+            &s,
+            &Method::POST,
+            &["fleets", "f", "listeners"],
+            br#"{"name":"http","address":"10.0.0.1","port":80,"protocol":"http"}"#,
+        );
+        operator(
+            &s,
+            &Method::POST,
+            &["fleets", "f", "pools"],
+            br#"{"name":"web","backends":[{"host":"10.0.0.2","port":8080}]}"#,
+        );
+        operator(
+            &s,
+            &Method::POST,
+            &["fleets", "f", "routes"],
+            br#"{"name":"r","listener":"http","host":"a.example.org","action":{"forward":"web"}}"#,
+        );
+        operator(&s, &Method::POST, &["fleets", "f", "publish"], b"");
+        // Node applies revision 1.
+        s.store
+            .report_node_status("f", "n1", 1, gfe_cp_types::ReloadState::Ok, true)
+            .unwrap();
+
+        // Change only fleet policy (hsts) → static template differs, dynamic JSON
+        // identical → a new revision that is a static-only change.
+        operator(
+            &s,
+            &Method::PUT,
+            &["fleets", "f"],
+            br#"{"name":"f","vip":"10.0.0.1","hsts":"max-age=31536000"}"#,
+        );
+        let r = operator(&s, &Method::POST, &["fleets", "f", "publish"], b"");
+        assert_eq!(r.status(), StatusCode::OK);
+
+        // The node (at seq 1) fetching seq 2 sees static_only = true.
+        let r = agent(
+            &s.store,
+            &Method::POST,
+            &["get-target"],
+            br#"{"fleet":"f","node_id":"n1","current_seq":1}"#,
+        );
+        let body = body_string(r);
+        assert!(body.contains("\"seq\":2"), "got {body}");
+        assert!(body.contains("\"static_only\":true"), "got {body}");
     }
 }
