@@ -1,0 +1,24 @@
+[package]
+name = "gfe-cp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "gfe_cp"
+path = "src/lib.rs"
+
+[dependencies]
+gfe-types = { workspace = true }
+gfe-cp-types = { workspace = true }
+gfe-config = { workspace = true }
+gfe-router = { workspace = true }
+gfe-upstream = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+ring = { workspace = true }
