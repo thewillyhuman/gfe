@@ -20,6 +20,7 @@ gfe-cp-types = { workspace = true }
 gfe-config = { workspace = true }
 gfe-router = { workspace = true }
 gfe-upstream = { workspace = true }
+gfe-tls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

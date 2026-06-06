@@ -93,11 +93,19 @@ pub async fn serve_on(listener: TcpListener, state: Arc<ApiState>) -> std::io::R
 pub async fn handle(state: Arc<ApiState>, req: Request<Incoming>) -> Response<Full<Bytes>> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
+    let query = req.uri().query().unwrap_or("").to_string();
     let auth_header = req
         .headers()
         .get(hyper::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .map(String::from);
+    // Optional actor identity for the audit trail; defaults to "operator".
+    let actor = req
+        .headers()
+        .get("x-gfe-actor")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("operator")
+        .to_string();
 
     // Unauthenticated liveness probe.
     if path == "/healthz" {
@@ -113,11 +121,36 @@ pub async fn handle(state: Arc<ApiState>, req: Request<Incoming>) -> Response<Fu
     };
 
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    match segs.first().copied() {
-        Some("v1") => operator(&state, &method, &segs[1..], &body),
-        Some("agent") => agent(&state.store, &method, &segs[1..], &body),
-        _ => text(StatusCode::NOT_FOUND, "not found"),
+    let resp = match (&method, &segs[..]) {
+        // Cert expiry alerting needs the query string (spec §12 Phase 3).
+        (&Method::GET, ["v1", "alerts", "cert-expiry"]) => cert_expiry(&state.store, &query),
+        _ => match segs.first().copied() {
+            Some("v1") => operator(&state, &method, &segs[1..], &body),
+            Some("agent") => agent(&state.store, &method, &segs[1..], &body),
+            _ => text(StatusCode::NOT_FOUND, "not found"),
+        },
+    };
+
+    // Audit successful mutations against a specific fleet (spec §10).
+    if resp.status().is_success() && is_mutating(&method) {
+        if let ["fleets", fleet, ..] = segs[1..] {
+            let _ = state.store.append_audit(
+                fleet,
+                gfe_cp_types::AuditEntry {
+                    ts: now(),
+                    actor,
+                    action: format!("{method} {path}"),
+                    detail: String::new(),
+                },
+            );
+        }
     }
+    resp
+}
+
+/// Whether a method changes state (and is therefore audited).
+fn is_mutating(method: &Method) -> bool {
+    matches!(method, &Method::POST | &Method::PUT | &Method::DELETE)
 }
 
 // ───────────────────────── operator API (/v1) ─────────────────────────
@@ -201,9 +234,42 @@ fn operator(
         (&M::GET, ["fleets", f, "diff"]) => do_diff(store, f),
         (&M::GET, ["fleets", f, "status"]) => fleet_status(store, f),
         (&M::GET, ["fleets", f, "revisions"]) => result(store.list_revisions(f)),
+        (&M::GET, ["fleets", f, "audit"]) => result(store.list_audit(f)),
 
         _ => text(StatusCode::NOT_FOUND, "not found"),
     }
+}
+
+/// One expiring certificate, with its owning fleet.
+#[derive(Serialize)]
+struct ExpiringCert {
+    fleet: String,
+    content_sha: String,
+    sni: Vec<String>,
+    is_default: bool,
+    not_after: i64,
+}
+
+fn cert_expiry(store: &Store, query: &str) -> Response<Full<Bytes>> {
+    // `within_days` query param (default 30).
+    let within_days = query
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("within_days="))
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(30);
+    let within_secs = within_days.saturating_mul(86_400);
+    let out: Vec<ExpiringCert> = store
+        .expiring_certs(now(), within_secs)
+        .into_iter()
+        .map(|(fleet, c)| ExpiringCert {
+            fleet,
+            content_sha: c.content_sha,
+            sni: c.sni,
+            is_default: c.is_default,
+            not_after: c.not_after,
+        })
+        .collect();
+    json(StatusCode::OK, &out)
 }
 
 /// Request body for adding a certificate (PEM material inline).
@@ -230,11 +296,28 @@ fn add_cert(store: &Store, fleet: &str, body: &[u8]) -> Response<Full<Bytes>> {
         Ok(r) => r,
         Err(r) => return r,
     };
+    // Validate the PEM material parses (controller-only check, spec §5) and
+    // derive the leaf not-after for expiry alerting when not supplied.
+    let not_after = match gfe_tls::load_cert_pem(req.cert_pem.as_bytes(), req.key_pem.as_bytes()) {
+        Ok(loaded) => {
+            if req.not_after > 0 {
+                req.not_after
+            } else {
+                loaded.not_after_unix
+            }
+        }
+        Err(e) => {
+            return text(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid certificate: {e}"),
+            )
+        }
+    };
     match store.add_certificate(
         fleet,
         req.sni,
         req.is_default,
-        req.not_after,
+        not_after,
         req.cert_pem.as_bytes(),
         req.key_pem.as_bytes(),
     ) {

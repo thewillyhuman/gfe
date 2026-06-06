@@ -14,8 +14,8 @@
 
 use crate::crypto::{cert_content_sha, Sealed, Sealer};
 use gfe_cp_types::{
-    Backend, Certificate, Fleet, FleetState, ListenerSpec, Node, PoolSpec, ReloadState, Revision,
-    RolloutState, RouteSpec,
+    AuditEntry, Backend, Certificate, Fleet, FleetState, ListenerSpec, Node, PoolSpec, ReloadState,
+    Revision, RolloutState, RouteSpec,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -74,6 +74,9 @@ struct FleetRecord {
     /// Live rollout progress for the current target (spec §8.2).
     #[serde(default)]
     rollout: Option<RolloutState>,
+    /// Append-only audit trail (spec §10).
+    #[serde(default)]
+    audit: Vec<AuditEntry>,
 }
 
 impl FleetRecord {
@@ -91,6 +94,7 @@ impl FleetRecord {
             next_seq: 1,
             target_seq: None,
             rollout: None,
+            audit: Vec::new(),
         }
     }
 }
@@ -551,6 +555,37 @@ impl Store {
             Ok(())
         })
     }
+
+    // ───────────────────────── audit + alerting ─────────────────────────
+
+    /// Append an audit entry to a fleet's trail (spec §10).
+    pub fn append_audit(&self, fleet: &str, entry: AuditEntry) -> Result<()> {
+        self.with_mut(|db| {
+            fleet_rec_mut(db, fleet)?.audit.push(entry);
+            Ok(())
+        })
+    }
+
+    /// A fleet's audit trail, oldest first.
+    pub fn list_audit(&self, fleet: &str) -> Result<Vec<AuditEntry>> {
+        self.with(|db| Ok(fleet_rec(db, fleet)?.audit.clone()))
+    }
+
+    /// Certificates across all fleets whose `not_after` is within `within_secs`
+    /// of `now` (or already past). Drives expiry alerting (spec §12 Phase 3).
+    pub fn expiring_certs(&self, now: i64, within_secs: i64) -> Vec<(String, Certificate)> {
+        let db = self.inner.lock().expect("store mutex poisoned");
+        let mut out = Vec::new();
+        for (name, rec) in &db.fleets {
+            for cr in rec.certificates.values() {
+                if cr.meta.not_after > 0 && cr.meta.not_after - now <= within_secs {
+                    out.push((name.clone(), cr.meta.clone()));
+                }
+            }
+        }
+        out.sort_by_key(|(_, c)| c.not_after);
+        out
+    }
 }
 
 fn fleet_rec<'a>(db: &'a Db, name: &str) -> Result<&'a FleetRecord> {
@@ -728,6 +763,42 @@ mod tests {
         assert_eq!(n.applied_seq, Some(3));
         assert_eq!(n.reload_state, ReloadState::Ok);
         assert!(n.healthy);
+    }
+
+    #[test]
+    fn expiring_certs_filters_by_window() {
+        let s = store();
+        s.create_fleet(fleet()).unwrap();
+        // not_after = 2000; with now=1000 it is 1000s away.
+        s.add_certificate("atlas-prod", vec![], false, 2000, b"C1", b"K1")
+            .unwrap();
+        // not_after = 100_000; far out.
+        s.add_certificate("atlas-prod", vec![], false, 100_000, b"C2", b"K2")
+            .unwrap();
+        // Window of 1500s at now=1000 catches the first, not the second.
+        let soon = s.expiring_certs(1000, 1500);
+        assert_eq!(soon.len(), 1);
+        assert_eq!(soon[0].0, "atlas-prod");
+        assert_eq!(soon[0].1.not_after, 2000);
+    }
+
+    #[test]
+    fn audit_trail_appends() {
+        let s = store();
+        s.create_fleet(fleet()).unwrap();
+        s.append_audit(
+            "atlas-prod",
+            gfe_cp_types::AuditEntry {
+                ts: 1,
+                actor: "alice".into(),
+                action: "POST /v1/fleets/atlas-prod/publish".into(),
+                detail: String::new(),
+            },
+        )
+        .unwrap();
+        let log = s.list_audit("atlas-prod").unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].actor, "alice");
     }
 
     #[test]

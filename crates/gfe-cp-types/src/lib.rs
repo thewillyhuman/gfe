@@ -11,6 +11,7 @@
 //! the bytes a node receives are produced from the very structs the node
 //! deserializes.
 
+pub mod audit;
 pub mod fleet;
 pub mod node;
 pub mod resource;
@@ -19,6 +20,7 @@ pub mod rolloutstate;
 pub mod state;
 pub mod wire;
 
+pub use audit::AuditEntry;
 pub use fleet::{Fleet, LimitsSpec, RolloutPolicy, TimeoutsSpec, UpstreamSpec};
 pub use node::{Node, ReloadState};
 pub use resource::{

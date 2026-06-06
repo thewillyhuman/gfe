@@ -92,6 +92,8 @@ enum FleetCmd {
     Status { name: String },
     /// List a fleet's revisions.
     Revisions { name: String },
+    /// Show a fleet's audit trail.
+    Audit { name: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -149,6 +151,11 @@ enum CertCmd {
     Remove { fleet: String, content_sha: String },
     /// List certificates.
     List { fleet: String },
+    /// List certificates expiring across all fleets within N days.
+    Expiring {
+        #[arg(long, default_value_t = 30)]
+        within_days: i64,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -269,6 +276,7 @@ fn fleet(c: &Client, cmd: FleetCmd) -> Result<String> {
         }
         FleetCmd::Status { name } => c.get(&format!("/v1/fleets/{name}/status")),
         FleetCmd::Revisions { name } => c.get(&format!("/v1/fleets/{name}/revisions")),
+        FleetCmd::Audit { name } => c.get(&format!("/v1/fleets/{name}/audit")),
     }
 }
 
@@ -337,6 +345,9 @@ fn cert(c: &Client, cmd: CertCmd) -> Result<String> {
             c.delete(&format!("/v1/fleets/{fleet}/certificates/{content_sha}"))
         }
         CertCmd::List { fleet } => c.get(&format!("/v1/fleets/{fleet}/certificates")),
+        CertCmd::Expiring { within_days } => {
+            c.get(&format!("/v1/alerts/cert-expiry?within_days={within_days}"))
+        }
     }
 }
 
