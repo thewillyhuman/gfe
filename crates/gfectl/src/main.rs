@@ -80,6 +80,12 @@ enum FleetCmd {
     Delete { name: String },
     /// Validate, create a revision, and start rollout.
     Publish { name: String },
+    /// Re-target an earlier revision (rollback).
+    Rollback {
+        name: String,
+        #[arg(long)]
+        to: i64,
+    },
     /// Show per-node applied revision + reload state.
     Status { name: String },
     /// List a fleet's revisions.
@@ -231,6 +237,9 @@ fn fleet(c: &Client, cmd: FleetCmd) -> Result<String> {
         FleetCmd::Get { name } => c.get(&format!("/v1/fleets/{name}")),
         FleetCmd::Delete { name } => c.delete(&format!("/v1/fleets/{name}")),
         FleetCmd::Publish { name } => c.post(&format!("/v1/fleets/{name}/publish"), &json!({})),
+        FleetCmd::Rollback { name, to } => {
+            c.post(&format!("/v1/fleets/{name}/rollback"), &json!({ "to": to }))
+        }
         FleetCmd::Status { name } => c.get(&format!("/v1/fleets/{name}/status")),
         FleetCmd::Revisions { name } => c.get(&format!("/v1/fleets/{name}/revisions")),
     }

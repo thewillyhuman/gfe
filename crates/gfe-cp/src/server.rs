@@ -182,6 +182,7 @@ fn operator(store: &Store, method: &Method, segs: &[&str], body: &[u8]) -> Respo
         (&M::DELETE, ["fleets", f, "routes", n]) => result(store.remove_route(f, n)),
 
         (&M::POST, ["fleets", f, "publish"]) => do_publish(store, f),
+        (&M::POST, ["fleets", f, "rollback"]) => do_rollback(store, f, body),
         (&M::GET, ["fleets", f, "status"]) => fleet_status(store, f),
         (&M::GET, ["fleets", f, "revisions"]) => result(store.list_revisions(f)),
 
@@ -255,12 +256,21 @@ fn do_publish(store: &Store, fleet: &str) -> Response<Full<Bytes>> {
 struct StatusResponse {
     fleet: String,
     target_seq: Option<i64>,
+    rollout: Option<gfe_cp_types::RolloutState>,
     nodes: Vec<Node>,
 }
 
 fn fleet_status(store: &Store, fleet: &str) -> Response<Full<Bytes>> {
+    // Reconcile so the reported phase reflects the latest observed node state.
+    if let Err(e) = rollout::reconcile(store, fleet, now()) {
+        return store_error(&e);
+    }
     let target_seq = match store.target_seq(fleet) {
         Ok(t) => t,
+        Err(e) => return store_error(&e),
+    };
+    let rollout = match store.rollout(fleet) {
+        Ok(r) => r,
         Err(e) => return store_error(&e),
     };
     match store.list_nodes(fleet) {
@@ -269,11 +279,38 @@ fn fleet_status(store: &Store, fleet: &str) -> Response<Full<Bytes>> {
             &StatusResponse {
                 fleet: fleet.to_string(),
                 target_seq,
+                rollout,
                 nodes,
             },
         ),
         Err(e) => store_error(&e),
     }
+}
+
+/// Request body for a rollback (spec §8.4).
+#[derive(Deserialize)]
+struct RollbackRequest {
+    to: i64,
+}
+
+fn do_rollback(store: &Store, fleet: &str, body: &[u8]) -> Response<Full<Bytes>> {
+    let req: RollbackRequest = match parse(body) {
+        Ok(r) => r,
+        Err(r) => return r,
+    };
+    // Rollback is just re-targeting an earlier immutable revision (spec §8.4).
+    match store.set_target(fleet, req.to) {
+        Ok(()) => fleet_status(store, fleet),
+        Err(e) => store_error(&e),
+    }
+}
+
+/// Current unix seconds.
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 // ───────────────────────── agent API (/agent) ─────────────────────────
@@ -295,7 +332,7 @@ fn agent(store: &Store, method: &Method, segs: &[&str], body: &[u8]) -> Response
 
 fn get_target(store: &Store, req: &GetTargetRequest) -> Response<Full<Bytes>> {
     // Which revision is this node allowed to advance to right now?
-    let allowed = match rollout::allowed_target(store, &req.fleet, &req.node_id) {
+    let allowed = match rollout::allowed_target(store, &req.fleet, &req.node_id, now()) {
         Ok(a) => a,
         Err(e) => return store_error(&e),
     };

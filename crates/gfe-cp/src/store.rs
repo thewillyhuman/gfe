@@ -15,7 +15,7 @@
 use crate::crypto::{cert_content_sha, Sealed, Sealer};
 use gfe_cp_types::{
     Backend, Certificate, Fleet, FleetState, ListenerSpec, Node, PoolSpec, ReloadState, Revision,
-    RouteSpec,
+    RolloutState, RouteSpec,
 };
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -71,6 +71,9 @@ struct FleetRecord {
     revisions: BTreeMap<i64, Revision>,
     next_seq: i64,
     target_seq: Option<i64>,
+    /// Live rollout progress for the current target (spec §8.2).
+    #[serde(default)]
+    rollout: Option<RolloutState>,
 }
 
 impl FleetRecord {
@@ -87,6 +90,7 @@ impl FleetRecord {
             revisions: BTreeMap::new(),
             next_seq: 1,
             target_seq: None,
+            rollout: None,
         }
     }
 }
@@ -515,7 +519,8 @@ impl Store {
         })
     }
 
-    /// Set the rollout target to an existing revision sequence.
+    /// Set the rollout target to an existing revision sequence and (re)start a
+    /// staged rollout toward it, admitting the fleet's canary set first.
     pub fn set_target(&self, fleet: &str, seq: i64) -> Result<()> {
         self.with_mut(|db| {
             let rec = fleet_rec_mut(db, fleet)?;
@@ -523,6 +528,8 @@ impl Store {
                 return Err(StoreError::NotFound(format!("revision {fleet}#{seq}")));
             }
             rec.target_seq = Some(seq);
+            let canary = rec.fleet.rollout_policy.canary_size;
+            rec.rollout = Some(RolloutState::new(seq, canary, now()));
             Ok(())
         })
     }
@@ -530,6 +537,19 @@ impl Store {
     /// The current rollout-target sequence, if a target has been published.
     pub fn target_seq(&self, fleet: &str) -> Result<Option<i64>> {
         self.with(|db| Ok(fleet_rec(db, fleet)?.target_seq))
+    }
+
+    /// The current rollout state, if a target has been published.
+    pub fn rollout(&self, fleet: &str) -> Result<Option<RolloutState>> {
+        self.with(|db| Ok(fleet_rec(db, fleet)?.rollout.clone()))
+    }
+
+    /// Replace the rollout state (used by the reconciler).
+    pub fn set_rollout(&self, fleet: &str, state: RolloutState) -> Result<()> {
+        self.with_mut(|db| {
+            fleet_rec_mut(db, fleet)?.rollout = Some(state);
+            Ok(())
+        })
     }
 }
 

@@ -15,6 +15,7 @@ pub mod fleet;
 pub mod node;
 pub mod resource;
 pub mod revision;
+pub mod rolloutstate;
 pub mod state;
 pub mod wire;
 
@@ -25,6 +26,7 @@ pub use resource::{
     RouteSpec,
 };
 pub use revision::{CertRef, Revision};
+pub use rolloutstate::{RolloutPhase, RolloutState};
 pub use state::FleetState;
 pub use wire::{
     GetTargetRequest, GetTargetResponse, ReportStatusRequest, ReportStatusResponse, TargetCert,
