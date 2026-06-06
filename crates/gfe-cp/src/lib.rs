@@ -25,6 +25,6 @@ pub mod validate;
 
 pub use publish::{prepare, publish, Prepared, PublishError};
 pub use render::{render, render_node_toml, Rendered};
-pub use server::{serve, ApiState, Auth};
+pub use server::{serve, serve_on, ApiState, Auth};
 pub use store::{Store, StoreError};
 pub use validate::{validate, Report, ValidateError};

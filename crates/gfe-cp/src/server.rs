@@ -54,10 +54,16 @@ impl Auth {
     }
 }
 
-/// Run the API server until the process exits.
+/// Run the API server on `addr` until the process exits.
 pub async fn serve(addr: SocketAddr, state: Arc<ApiState>) -> std::io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "gfe-cp API listening (/v1 operator, /agent pull)");
+    serve_on(listener, state).await
+}
+
+/// Run the API server on an already-bound listener (lets callers choose an
+/// ephemeral port and learn it before serving — used in tests).
+pub async fn serve_on(listener: TcpListener, state: Arc<ApiState>) -> std::io::Result<()> {
+    tracing::info!(addr = ?listener.local_addr().ok(), "gfe-cp API listening (/v1 operator, /agent pull)");
     loop {
         let (stream, _peer) = match listener.accept().await {
             Ok(v) => v,
