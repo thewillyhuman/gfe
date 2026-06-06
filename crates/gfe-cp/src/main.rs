@@ -33,6 +33,9 @@ struct Args {
     /// Print a freshly generated hex master key and exit.
     #[arg(long)]
     gen_master_key: bool,
+    /// Debounce window (ms) for coalescing backend (de)registration bursts.
+    #[arg(long, default_value_t = 500)]
+    debounce_ms: u64,
 }
 
 fn main() -> Result<()> {
@@ -65,9 +68,14 @@ fn main() -> Result<()> {
     if token.is_none() {
         tracing::warn!("no API token set: the operator + agent API is unauthenticated");
     }
+    let debouncer = Arc::new(gfe_cp::Debouncer::new(
+        store.clone(),
+        std::time::Duration::from_millis(args.debounce_ms),
+    ));
     let state = Arc::new(ApiState {
         store,
         auth: Auth { token },
+        debouncer,
     });
 
     let rt = tokio::runtime::Runtime::new()?;

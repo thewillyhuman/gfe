@@ -70,6 +70,10 @@ async fn agent_pulls_and_applies_published_revision() {
     let store = Store::in_memory(Arc::new(AeadSealer::new(&[4u8; 32]).unwrap()));
     seed(&store);
     let state = Arc::new(ApiState {
+        debouncer: Arc::new(gfe_cp::Debouncer::new(
+            store.clone(),
+            std::time::Duration::from_millis(50),
+        )),
         store: store.clone(),
         auth: Auth::default(),
     });

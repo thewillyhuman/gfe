@@ -15,6 +15,7 @@
 //! * [`rollout`] — which revision a node may advance to (canary/wave gating, §8).
 //! * [`server`] — the HTTP operator + pull-agent API (§9).
 
+pub mod auto;
 pub mod crypto;
 pub mod diff;
 pub mod publish;
@@ -24,6 +25,7 @@ pub mod server;
 pub mod store;
 pub mod validate;
 
+pub use auto::Debouncer;
 pub use publish::{diff, prepare, publish, Diff, Prepared, PublishError};
 pub use render::{render, render_node_toml, Rendered};
 pub use server::{serve, serve_on, ApiState, Auth};

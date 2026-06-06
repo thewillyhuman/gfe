@@ -33,6 +33,7 @@ use tokio::net::TcpListener;
 pub struct ApiState {
     pub store: Store,
     pub auth: Auth,
+    pub debouncer: Arc<crate::auto::Debouncer>,
 }
 
 /// Optional bearer-token authentication. `None` token disables auth (dev/test).
@@ -64,6 +65,8 @@ pub async fn serve(addr: SocketAddr, state: Arc<ApiState>) -> std::io::Result<()
 /// ephemeral port and learn it before serving — used in tests).
 pub async fn serve_on(listener: TcpListener, state: Arc<ApiState>) -> std::io::Result<()> {
     tracing::info!(addr = ?listener.local_addr().ok(), "gfe-cp API listening (/v1 operator, /agent pull)");
+    // Background flush loop coalesces backend (de)registration bursts.
+    tokio::spawn(state.debouncer.clone().run());
     loop {
         let (stream, _peer) = match listener.accept().await {
             Ok(v) => v,
@@ -111,7 +114,7 @@ pub async fn handle(state: Arc<ApiState>, req: Request<Incoming>) -> Response<Fu
 
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     match segs.first().copied() {
-        Some("v1") => operator(&state.store, &method, &segs[1..], &body),
+        Some("v1") => operator(&state, &method, &segs[1..], &body),
         Some("agent") => agent(&state.store, &method, &segs[1..], &body),
         _ => text(StatusCode::NOT_FOUND, "not found"),
     }
@@ -119,8 +122,14 @@ pub async fn handle(state: Arc<ApiState>, req: Request<Incoming>) -> Response<Fu
 
 // ───────────────────────── operator API (/v1) ─────────────────────────
 
-fn operator(store: &Store, method: &Method, segs: &[&str], body: &[u8]) -> Response<Full<Bytes>> {
+fn operator(
+    state: &ApiState,
+    method: &Method,
+    segs: &[&str],
+    body: &[u8],
+) -> Response<Full<Bytes>> {
     use Method as M;
+    let store = &state.store;
     match (method, segs) {
         (&M::POST, ["fleets"]) => match parse::<Fleet>(body) {
             Ok(f) => result(store.create_fleet(f)),
@@ -174,6 +183,12 @@ fn operator(store: &Store, method: &Method, segs: &[&str], body: &[u8]) -> Respo
             Ok(port) => result(store.remove_backend(f, p, host, port)),
             Err(_) => text(StatusCode::BAD_REQUEST, "invalid port"),
         },
+        // High-frequency, idempotent service onboarding/offboarding: mutate +
+        // mark dirty; the debouncer coalesces bursts into one published revision.
+        (&M::POST, ["fleets", f, "pools", p, "register"]) => register_backend(state, f, p, body),
+        (&M::POST, ["fleets", f, "pools", p, "deregister"]) => {
+            deregister_backend(state, f, p, body)
+        }
 
         (&M::POST, ["fleets", f, "routes"]) => match parse::<RouteSpec>(body) {
             Ok(rt) => result(store.put_route(f, rt)),
@@ -224,6 +239,71 @@ fn add_cert(store: &Store, fleet: &str, body: &[u8]) -> Response<Full<Bytes>> {
         req.key_pem.as_bytes(),
     ) {
         Ok(content_sha) => json(StatusCode::OK, &AddCertResponse { content_sha }),
+        Err(e) => store_error(&e),
+    }
+}
+
+/// Body for backend (de)registration.
+#[derive(Deserialize)]
+struct RegisterRequest {
+    host: String,
+    port: u16,
+    #[serde(default = "one")]
+    weight: u32,
+}
+
+fn one() -> u32 {
+    1
+}
+
+/// Acknowledgement for a queued (de)registration.
+#[derive(Serialize)]
+struct QueuedResponse {
+    queued: bool,
+}
+
+fn register_backend(
+    state: &ApiState,
+    fleet: &str,
+    pool: &str,
+    body: &[u8],
+) -> Response<Full<Bytes>> {
+    let req: RegisterRequest = match parse(body) {
+        Ok(r) => r,
+        Err(r) => return r,
+    };
+    let backend = Backend {
+        host: req.host,
+        port: req.port,
+        weight: req.weight,
+        enabled: true,
+    };
+    match state.store.put_backend(fleet, pool, backend) {
+        Ok(()) => {
+            state.debouncer.mark(fleet);
+            json(StatusCode::ACCEPTED, &QueuedResponse { queued: true })
+        }
+        Err(e) => store_error(&e),
+    }
+}
+
+fn deregister_backend(
+    state: &ApiState,
+    fleet: &str,
+    pool: &str,
+    body: &[u8],
+) -> Response<Full<Bytes>> {
+    let req: RegisterRequest = match parse(body) {
+        Ok(r) => r,
+        Err(r) => return r,
+    };
+    match state.store.remove_backend(fleet, pool, &req.host, req.port) {
+        // Idempotent: removing an absent backend still succeeds and queues a
+        // republish (a no-op render dedups to the same revision).
+        Ok(_) => {
+            state.debouncer.mark(fleet);
+            json(StatusCode::ACCEPTED, &QueuedResponse { queued: true })
+        }
         Err(e) => store_error(&e),
     }
 }
@@ -478,8 +558,13 @@ mod tests {
     use crate::crypto::AeadSealer;
 
     fn state() -> Arc<ApiState> {
+        let store = Store::in_memory(Arc::new(AeadSealer::new(&[2u8; 32]).unwrap()));
         Arc::new(ApiState {
-            store: Store::in_memory(Arc::new(AeadSealer::new(&[2u8; 32]).unwrap())),
+            debouncer: Arc::new(crate::auto::Debouncer::new(
+                store.clone(),
+                std::time::Duration::from_millis(10),
+            )),
+            store,
             auth: Auth::default(),
         })
     }
@@ -517,7 +602,7 @@ mod tests {
         let s = state();
         // create fleet
         let r = operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets"],
             br#"{"name":"f","vip":"10.0.0.1"}"#,
@@ -525,7 +610,7 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         // add http listener
         let r = operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets", "f", "listeners"],
             br#"{"name":"http","address":"10.0.0.1","port":80,"protocol":"http"}"#,
@@ -533,26 +618,26 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         // add pool + backend
         operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets", "f", "pools"],
             br#"{"name":"web","backends":[]}"#,
         );
         operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets", "f", "pools", "web", "backends"],
             br#"{"host":"10.0.0.2","port":8080}"#,
         );
         // add route
         operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets", "f", "routes"],
             br#"{"name":"r","listener":"http","host":"a.example.org","action":{"forward":"web"}}"#,
         );
         // publish
-        let r = operator(&s.store, &Method::POST, &["fleets", "f", "publish"], b"");
+        let r = operator(&s, &Method::POST, &["fleets", "f", "publish"], b"");
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(s.store.target_seq("f").unwrap(), Some(1));
     }
@@ -561,8 +646,8 @@ mod tests {
     fn duplicate_fleet_conflicts() {
         let s = state();
         let body = br#"{"name":"f","vip":"10.0.0.1"}"#;
-        operator(&s.store, &Method::POST, &["fleets"], body);
-        let r = operator(&s.store, &Method::POST, &["fleets"], body);
+        operator(&s, &Method::POST, &["fleets"], body);
+        let r = operator(&s, &Method::POST, &["fleets"], body);
         assert_eq!(r.status(), StatusCode::CONFLICT);
     }
 
@@ -571,36 +656,36 @@ mod tests {
         let s = state();
         // Minimal fleet + node + publish.
         operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets"],
             br#"{"name":"f","vip":"10.0.0.1"}"#,
         );
         operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets", "f", "nodes"],
             br#"{"fleet":"f","gfe_node_id":"n1","mgmt_addr":"10.0.0.5"}"#,
         );
         operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets", "f", "listeners"],
             br#"{"name":"http","address":"10.0.0.1","port":80,"protocol":"http"}"#,
         );
         operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets", "f", "pools"],
             br#"{"name":"web","backends":[{"host":"10.0.0.2","port":8080}]}"#,
         );
         operator(
-            &s.store,
+            &s,
             &Method::POST,
             &["fleets", "f", "routes"],
             br#"{"name":"r","listener":"http","host":"a.example.org","action":{"forward":"web"}}"#,
         );
-        operator(&s.store, &Method::POST, &["fleets", "f", "publish"], b"");
+        operator(&s, &Method::POST, &["fleets", "f", "publish"], b"");
 
         // Agent fetches target (current_seq null → should get Target seq 1).
         let r = agent(

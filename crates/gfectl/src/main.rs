@@ -182,6 +182,20 @@ enum BackendCmd {
         pool: String,
         addr: String,
     },
+    /// Register a backend and auto-roll a revision (idempotent; debounced).
+    Register {
+        fleet: String,
+        pool: String,
+        addr: String,
+        #[arg(long, default_value_t = 1)]
+        weight: u32,
+    },
+    /// Deregister a backend and auto-roll a revision (idempotent; debounced).
+    Deregister {
+        fleet: String,
+        pool: String,
+        addr: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -360,6 +374,25 @@ fn backend(c: &Client, cmd: BackendCmd) -> Result<String> {
             c.delete(&format!(
                 "/v1/fleets/{fleet}/pools/{pool}/backends/{host}/{port}"
             ))
+        }
+        BackendCmd::Register {
+            fleet,
+            pool,
+            addr,
+            weight,
+        } => {
+            let (host, port) = split_authority(&addr)?;
+            c.post(
+                &format!("/v1/fleets/{fleet}/pools/{pool}/register"),
+                &json!({"host": host, "port": port, "weight": weight}),
+            )
+        }
+        BackendCmd::Deregister { fleet, pool, addr } => {
+            let (host, port) = split_authority(&addr)?;
+            c.post(
+                &format!("/v1/fleets/{fleet}/pools/{pool}/deregister"),
+                &json!({"host": host, "port": port}),
+            )
         }
     }
 }
