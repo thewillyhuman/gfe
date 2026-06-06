@@ -32,6 +32,8 @@ pub enum CryptoError {
     Rng,
     #[error("AEAD operation failed")]
     Aead,
+    #[error("invalid hex encoding")]
+    BadHex,
 }
 
 /// Lowercase hex encoding (no external `hex` crate; keeps the dep surface small).
@@ -48,6 +50,19 @@ fn hex(bytes: &[u8]) -> String {
 /// SHA-256 of `bytes`, hex-encoded.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     hex(digest(&SHA256, bytes).as_ref())
+}
+
+/// Decode a lowercase/uppercase hex string into bytes. Used to load the master
+/// key from a secret file or environment variable.
+pub fn decode_hex(s: &str) -> Result<Vec<u8>, CryptoError> {
+    let s = s.trim();
+    if !s.len().is_multiple_of(2) {
+        return Err(CryptoError::BadHex);
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| CryptoError::BadHex))
+        .collect()
 }
 
 /// The content hash that identifies a certificate: `sha256(cert_pem || key_pem)`.
@@ -227,5 +242,15 @@ mod tests {
     fn generated_master_key_is_usable() {
         let hexkey = AeadSealer::generate_master_key_hex().unwrap();
         assert_eq!(hexkey.len(), KEY_LEN * 2);
+        let raw = decode_hex(&hexkey).unwrap();
+        assert_eq!(raw.len(), KEY_LEN);
+        assert!(AeadSealer::new(&raw).is_ok());
+    }
+
+    #[test]
+    fn decode_hex_round_trips() {
+        assert_eq!(decode_hex("00ff10").unwrap(), vec![0x00, 0xff, 0x10]);
+        assert!(decode_hex("xyz").is_err());
+        assert!(decode_hex("abc").is_err()); // odd length
     }
 }
