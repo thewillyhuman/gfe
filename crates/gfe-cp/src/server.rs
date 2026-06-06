@@ -183,6 +183,7 @@ fn operator(store: &Store, method: &Method, segs: &[&str], body: &[u8]) -> Respo
 
         (&M::POST, ["fleets", f, "publish"]) => do_publish(store, f),
         (&M::POST, ["fleets", f, "rollback"]) => do_rollback(store, f, body),
+        (&M::GET, ["fleets", f, "diff"]) => do_diff(store, f),
         (&M::GET, ["fleets", f, "status"]) => fleet_status(store, f),
         (&M::GET, ["fleets", f, "revisions"]) => result(store.list_revisions(f)),
 
@@ -284,6 +285,29 @@ fn fleet_status(store: &Store, fleet: &str) -> Response<Full<Bytes>> {
             },
         ),
         Err(e) => store_error(&e),
+    }
+}
+
+/// Diff response: whether desired differs from target, and the line diff.
+#[derive(Serialize)]
+struct DiffResponse {
+    changed: bool,
+    current_seq: Option<i64>,
+    diff: String,
+}
+
+fn do_diff(store: &Store, fleet: &str) -> Response<Full<Bytes>> {
+    match crate::publish::diff(store, fleet) {
+        Ok(d) => json(
+            StatusCode::OK,
+            &DiffResponse {
+                changed: d.changed,
+                current_seq: d.current_seq,
+                diff: d.text,
+            },
+        ),
+        Err(PublishError::Store(e)) => store_error(&e),
+        Err(e) => text(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 

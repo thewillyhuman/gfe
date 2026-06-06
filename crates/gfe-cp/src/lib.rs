@@ -16,6 +16,7 @@
 //! * [`server`] — the HTTP operator + pull-agent API (§9).
 
 pub mod crypto;
+pub mod diff;
 pub mod publish;
 pub mod render;
 pub mod rollout;
@@ -23,7 +24,7 @@ pub mod server;
 pub mod store;
 pub mod validate;
 
-pub use publish::{prepare, publish, Prepared, PublishError};
+pub use publish::{diff, prepare, publish, Diff, Prepared, PublishError};
 pub use render::{render, render_node_toml, Rendered};
 pub use server::{serve, serve_on, ApiState, Auth};
 pub use store::{Store, StoreError};

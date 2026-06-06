@@ -78,6 +78,8 @@ enum FleetCmd {
     Get { name: String },
     /// Delete a fleet.
     Delete { name: String },
+    /// Show the rendered diff between desired state and the current target.
+    Diff { name: String },
     /// Validate, create a revision, and start rollout.
     Publish { name: String },
     /// Re-target an earlier revision (rollback).
@@ -236,6 +238,17 @@ fn fleet(c: &Client, cmd: FleetCmd) -> Result<String> {
         FleetCmd::List => c.get("/v1/fleets"),
         FleetCmd::Get { name } => c.get(&format!("/v1/fleets/{name}")),
         FleetCmd::Delete { name } => c.delete(&format!("/v1/fleets/{name}")),
+        FleetCmd::Diff { name } => {
+            let body = c.get(&format!("/v1/fleets/{name}/diff"))?;
+            let v: serde_json::Value = serde_json::from_str(&body)?;
+            let changed = v.get("changed").and_then(|c| c.as_bool()).unwrap_or(false);
+            if !changed {
+                return Ok("no changes (desired state matches the current target)".into());
+            }
+            // Print the line diff unescaped.
+            print!("{}", v.get("diff").and_then(|d| d.as_str()).unwrap_or(""));
+            Ok(String::new())
+        }
         FleetCmd::Publish { name } => c.post(&format!("/v1/fleets/{name}/publish"), &json!({})),
         FleetCmd::Rollback { name, to } => {
             c.post(&format!("/v1/fleets/{name}/rollback"), &json!({ "to": to }))

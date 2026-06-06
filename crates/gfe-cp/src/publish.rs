@@ -61,6 +61,35 @@ pub fn publish(store: &Store, fleet: &str, created_by: &str) -> Result<Prepared,
     Ok(prepared)
 }
 
+/// The difference between the fleet's current rollout target and the render of
+/// its present desired state (spec §9 `fleet diff`).
+#[derive(Debug, Clone)]
+pub struct Diff {
+    /// Whether the desired render differs from the current target.
+    pub changed: bool,
+    /// The current target revision sequence, if any.
+    pub current_seq: Option<i64>,
+    /// A line diff (current → desired).
+    pub text: String,
+}
+
+/// Compute the diff between current target and present desired state. Renders
+/// (and validates would-be output is unnecessary here) without persisting.
+pub fn diff(store: &Store, fleet: &str) -> Result<Diff, PublishError> {
+    let state = store.fleet_state(fleet)?;
+    let rendered = render(&state)?;
+    let (current_seq, current_json) = match store.target_seq(fleet)? {
+        Some(seq) => (Some(seq), store.get_revision(fleet, seq)?.dynamic_json),
+        None => (None, String::new()),
+    };
+    let changed = current_json != rendered.dynamic_json;
+    Ok(Diff {
+        changed,
+        current_seq,
+        text: crate::diff::unified(&current_json, &rendered.dynamic_json),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
