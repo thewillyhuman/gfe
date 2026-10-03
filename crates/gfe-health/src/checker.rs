@@ -18,9 +18,11 @@ type Key = (String, u16);
 /// pool it belongs to (a gRPC probe uses TLS for `https` pools).
 type Check = (HealthCheckConfig, Scheme);
 
-/// A running probe loop and the check it was started with.
+/// A running probe loop, the check it was started with, and the pools it
+/// reports the backend's health under.
 struct Running {
     check: Check,
+    pools: Vec<String>,
     task: JoinHandle<()>,
 }
 
@@ -41,9 +43,12 @@ impl HealthChecker {
     }
 
     /// Start probes for backends in `pools`, stop probes for backends no
-    /// longer present, and restart those whose check changed. Deduplicates
-    /// by `(host, port)`; the first pool's health-check config wins for a
-    /// shared backend.
+    /// longer present, and restart those whose check or list of pools
+    /// changed. Deduplicates by `(host, port)`; the first pool's
+    /// health-check config wins for a shared backend.
+    ///
+    /// The health series of a backend under a pool it no longer belongs to
+    /// are removed, so alerts do not fire for objects that are gone.
     ///
     /// A restarted probe keeps the backend's current status until its own
     /// thresholds say otherwise, so changing a check does not flap traffic.
@@ -62,30 +67,45 @@ impl HealthChecker {
 
         let mut tasks = self.tasks.lock().expect("health tasks poisoned");
 
-        // Stop probes for removed backends and for changed checks.
+        // Stop probes for removed backends, changed checks and changed pools.
         tasks.retain(|key, running| {
-            let unchanged = desired
-                .get(key)
-                .is_some_and(|(check, _)| *check == running.check);
+            let wanted = desired.get(key);
+            let unchanged = wanted
+                .is_some_and(|(check, pools)| *check == running.check && *pools == running.pools);
             if !unchanged {
                 running.task.abort();
+                let kept: &[String] = wanted.map_or(&[], |(_, pools)| pools);
+                for pool in running.pools.iter().filter(|p| !kept.contains(p)) {
+                    self.remove_series(pool, key);
+                }
             }
             unchanged
         });
 
-        // Start probes for new backends and for changed checks.
-        for (key, (check, pool_ids)) in desired {
+        // Start probes for new backends, changed checks and changed pools.
+        for (key, (check, pools)) in desired {
             if tasks.contains_key(&key) {
                 continue;
             }
             let this = self.clone();
             let (host, port) = key.clone();
             let task = tokio::spawn({
-                let check = check.clone();
-                async move { this.run_probe(host, port, check, pool_ids).await }
+                let (check, pools) = (check.clone(), pools.clone());
+                async move { this.run_probe(host, port, check, pools).await }
             });
-            tasks.insert(key, Running { check, task });
+            tasks.insert(key, Running { check, pools, task });
         }
+    }
+
+    /// Stop exporting the health of backend `(host, port)` under `pool`.
+    fn remove_series(&self, pool: &str, (host, port): &Key) {
+        let labels = BackendLabels {
+            pool: pool.to_string(),
+            backend: format!("{host}:{port}"),
+        };
+        let control = &self.metrics.control;
+        control.backend_health_status.remove(&labels);
+        control.backend_draining.remove(&labels);
     }
 
     /// Abort all probe loops.
@@ -292,6 +312,57 @@ mod tests {
         }
         assert!(failed, "the changed check was never applied");
         assert_eq!(checker.active_probes(), 1);
+        checker.stop_all();
+    }
+
+    /// Wait until `metrics` export a health series for `pool` and `port`.
+    async fn wait_for_series(metrics: &GfeMetrics, pool: &str, port: u16) -> bool {
+        let series =
+            format!(r#"gfe_backend_health_status{{pool="{pool}",backend="127.0.0.1:{port}"}}"#);
+        for _ in 0..50 {
+            if metrics.encode().contains(&series) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn removes_the_series_of_a_removed_backend() {
+        let port = spawn_healthz(200).await;
+        let metrics = Arc::new(GfeMetrics::new());
+        let checker = HealthChecker::new(Arc::new(HealthMap::new(false)), metrics.clone());
+        checker.reconcile(&[pool("127.0.0.1", port)], &HealthCheckConfig::default());
+        assert!(wait_for_series(&metrics, "p", port).await);
+
+        checker.reconcile(&[], &HealthCheckConfig::default());
+
+        let exported = metrics.encode();
+        assert!(
+            !exported.contains(&format!("127.0.0.1:{port}")),
+            "{exported}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_a_backend_under_the_pool_it_moved_to() {
+        let port = spawn_healthz(200).await;
+        let metrics = Arc::new(GfeMetrics::new());
+        let checker = HealthChecker::new(Arc::new(HealthMap::new(false)), metrics.clone());
+        let mut moved = pool("127.0.0.1", port);
+        checker.reconcile(std::slice::from_ref(&moved), &HealthCheckConfig::default());
+        assert!(wait_for_series(&metrics, "p", port).await);
+
+        moved.id = PoolId("q".into());
+        checker.reconcile(std::slice::from_ref(&moved), &HealthCheckConfig::default());
+
+        assert!(
+            wait_for_series(&metrics, "q", port).await,
+            "no series under the new pool"
+        );
+        let exported = metrics.encode();
+        assert!(!exported.contains(r#"pool="p""#), "{exported}");
         checker.stop_all();
     }
 }

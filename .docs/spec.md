@@ -541,7 +541,7 @@ expected_status     = 200
 
 A check, a pool's own or the node's `[health_check_defaults]`, is rejected when its `timeout` is zero, its `interval` is below 100 ms, its `path` does not start with `/`, or its `expected_status` or `drain_status` is outside 100-599.
 
-**Deduplication (`checker.rs`).** A backend appearing in multiple pools is probed once per `(ip, port, probe)`; the result is shared across all referencing pools. A check changed by a reload restarts the probe of every backend it applies to; the backend keeps its current status until the new probe's thresholds say otherwise.
+**Deduplication (`checker.rs`).** A backend appearing in multiple pools is probed once per `(ip, port, probe)`; the result is shared across all referencing pools. A check changed by a reload restarts the probe of every backend it applies to, and so does a change in the pools a backend belongs to; the backend keeps its current status until the new probe's thresholds say otherwise. The health series of a backend under a pool it has left, or of a backend removed altogether, are removed at the reload.
 
 **State machine (`state_machine.rs`):**
 
@@ -575,7 +575,7 @@ The file-based model and its rationale are inherited verbatim from `lb`'s ADR-00
 > **Code location:** `crates/gfe-tls/src/cert_store.rs`, `crates/gfe-tls/src/loader.rs`
 
 - On config load and on cert-file change, the manager parses each certificate entry (`loader.rs`), builds an updated cert store, and swaps it in atomically.
-- It records each certificate's **not-after** time and exposes `gfe_cert_expiry_timestamp{sni}` so monitoring can alert well before expiry.
+- It records each certificate's **not-after** time and exposes `gfe_cert_expiry_timestamp{sni}` so monitoring can alert well before expiry. The series of an SNI that a reload removes is removed with it.
 - A certificate that fails to parse or whose key does not match is rejected without disturbing the currently served store; the failure is logged and counted. A rotation caught between the two file writes is therefore harmless: the old certificate keeps being served until the matching key lands, which triggers the next reload.
 
 **Automated renewal (ACME) — Phase 3, high value.** Because certificate management is GFE's reason to exist, automated issuance/renewal via ACME (e.g. `instant-acme`) is a planned addition: GFE answers `http-01` (via a built-in `/.well-known/acme-challenge/` route on the HTTP listener) or `tls-alpn-01` challenges, obtains/renews certs ahead of expiry, writes them to the cert store, and hot-swaps — with zero team involvement after initial registration. This is specified as a follow-up so the MVP can ship with operator-provided certificates first.

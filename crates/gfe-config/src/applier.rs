@@ -58,6 +58,14 @@ pub fn install(shared: &ProxyShared, prepared: Prepared) {
     let expiries: Vec<(String, i64)> = cert_store.expiries().to_vec();
     let route_count = route_table.route_count();
     let pool_count = pool_set.len();
+    let removed_snis: Vec<String> = shared
+        .resolver
+        .current()
+        .expiries()
+        .iter()
+        .filter(|(sni, _)| !expiries.iter().any(|(kept, _)| kept == sni))
+        .map(|(sni, _)| sni.clone())
+        .collect();
 
     // Swap atomically.
     shared.resolver.swap(cert_store);
@@ -75,6 +83,10 @@ pub fn install(shared: &ProxyShared, prepared: Prepared) {
         m.cert_expiry_timestamp
             .get_or_create(&SniLabel { sni })
             .set(not_after);
+    }
+    // A certificate that is gone must not keep its expiry alert firing.
+    for sni in removed_snis {
+        m.cert_expiry_timestamp.remove(&SniLabel { sni });
     }
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -103,11 +115,12 @@ mod tests {
     use gfe_upstream::UpstreamClient;
     use std::io::Write;
 
-    fn temp_cert() -> (std::path::PathBuf, std::path::PathBuf) {
+    /// A fresh certificate and key, in files unique to `test`.
+    fn temp_cert(test: &str) -> (std::path::PathBuf, std::path::PathBuf) {
         let cert = rcgen::generate_simple_self_signed(vec!["example.org".into()]).unwrap();
         let dir = std::env::temp_dir();
-        let cp = dir.join(format!("gfe-ap-{}.crt", std::process::id()));
-        let kp = dir.join(format!("gfe-ap-{}.key", std::process::id()));
+        let cp = dir.join(format!("gfe-ap-{}-{test}.crt", std::process::id()));
+        let kp = dir.join(format!("gfe-ap-{}-{test}.key", std::process::id()));
         std::fs::File::create(&cp)
             .unwrap()
             .write_all(cert.cert.pem().as_bytes())
@@ -131,7 +144,7 @@ mod tests {
 
     #[test]
     fn apply_swaps_snapshots() {
-        let (cp, kp) = temp_cert();
+        let (cp, kp) = temp_cert("swap");
         let cfg = DynamicConfig {
             certificates: vec![CertEntry {
                 sni: vec![],
@@ -170,6 +183,33 @@ mod tests {
         assert_eq!(s.routes.load().route_count(), 1);
         assert_eq!(s.pools.load().len(), 1);
         assert!(s.resolver.current().resolve(None).is_some());
+    }
+
+    /// A config serving one certificate for `sni`.
+    fn config_with_certificate_for(sni: &str) -> DynamicConfig {
+        let (cert_file, key_file) = temp_cert(sni);
+        DynamicConfig {
+            certificates: vec![CertEntry {
+                sni: vec![sni.into()],
+                default: false,
+                cert_file,
+                key_file,
+            }],
+            listeners: vec![http_listener()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn apply_stops_exporting_the_expiry_of_a_removed_certificate() {
+        let s = shared();
+        apply(&s, &config_with_certificate_for("old.example.org")).unwrap();
+
+        apply(&s, &config_with_certificate_for("new.example.org")).unwrap();
+
+        let exported = s.metrics.encode();
+        assert!(!exported.contains("old.example.org"), "{exported}");
+        assert!(exported.contains("new.example.org"), "{exported}");
     }
 
     fn http_listener() -> Listener {
