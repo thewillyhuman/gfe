@@ -199,9 +199,20 @@ async fn run(
         }
     };
     let (stop_ops, ops_stopped) = watch::channel(false);
-    if let Some(socket) = &ops_socket {
-        tokio::spawn(ops::serve(socket.clone(), ops_state.clone(), ops_stopped));
-    }
+    let serve_ops = || {
+        if let Some(socket) = &ops_socket {
+            tokio::spawn(ops::serve(socket.clone(), ops_state.clone(), ops_stopped));
+        }
+    };
+    // A node that takes over shares the ops socket with the running node,
+    // which is ready: answering "not ready" next to it until this one is
+    // would have the node withdrawn by whoever probes it.
+    let serve_ops_once_ready = if predecessor.is_some() {
+        Some(serve_ops)
+    } else {
+        serve_ops();
+        None
+    };
 
     // Start the control plane: initial config load/apply (with cache
     // fallback), listeners, health probes, last-known-good cache, and the
@@ -212,6 +223,9 @@ async fn run(
         .map_err(|e| anyhow::anyhow!("starting controller: {e}"))?;
 
     ready.store(true, Ordering::SeqCst);
+    if let Some(serve_ops) = serve_ops_once_ready {
+        serve_ops();
+    }
     tracing::info!("gfe-node ready");
     match predecessor {
         // Without this the predecessor does not stop: it gives up on this

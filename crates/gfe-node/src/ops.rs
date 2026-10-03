@@ -50,7 +50,8 @@ pub async fn listen(
 
 /// Serve the ops endpoints on `listener` until `stop` flips to `true`, which
 /// is when another process has taken the socket over. Requests already
-/// accepted are still answered.
+/// accepted are still answered, and their connections then closed, so that
+/// a client that keeps one asks the new process next.
 pub async fn serve(
     listener: Arc<TcpListener>,
     state: Arc<OpsState>,
@@ -74,17 +75,32 @@ pub async fn serve(
             }
         };
         let state = state.clone();
+        let mut stop = stop.clone();
         tokio::spawn(async move {
             let io = TokioIo::new(stream);
             let svc = service_fn(move |req| {
                 let state = state.clone();
                 async move { handle(state, req.uri().path()).await }
             });
-            let _ = auto::Builder::new(TokioExecutor::new())
-                .serve_connection(io, svc)
-                .await;
+            let builder = auto::Builder::new(TokioExecutor::new());
+            let conn = builder.serve_connection(io, svc);
+            tokio::pin!(conn);
+            tokio::select! {
+                _ = conn.as_mut() => {}
+                // Whatever this process answers from now on is about a node
+                // that is leaving, not the one that serves.
+                () = stopped(&mut stop) => {
+                    conn.as_mut().graceful_shutdown();
+                    let _ = conn.await;
+                }
+            }
         });
     }
+}
+
+/// Returns once `stop` flips to `true`, or its sender is gone.
+async fn stopped(stop: &mut watch::Receiver<bool>) {
+    let _ = stop.wait_for(|stopped| *stopped).await;
 }
 
 async fn handle(state: Arc<OpsState>, path: &str) -> Result<Response<Full<Bytes>>, Infallible> {

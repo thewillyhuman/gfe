@@ -314,6 +314,26 @@ impl Load {
     }
 }
 
+impl Load {
+    /// Probe `/readyz` at `ops` as load balancers do: one prober over a new
+    /// connection each time, one over a connection it keeps until it is
+    /// closed.
+    fn probe_readiness(ops: SocketAddr) -> Load {
+        let stop = Arc::new(AtomicBool::new(false));
+        let clients = vec![
+            std::thread::spawn({
+                let stop = stop.clone();
+                move || probe_with_a_connection_each(ops, &stop)
+            }),
+            std::thread::spawn({
+                let stop = stop.clone();
+                move || probe_over_a_kept_connection(ops, &stop)
+            }),
+        ];
+        Load { stop, clients }
+    }
+}
+
 /// A pause between requests, so that a test does not use up the loopback
 /// ports of the host.
 const BETWEEN_REQUESTS: Duration = Duration::from_millis(2);
@@ -383,6 +403,152 @@ fn request_on(stream: &mut TcpStream) -> io::Result<String> {
         response.extend_from_slice(&chunk[..read]);
     }
     Ok(String::from_utf8_lossy(&response).to_string())
+}
+
+/// Whether `response` says the node is ready.
+fn says_ready(response: &str) -> bool {
+    response.starts_with("HTTP/1.1 200")
+}
+
+fn probe_with_a_connection_each(ops: SocketAddr, stop: &AtomicBool) -> Outcome {
+    let mut outcome = Outcome::default();
+    while !stop.load(Ordering::SeqCst) {
+        match try_http_get(ops, "/readyz") {
+            Ok(response) if says_ready(&response) => outcome.answered += 1,
+            Ok(response) => outcome
+                .failures
+                .push(format!("new connection: {response:?}")),
+            Err(e) => outcome.failures.push(format!("new connection: {e}")),
+        }
+        std::thread::sleep(BETWEEN_REQUESTS);
+    }
+    outcome
+}
+
+/// Keeps its connection for the next probe until the server closes it. A
+/// probe that finds its kept connection closed before any answer arrives is
+/// sent again over a new one, as HTTP/1.1 clients do with a request that
+/// changes nothing (RFC 9112, section 9.3.1).
+fn probe_over_a_kept_connection(ops: SocketAddr, stop: &AtomicBool) -> Outcome {
+    let mut outcome = Outcome::default();
+    let mut kept: Option<TcpStream> = None;
+    while !stop.load(Ordering::SeqCst) {
+        let reused = kept.is_some();
+        let mut stream = match kept.take() {
+            Some(stream) => stream,
+            None => match TcpStream::connect(ops) {
+                Ok(stream) => stream,
+                Err(e) => {
+                    outcome.failures.push(format!("reconnecting: {e}"));
+                    continue;
+                }
+            },
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        match probe_on(&mut stream) {
+            Ok(Some(response)) => {
+                if says_ready(&response) {
+                    outcome.answered += 1;
+                } else {
+                    outcome
+                        .failures
+                        .push(format!("kept connection: {response:?}"));
+                }
+                if !response.to_ascii_lowercase().contains("connection: close") {
+                    kept = Some(stream);
+                }
+            }
+            Ok(None) if reused => continue,
+            Ok(None) => outcome
+                .failures
+                .push("new connection closed without an answer".to_string()),
+            Err(e) => outcome.failures.push(format!("kept connection: {e}")),
+        }
+        std::thread::sleep(BETWEEN_REQUESTS);
+    }
+    outcome
+}
+
+/// One `GET /readyz` on a connection that may be used again: its response,
+/// or `None` if the connection was closed before any of it arrived.
+fn probe_on(stream: &mut TcpStream) -> io::Result<Option<String>> {
+    fn closed(e: &io::Error) -> bool {
+        use io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset};
+        matches!(e.kind(), BrokenPipe | ConnectionAborted | ConnectionReset)
+    }
+
+    match stream.write_all(b"GET /readyz HTTP/1.1\r\nhost: t\r\n\r\n") {
+        Err(e) if closed(&e) => return Ok(None),
+        sent => sent?,
+    }
+    let mut response = Vec::new();
+    let mut chunk = [0u8; 1024];
+    loop {
+        let read = match stream.read(&mut chunk) {
+            Ok(0) if response.is_empty() => return Ok(None),
+            Err(e) if response.is_empty() && closed(&e) => return Ok(None),
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "closed before the response was complete",
+                ))
+            }
+            Ok(read) => read,
+            Err(e) => return Err(e),
+        };
+        response.extend_from_slice(&chunk[..read]);
+        let text = String::from_utf8_lossy(&response).to_string();
+        if let Some((head, body)) = text.split_once("\r\n\r\n") {
+            if body.len() >= content_length(head) {
+                return Ok(Some(text));
+            }
+        }
+    }
+}
+
+/// The `Content-Length` of a response whose head is `head`; 0 if it has
+/// none.
+fn content_length(head: &str) -> usize {
+    head.lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse().ok())?
+        })
+        .unwrap_or(0)
+}
+
+#[test]
+fn readiness_probes_see_the_node_ready_throughout_an_upgrade() {
+    let mut node = Node::start_draining_for("readiness", "8s");
+    node.tells_service_manager();
+    // Keeps the outgoing node around while it drains, so that it could
+    // still answer probes after the successor has taken over.
+    let mut client = TcpStream::connect(node.proxy).unwrap();
+    request_on(&mut client).unwrap();
+    let probes = Load::probe_readiness(node.ops);
+    std::thread::sleep(Duration::from_millis(300));
+
+    node.signal("-USR2");
+    node.tells_service_manager();
+    node.tells_service_manager();
+    std::thread::sleep(Duration::from_millis(1000));
+    let outcome = probes.finish();
+
+    assert_eq!(
+        node.process.try_wait().unwrap(),
+        None,
+        "the outgoing node should still drain"
+    );
+    assert!(
+        outcome.failures.is_empty(),
+        "{} probes failed, {} were answered: {:?}",
+        outcome.failures.len(),
+        outcome.answered,
+        outcome.failures
+    );
 }
 
 #[test]
