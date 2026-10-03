@@ -58,7 +58,9 @@ spread connections across a fleet with no coordination.
   codes, body and wire bytes, broken-off exchanges, connection close reasons,
   TLS parameters and handshake failures, upstream failures by kind, and node
   saturation; one structured JSON event per request and per connection, logged
-  when it is over; `/healthz` `/readyz` `/metrics`; alert rules, a dashboard
+  when it is over, to a file or standard output, by a writer that never holds
+  up a request and counts what it had to drop; `/healthz` `/readyz`
+  `/metrics`; alert rules, a dashboard
   and an offline routing tracer (`gfe-trace`). See the
   [observability guide](.docs/observability.md).
 - **Kernel view (optional, eBPF)** — accept-queue wait, round-trip time,
