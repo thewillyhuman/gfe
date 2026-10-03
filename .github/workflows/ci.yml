@@ -37,8 +37,11 @@ jobs:
           components: clippy
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-      - name: cargo clippy --workspace --all-targets -- -D warnings
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      # `--locked` everywhere: CI must build what Cargo.lock says, as the
+      # release does, so a lockfile that no longer matches fails here and not
+      # at tag time.
+      - name: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
   test:
     name: test (ubuntu, stable)
@@ -52,10 +55,10 @@ jobs:
       # Tests are the source of truth — run the whole workspace on every PR.
       # GFE is a pure-userspace proxy (tokio + hyper + rustls/ring), so there
       # are no platform-gated features to toggle here.
-      - name: cargo build --workspace --all-targets
-        run: cargo build --workspace --all-targets --verbose
-      - name: cargo test --workspace
-        run: cargo test --workspace --verbose
+      - name: cargo build --locked --workspace --all-targets
+        run: cargo build --locked --workspace --all-targets --verbose
+      - name: cargo test --locked --workspace
+        run: cargo test --locked --workspace --verbose
 
   docs:
     name: docs build
@@ -67,7 +70,25 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       # Catches broken doc links / examples without publishing anything.
-      - name: cargo doc --workspace --no-deps
-        run: cargo doc --workspace --no-deps
+      - name: cargo doc --locked --workspace --no-deps
+        run: cargo doc --locked --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-deny
+        # 0.16.4+ pulls in rustsec >= 0.30 which understands CVSS v4.0 vectors.
+        run: cargo install cargo-deny --locked --version '>=0.16.4'
+      # Advisories, licenses, bans and sources, as configured in `deny.toml`.
+      # Also run weekly by supply-chain.yml, but a scheduled workflow is
+      # switched off by GitHub when a repository goes quiet; this one is not.
+      - name: cargo deny check
+        run: cargo deny check
