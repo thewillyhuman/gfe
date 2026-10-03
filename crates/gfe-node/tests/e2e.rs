@@ -1502,3 +1502,60 @@ async fn fails_grpc_call_without_a_route_with_grpc_status_unimplemented() {
     assert_eq!(call.response.status(), 200);
     assert_eq!(call.response.headers()["grpc-status"], "12");
 }
+
+/// Stands in for the kernel: every accepted connection waited 5 ms.
+struct FixedAcceptQueue;
+
+impl gfe_proxy::AcceptQueue for FixedAcceptQueue {
+    fn waited(&self, _local: SocketAddr, _peer: SocketAddr) -> Option<Duration> {
+        Some(Duration::from_millis(5))
+    }
+}
+
+#[tokio::test]
+async fn reports_how_long_a_connection_waited_to_be_accepted() {
+    let (logs, _guard) = CapturedLogs::start();
+    let shared = Arc::new(
+        ProxyShared::new(
+            UpstreamClient::new(1).unwrap(),
+            Arc::new(GfeMetrics::new()),
+            LimitsConfig::default(),
+            TimeoutsConfig::default(),
+            TlsConfig::default(),
+        )
+        .with_accept_queue(Arc::new(FixedAcceptQueue)),
+    );
+    let (proxy, _tx) = start_proxy(&fixed_response_config(), shared.clone()).await;
+
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nhost: a.example.org\r\nconnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    read_until_closed(&mut stream).await;
+    let event = logs.connection_event().await;
+
+    assert_eq!(event["accept_wait_ms"], 5.0);
+    let metrics = shared.metrics.encode();
+    let expected = r#"gfe_accept_queue_wait_seconds_count{listener="http"} 1"#;
+    assert!(
+        metrics.contains(expected),
+        "missing {expected} in:\n{metrics}"
+    );
+}
+
+#[tokio::test]
+async fn connection_log_has_no_accept_wait_without_a_kernel_view() {
+    let (logs, _guard) = CapturedLogs::start();
+    let (proxy, _tx) = start_proxy(&fixed_response_config(), build_shared()).await;
+
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nhost: a.example.org\r\nconnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    read_until_closed(&mut stream).await;
+    let event = logs.connection_event().await;
+
+    assert!(event.get("accept_wait_ms").is_none(), "{event}");
+}

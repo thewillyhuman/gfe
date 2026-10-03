@@ -103,6 +103,8 @@ pub struct ConnRecord {
     tls: Option<TlsInfo>,
     tls_handshake: Option<Duration>,
     tls_error: Option<&'static str>,
+    /// How long the connection waited in the accept queue, if known.
+    accept_wait: Option<Duration>,
     requests: u64,
     reason: &'static str,
     /// The error that ended the connection, for the log only.
@@ -110,12 +112,30 @@ pub struct ConnRecord {
 }
 
 impl ConnRecord {
-    /// Start accounting for a connection just accepted on `listener`.
-    pub fn open(shared: Arc<ProxyShared>, listener: &Listener, peer: SocketAddr) -> Self {
+    /// Start accounting for a connection just accepted on `listener`, whose
+    /// socket is bound to `local` on the node's side (if that could be read).
+    pub fn open(
+        shared: Arc<ProxyShared>,
+        listener: &Listener,
+        local: Option<SocketAddr>,
+        peer: SocketAddr,
+    ) -> Self {
         let label = ListenerLabel {
             listener: listener.id.to_string(),
         };
         let metrics = &shared.metrics.proxy;
+        // Asked first: the answer is "until now".
+        let accept_wait = shared
+            .accept_queue
+            .as_ref()
+            .zip(local)
+            .and_then(|(queue, local)| queue.waited(local, peer));
+        if let Some(waited) = accept_wait {
+            metrics
+                .accept_queue_wait_seconds
+                .get_or_create(&label)
+                .observe(waited.as_secs_f64());
+        }
         metrics.connections_accepted.get_or_create(&label).inc();
         metrics.connections_active.inc();
         metrics
@@ -132,6 +152,7 @@ impl ConnRecord {
             tls: None,
             tls_handshake: None,
             tls_error: None,
+            accept_wait,
             requests: 0,
             reason: REASON_SHUTDOWN,
             error: None,
@@ -254,6 +275,7 @@ impl Drop for ConnRecord {
             tls_resumed = tls.map(|t| t.resumed),
             tls_handshake_ms = self.tls_handshake.map(crate::record::millis),
             tls_error = self.tls_error,
+            accept_wait_ms = self.accept_wait.map(crate::record::millis),
             requests = self.requests,
             bytes_in = self.traffic.read.load(Ordering::Relaxed),
             bytes_out = self.traffic.written.load(Ordering::Relaxed),

@@ -34,7 +34,7 @@ pub async fn serve(
     tls: Option<Arc<ServerConfig>>,
 ) {
     let _ = stream.set_nodelay(true);
-    let mut record = ConnRecord::open(shared.clone(), &listener, peer);
+    let mut record = ConnRecord::open(shared.clone(), &listener, stream.local_addr().ok(), peer);
     let stream = record.count_traffic(stream);
     let mut ctx = ConnCtx {
         shared: shared.clone(),

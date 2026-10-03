@@ -126,6 +126,7 @@ pub struct ProxyMetrics {
     pub connections_rejected: Family<RejectLabel, Counter>,
     pub connections_closed: Family<CloseLabels, Counter>,
     pub connection_duration_seconds: Family<ListenerLabel, Histogram>,
+    pub accept_queue_wait_seconds: Family<ListenerLabel, Histogram>,
     pub tls_handshakes: Family<TlsResultLabel, Counter>,
     pub tls_handshake_failures: Family<TlsFailureLabel, Counter>,
     pub tls_connections: Family<TlsLabels, Counter>,
@@ -165,6 +166,15 @@ fn lifetime_histogram() -> Histogram {
     Histogram::new([0.01, 0.1, 0.5, 1.0, 5.0, 15.0, 60.0, 300.0, 900.0, 3600.0])
 }
 
+/// Constructor for accept-queue wait histograms in a `Family`. Seconds:
+/// 50µs .. 1s. A node that keeps up accepts within microseconds; the upper
+/// buckets are where falling behind shows.
+fn queue_wait_histogram() -> Histogram {
+    Histogram::new([
+        0.00005, 0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0,
+    ])
+}
+
 /// Constructor for latency histograms in a `Family`. A plain `fn` (not a
 /// closure) so the `Family`'s default constructor type parameter applies.
 fn latency_histogram() -> Histogram {
@@ -182,6 +192,7 @@ impl ProxyMetrics {
             connections_rejected: Family::default(),
             connections_closed: Family::default(),
             connection_duration_seconds: Family::new_with_constructor(lifetime_histogram),
+            accept_queue_wait_seconds: Family::new_with_constructor(queue_wait_histogram),
             tls_handshakes: Family::default(),
             tls_handshake_failures: Family::default(),
             tls_connections: Family::default(),
@@ -247,6 +258,11 @@ impl ProxyMetrics {
             "gfe_connection_duration_seconds",
             "Lifetime of client connections",
             m.connection_duration_seconds.clone(),
+        );
+        registry.register(
+            "gfe_accept_queue_wait_seconds",
+            "Time connections spent established but not yet accepted (needs the eBPF view)",
+            m.accept_queue_wait_seconds.clone(),
         );
         registry.register(
             "gfe_tls_handshakes",

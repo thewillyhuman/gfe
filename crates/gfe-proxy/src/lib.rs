@@ -28,9 +28,10 @@ use gfe_router::RouteTable;
 use gfe_tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_types::{LimitsConfig, ListenerId, TimeoutsConfig, TlsConfig};
 use gfe_upstream::{HealthMap, PoolSet, UpstreamClient};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Shared state read by the data plane and mutated by the control plane.
 pub struct ProxyShared {
@@ -53,6 +54,17 @@ pub struct ProxyShared {
     pub tls: TlsConfig,
     /// Set when the node is draining (fails `/readyz`).
     pub draining: AtomicBool,
+    /// The kernel's view of the accept queue, where one is available.
+    pub accept_queue: Option<Arc<dyn AcceptQueue>>,
+}
+
+/// What only the kernel knows about a connection the node has just accepted.
+/// The proxy does not care where the answer comes from; the node provides an
+/// implementation when it has one (eBPF) and none otherwise.
+pub trait AcceptQueue: Send + Sync {
+    /// How long the connection between `local` and `peer` had been waiting,
+    /// its handshake complete, when `accept` returned it. `None` if unknown.
+    fn waited(&self, local: SocketAddr, peer: SocketAddr) -> Option<Duration>;
 }
 
 impl ProxyShared {
@@ -88,7 +100,14 @@ impl ProxyShared {
             timeouts,
             tls,
             draining: AtomicBool::new(false),
+            accept_queue: None,
         }
+    }
+
+    /// Ask `accept_queue` how long each accepted connection waited.
+    pub fn with_accept_queue(mut self, accept_queue: Arc<dyn AcceptQueue>) -> Self {
+        self.accept_queue = Some(accept_queue);
+        self
     }
 }
 
