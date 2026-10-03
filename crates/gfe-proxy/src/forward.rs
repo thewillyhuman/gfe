@@ -2,6 +2,7 @@
 //! headers, the upstream call, and mapping the upstream response back.
 
 use crate::errors::{full_body, incoming_body, synthetic, RespBody};
+use crate::record::{CountedBody, RequestRecord};
 use crate::ConnCtx;
 use bytes::Bytes;
 use gfe_metrics::{UpstreamDurationLabels, UpstreamLabels};
@@ -108,17 +109,19 @@ fn empty_body() -> gfe_upstream::ReqBody {
 /// against a freshly selected backend on a pre-response failure; everything
 /// else is attempted exactly once. GFE never retries after any response bytes
 /// have been forwarded.
+///
+/// The upstream leg (pool, backend, attempts, time to first byte, failure
+/// reason) is noted on `record`.
 pub async fn forward(
     ctx: &ConnCtx,
     pool: &Arc<Pool>,
-    route_id: &str,
     req: Request<Incoming>,
-    host: &str,
-    request_id: &str,
+    record: &mut RequestRecord,
 ) -> Response<RespBody> {
     let shared = &ctx.shared;
     let hash_key = Some(gfe_upstream::policy::hash64(ctx.client_ip));
     let proto = if ctx.is_tls { "https" } else { "http" };
+    record.forwarding_to(pool.id.to_string());
 
     let (mut parts, body) = req.into_parts();
     let asks_for_trailers = asks_for_trailers(&parts.headers);
@@ -131,14 +134,16 @@ pub async fn forward(
     }
     append_forwarded_for(&mut parts.headers, &ctx.client_ip.to_string());
     set_header(&mut parts.headers, "x-forwarded-proto", proto);
-    set_header(&mut parts.headers, "x-forwarded-host", host);
-    set_header(
-        &mut parts.headers,
-        "forwarded",
-        &format!("for={};host={};proto={}", ctx.client_ip, host, proto),
+    set_header(&mut parts.headers, "x-forwarded-host", record.host());
+    let forwarded = format!(
+        "for={};host={};proto={}",
+        ctx.client_ip,
+        record.host(),
+        proto
     );
+    set_header(&mut parts.headers, "forwarded", &forwarded);
     if !parts.headers.contains_key("x-request-id") {
-        set_header(&mut parts.headers, "x-request-id", request_id);
+        set_header(&mut parts.headers, "x-request-id", record.request_id());
     }
 
     let retryable = is_idempotent(&parts.method) && body_is_empty(&parts.headers);
@@ -154,23 +159,27 @@ pub async fn forward(
     let mut streamed_body = if retryable {
         None
     } else {
-        Some(body.map_err(|e| Box::new(e) as BoxError).boxed())
+        let counted = CountedBody::new(body, record.request_bytes());
+        Some(counted.map_err(|e| Box::new(e) as BoxError).boxed())
     };
 
+    let forwarding_started = Instant::now();
     for attempt in 0..max_attempts {
         let selection = match pool.select(&shared.health, hash_key) {
             Some(s) => s,
             None => {
                 shared.metrics.proxy.no_healthy_upstream.inc();
+                record.failed("no_healthy_upstream");
                 return synthetic(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "no healthy upstream",
-                    request_id,
+                    record.request_id(),
                 );
             }
         };
         let _inflight = selection.guard;
         let authority = selection.upstream.authority();
+        record.attempting(authority.clone());
 
         // Build this attempt's upstream request.
         let upstream_req = if retryable {
@@ -210,40 +219,50 @@ pub async fn forward(
 
         match result {
             Ok(Ok(resp)) => {
-                record_upstream(shared, route_id, pool, &authority, resp.status().as_u16());
-                return map_upstream_response(resp, ctx, request_id);
+                record.upstream_responded(forwarding_started.elapsed());
+                record_upstream(shared, pool, &authority, resp.status().as_u16());
+                return map_upstream_response(resp, ctx);
             }
             Ok(Err(e)) => {
                 shared.metrics.proxy.upstream_connect_errors.inc();
-                record_upstream(shared, route_id, pool, &authority, 502);
+                record_upstream(shared, pool, &authority, 502);
                 if attempt + 1 < max_attempts {
                     tracing::debug!(error = %e, backend = %authority, "upstream failed, retrying");
                     continue;
                 }
                 tracing::debug!(error = %e, backend = %authority, "upstream request failed");
-                return synthetic(StatusCode::BAD_GATEWAY, "upstream error", request_id);
+                record.failed("upstream_error");
+                return synthetic(
+                    StatusCode::BAD_GATEWAY,
+                    "upstream error",
+                    record.request_id(),
+                );
             }
             Err(_) => {
                 // Timeouts are not retried.
-                record_upstream(shared, route_id, pool, &authority, 504);
+                record_upstream(shared, pool, &authority, 504);
                 tracing::debug!(backend = %authority, "upstream request timed out");
-                return synthetic(StatusCode::GATEWAY_TIMEOUT, "upstream timeout", request_id);
+                record.failed("upstream_timeout");
+                return synthetic(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "upstream timeout",
+                    record.request_id(),
+                );
             }
         }
     }
 
     // Unreachable in practice (the loop always returns), but keep the type
     // checker happy and fail safe.
-    synthetic(StatusCode::BAD_GATEWAY, "upstream error", request_id)
+    record.failed("upstream_error");
+    synthetic(
+        StatusCode::BAD_GATEWAY,
+        "upstream error",
+        record.request_id(),
+    )
 }
 
-fn record_upstream(
-    shared: &crate::ProxyShared,
-    _route_id: &str,
-    pool: &Pool,
-    backend: &str,
-    status: u16,
-) {
+fn record_upstream(shared: &crate::ProxyShared, pool: &Pool, backend: &str, status: u16) {
     shared
         .metrics
         .proxy
@@ -256,11 +275,7 @@ fn record_upstream(
         .inc();
 }
 
-fn map_upstream_response(
-    resp: Response<Incoming>,
-    ctx: &ConnCtx,
-    _request_id: &str,
-) -> Response<RespBody> {
+fn map_upstream_response(resp: Response<Incoming>, ctx: &ConnCtx) -> Response<RespBody> {
     let (mut parts, body) = resp.into_parts();
     strip_hop_by_hop(&mut parts.headers);
 

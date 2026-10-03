@@ -42,6 +42,16 @@ pub struct RouteLabels {
     pub route: String,
 }
 
+/// Labels for requests that did not run to completion. `by` is who broke the
+/// exchange off: `client` or `upstream`.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct AbortLabels {
+    pub listener: String,
+    pub host: String,
+    pub route: String,
+    pub by: String,
+}
+
 /// Labels for upstream requests.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct UpstreamLabels {
@@ -67,7 +77,11 @@ pub struct ProxyMetrics {
     pub tls_handshake_duration_seconds: Histogram,
     pub tls_sni_no_cert: Counter,
     pub requests: Family<RequestLabels, Counter>,
+    pub requests_in_flight: Gauge,
+    pub requests_aborted: Family<AbortLabels, Counter>,
     pub request_duration_seconds: Family<RouteLabels, Histogram>,
+    pub request_body_bytes: Family<RouteLabels, Counter>,
+    pub response_body_bytes: Family<RouteLabels, Counter>,
     pub no_route: Counter,
     pub no_healthy_upstream: Counter,
     pub upstream_requests: Family<UpstreamLabels, Counter>,
@@ -100,7 +114,11 @@ impl ProxyMetrics {
             tls_handshake_duration_seconds: Histogram::new(latency_buckets()),
             tls_sni_no_cert: Counter::default(),
             requests: Family::default(),
+            requests_in_flight: Gauge::default(),
+            requests_aborted: Family::default(),
             request_duration_seconds: Family::new_with_constructor(latency_histogram),
+            request_body_bytes: Family::default(),
+            response_body_bytes: Family::default(),
             no_route: Counter::default(),
             no_healthy_upstream: Counter::default(),
             upstream_requests: Family::default(),
@@ -142,13 +160,33 @@ impl ProxyMetrics {
         );
         registry.register(
             "gfe_requests",
-            "Requests by route and status",
+            "Finished requests by route and status (499: abandoned by the client before a response)",
             m.requests.clone(),
         );
         registry.register(
+            "gfe_requests_in_flight",
+            "Requests received whose response is not finished yet",
+            m.requests_in_flight.clone(),
+        );
+        registry.register(
+            "gfe_requests_aborted",
+            "Requests broken off before completion, by who did it (client, upstream)",
+            m.requests_aborted.clone(),
+        );
+        registry.register(
             "gfe_request_duration_seconds",
-            "End-to-end request latency",
+            "Time from request head to the last byte of the response",
             m.request_duration_seconds.clone(),
+        );
+        registry.register(
+            "gfe_request_body_bytes",
+            "Request body bytes received from clients",
+            m.request_body_bytes.clone(),
+        );
+        registry.register(
+            "gfe_response_body_bytes",
+            "Response body bytes sent to clients",
+            m.response_body_bytes.clone(),
         );
         registry.register(
             "gfe_no_route",

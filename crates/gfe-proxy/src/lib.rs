@@ -13,6 +13,7 @@ pub mod drain;
 pub mod errors;
 pub mod forward;
 pub mod listeners;
+pub mod record;
 pub mod service;
 
 pub use drain::DrainController;
@@ -85,5 +86,6 @@ pub struct ConnCtx {
     pub listener_id: ListenerId,
     pub is_tls: bool,
     pub client_ip: IpAddr,
+    pub client_port: u16,
     pub sni: Option<String>,
 }

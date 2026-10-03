@@ -776,8 +776,11 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_tls_handshake_duration_seconds` | Histogram | Handshake latency |
 | `gfe_tls_resumptions_total` | Counter | Resumed sessions (label: kind ∈ {ticket, psk}) |
 | `gfe_tls_sni_no_cert_total` | Counter | Handshakes with no matching certificate |
-| `gfe_requests_total` | Counter | Requests (labels: listener, route, method, status) |
-| `gfe_request_duration_seconds` | Histogram | End-to-end request latency |
+| `gfe_requests_total` | Counter | Finished requests (labels: listener, host, route, status). `host` is the matched route's configured pattern, never the raw `Host`. Status `499` = abandoned by the client before GFE had a response |
+| `gfe_requests_in_flight` | Gauge | Requests received whose response is not finished yet |
+| `gfe_requests_aborted_total` | Counter | Requests broken off before completion (labels: listener, host, route, by ∈ {client, upstream}) |
+| `gfe_request_duration_seconds` | Histogram | Time from the request head to the last byte of the response (labels: listener, host, route) |
+| `gfe_request_body_bytes_total` / `gfe_response_body_bytes_total` | Counter | Body bytes received from / sent to clients (labels: listener, host, route) |
 | `gfe_no_route_total` | Counter | Requests matching no route (404) |
 | `gfe_no_healthy_upstream_total` | Counter | Requests with no healthy upstream (503) |
 | `gfe_upstream_requests_total` | Counter | Upstream requests (labels: pool, backend, status) |
@@ -813,7 +816,23 @@ It prints which listener/route matched, which pool and which backend would be se
 ### 12.3 Logging
 
 - **Structured JSON logs** via `tracing` + `tracing-subscriber`.
-- **Access logs** (one structured event per request): timestamp, request id, client IP, SNI, host, method, path, status, bytes, durations (total, upstream), route id, pool, backend, TLS version/cipher. Sampling configurable for very high request rates.
+- **Access logs** (`record.rs`): one structured event per request under the target `gfe::access`, emitted when the exchange is **over** — the response written to its last byte, or abandoned — so sizes, duration and outcome are final. A request the client gives up on before any response is still logged. Fields:
+
+  | Field | Meaning |
+  |---|---|
+  | `request_id` | Client-supplied `X-Request-Id` if valid, else generated; also sent upstream and returned on synthetic responses |
+  | `client`, `client_port` | Peer address of the connection |
+  | `listener`, `proto`, `http_version`, `sni` | Where and how the request arrived |
+  | `method`, `host`, `path`, `user_agent` | The request (no query string, no other headers) |
+  | `status` | Response status; `499` when the client left before a response existed |
+  | `route`, `pool`, `backend`, `attempts` | Routing decision, the backend of the last attempt, and how many attempts were made |
+  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_error`, `upstream_timeout`, `unknown_acme_challenge` |
+  | `termination` | `complete`, `client_abort` (client left before or during the response) or `upstream_abort` (upstream failed mid-body) |
+  | `request_bytes`, `response_bytes` | Body bytes actually read from / written to the client |
+  | `duration_ms` | Request head to last response byte, microsecond resolution |
+  | `upstream_ttfb_ms` | First upstream attempt to upstream response headers |
+
+  Fields that do not apply to a request are omitted.
 - Log levels: ERROR/WARN always on; INFO/DEBUG adjustable at runtime via an env-filter reload, no restart.
 - **No body logging.** Headers are logged selectively (allowlist) to avoid leaking secrets.
 

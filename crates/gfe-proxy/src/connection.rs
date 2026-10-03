@@ -72,6 +72,7 @@ pub async fn serve(
                         listener_id: listener.id.clone(),
                         is_tls: true,
                         client_ip,
+                        client_port: peer.port(),
                         sni,
                     });
                     serve_io(tls_stream, ctx).await;
@@ -105,6 +106,7 @@ pub async fn serve(
                 listener_id: listener.id.clone(),
                 is_tls: false,
                 client_ip,
+                client_port: peer.port(),
                 sni: None,
             });
             serve_io(stream, ctx).await;

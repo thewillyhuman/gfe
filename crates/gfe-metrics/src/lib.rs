@@ -5,8 +5,8 @@ pub mod proxy_metrics;
 
 pub use control_metrics::{BackendLabels, ControlMetrics, SniLabel};
 pub use proxy_metrics::{
-    ListenerLabel, ProxyMetrics, RejectLabel, RequestLabels, RouteLabels, TlsResultLabel,
-    UpstreamDurationLabels, UpstreamLabels,
+    AbortLabels, ListenerLabel, ProxyMetrics, RejectLabel, RequestLabels, RouteLabels,
+    TlsResultLabel, UpstreamDurationLabels, UpstreamLabels,
 };
 
 use prometheus_client::registry::Registry;

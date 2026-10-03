@@ -882,3 +882,203 @@ async fn relays_grpc_stream_message_by_message() {
     call.send("two").await;
     assert_eq!(call.next_frame().await.into_data().unwrap(), "two");
 }
+
+/// The JSON log lines emitted on this thread while the guard is alive.
+#[derive(Clone, Default)]
+struct CapturedLogs(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl CapturedLogs {
+    /// Capture logs the way the node emits them (JSON). The proxy and the
+    /// test share one thread, so a thread-default subscriber sees them all.
+    fn start() -> (CapturedLogs, tracing::subscriber::DefaultGuard) {
+        let logs = CapturedLogs::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(move || writer.clone())
+            .finish();
+        (logs, tracing::subscriber::set_default(subscriber))
+    }
+
+    /// The fields of the single access-log event of the test, waiting for it
+    /// to be emitted.
+    async fn access_event(&self) -> serde_json::Value {
+        for _ in 0..250 {
+            let events = self.events_of("gfe::access");
+            if let [event] = events.as_slice() {
+                return event.clone();
+            }
+            assert!(events.len() < 2, "more than one access event: {events:?}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("no access event was logged");
+    }
+
+    fn events_of(&self, target: &str) -> Vec<serde_json::Value> {
+        let raw = self.0.lock().unwrap().clone();
+        String::from_utf8_lossy(&raw)
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|event| event["target"] == target)
+            .map(|event| event["fields"].clone())
+            .collect()
+    }
+}
+
+/// A plaintext listener forwarding `a.example.org` to one HTTP/1.1 backend.
+fn forwarding_config(upstream: SocketAddr) -> DynamicConfig {
+    DynamicConfig {
+        listeners: vec![Listener {
+            id: ListenerId("http".into()),
+            address: "127.0.0.1".parse().unwrap(),
+            port: 0,
+            protocol: ListenProtocol::Http,
+        }],
+        routes: vec![Route {
+            id: RouteId("web".into()),
+            listener: ListenerId("http".into()),
+            host: "a.example.org".into(),
+            path_prefix: "/".into(),
+            action: RouteAction::Forward("pool".into()),
+        }],
+        pools: vec![UpstreamPool {
+            id: PoolId("pool".into()),
+            scheme: Scheme::Http,
+            lb_policy: Default::default(),
+            upstreams: vec![Upstream {
+                host: upstream.ip().to_string(),
+                port: upstream.port(),
+                weight: 1,
+            }],
+            health_check: None,
+        }],
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn access_log_describes_a_proxied_request() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_upstream().await;
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), build_shared()).await;
+
+    let (_, body) = http_get(proxy, "a.example.org", "/some/path").await;
+    let event = logs.access_event().await;
+
+    assert_eq!(event["status"], 200);
+    assert_eq!(event["method"], "GET");
+    assert_eq!(event["host"], "a.example.org");
+    assert_eq!(event["path"], "/some/path");
+    assert_eq!(event["http_version"], "HTTP/1.1");
+    assert_eq!(event["client"], "127.0.0.1");
+    assert_eq!(event["route"], "web");
+    assert_eq!(event["pool"], "pool");
+    assert_eq!(event["backend"], upstream.to_string());
+    assert_eq!(event["attempts"], 1);
+    assert_eq!(event["termination"], "complete");
+    assert_eq!(event["response_bytes"], body.len());
+    assert!(event["duration_ms"].as_f64().unwrap() > 0.0, "{event}");
+    assert!(event["upstream_ttfb_ms"].as_f64().unwrap() > 0.0, "{event}");
+}
+
+#[tokio::test]
+async fn access_log_and_metrics_count_body_bytes() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_upstream().await;
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+
+    let stream = TcpStream::connect(proxy).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let req = Request::builder()
+        .method("POST")
+        .uri("/upload")
+        .header("host", "a.example.org")
+        .body(Full::new(Bytes::from(vec![b'x'; 1000])))
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let event = logs.access_event().await;
+
+    assert_eq!(event["request_bytes"], 1000);
+    assert_eq!(event["response_bytes"], body.len());
+    let labels = r#"{listener="http",host="a.example.org",route="web"}"#;
+    let metrics = shared.metrics.encode();
+    assert!(
+        metrics.contains(&format!("gfe_request_body_bytes_total{labels} 1000")),
+        "{metrics}"
+    );
+    assert!(
+        metrics.contains(&format!(
+            "gfe_response_body_bytes_total{labels} {}",
+            body.len()
+        )),
+        "{metrics}"
+    );
+    assert!(metrics.contains("gfe_requests_in_flight 0"), "{metrics}");
+}
+
+/// A client that gives up while GFE is still waiting for the upstream never
+/// receives a status. It is logged as 499, the convention nginx established.
+#[tokio::test]
+async fn logs_request_abandoned_before_the_response_as_499() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_upstream_answering_after(Duration::from_secs(3)).await;
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream
+        .write_all(b"GET /slow HTTP/1.1\r\nhost: a.example.org\r\n\r\n")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    drop(stream);
+    let event = logs.access_event().await;
+
+    assert_eq!(event["status"], 499);
+    assert_eq!(event["termination"], "client_abort");
+    assert_eq!(event["path"], "/slow");
+    let metrics = shared.metrics.encode();
+    assert!(
+        metrics.contains(
+            r#"gfe_requests_aborted_total{listener="http",host="a.example.org",route="web",by="client"} 1"#
+        ),
+        "{metrics}"
+    );
+}
+
+#[tokio::test]
+async fn logs_client_abort_in_the_middle_of_a_response() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_grpc_upstream().await;
+    let (proxy, _tx) = start_proxy(&grpc_config(upstream), build_shared()).await;
+
+    // The stream is open and has delivered a message when the client leaves.
+    let mut call = GrpcCall::open(proxy).await;
+    call.send("one").await;
+    assert_eq!(call.next_frame().await.into_data().unwrap(), "one");
+    drop(call);
+    let event = logs.access_event().await;
+
+    assert_eq!(event["status"], 200);
+    assert_eq!(event["termination"], "client_abort");
+    assert_eq!(event["response_bytes"], 3);
+    assert_eq!(event["request_bytes"], 3);
+}

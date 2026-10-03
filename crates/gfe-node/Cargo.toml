@@ -29,6 +29,7 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 gfe-health = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }
