@@ -231,6 +231,10 @@ gfe/
 │   │       ├── linux.rs                 # Load, attach, read
 │   │       └── unsupported.rs           # Stand-in elsewhere
 │   │
+│   ├── gfe-handover/               # Passing a node's listening sockets to its successor
+│   │   └── src/
+│   │       └── lib.rs                   # The exchange over a Unix socket (Unix only)
+│   │
 │   │  ─────────────────────────────────
 │   │  BINARIES
 │   │  ─────────────────────────────────

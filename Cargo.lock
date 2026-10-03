@@ -669,6 +669,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gfe-handover"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+]
+
+[[package]]
 name = "gfe-health"
 version = "0.1.0"
 dependencies = [

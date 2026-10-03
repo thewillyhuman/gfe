@@ -220,6 +220,7 @@ crates/
   gfe-controller/   Orchestrator: config + health + cache + hot-reload
   gfe-metrics/      Prometheus counters/gauges/histograms
   gfe-ebpf/         Optional kernel view of the node's TCP connections (eBPF)
+  gfe-handover/     Passing a node's listening sockets to its successor
   gfe-node/         Main binary: proxy + controller + ops server
   gfe-trace/        Offline routing-decision tracer + CI routing assertions
   gfe-cp-types/     Control-plane domain + agent/operator wire types

@@ -14,6 +14,8 @@ members = [
     "crates/gfe-loadtest",
     # Kernel-side view of the node's TCP connections (eBPF, Linux only).
     "crates/gfe-ebpf",
+    # Passing a node's listening sockets to its successor (Unix only).
+    "crates/gfe-handover",
     # Control plane (see .docs/gfe-cp-spec.md): desired-state config management,
     # rendering, revisions, rollout, and the pull agent + CLI.
     "crates/gfe-cp-types",
@@ -50,6 +52,7 @@ gfe-controller = { path = "crates/gfe-controller" }
 gfe-cp-types = { path = "crates/gfe-cp-types" }
 gfe-cp = { path = "crates/gfe-cp" }
 gfe-ebpf = { path = "crates/gfe-ebpf" }
+gfe-handover = { path = "crates/gfe-handover" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
