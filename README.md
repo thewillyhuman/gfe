@@ -46,8 +46,13 @@ spread connections across a fleet with no coordination.
   node), stops accepting, and drains in-flight requests up to a deadline.
 - **ACME http-01** — serves `/.well-known/acme-challenge/*` from a challenge
   store (the CA-ordering driver is a documented integration point).
-- **Observability** — Prometheus metrics, structured JSON access + event logs,
-  `/healthz` `/readyz` `/metrics`, and an offline routing tracer (`gfe-trace`).
+- **Observability** — Prometheus metrics for requests, latency, status and gRPC
+  codes, body and wire bytes, broken-off exchanges, connection close reasons,
+  TLS parameters and handshake failures, upstream failures by kind, and node
+  saturation; one structured JSON event per request and per connection, logged
+  when it is over; `/healthz` `/readyz` `/metrics`; alert rules, a dashboard
+  and an offline routing tracer (`gfe-trace`). See the
+  [observability guide](.docs/observability.md).
 
 ## How it fits with `lb`
 
@@ -212,6 +217,7 @@ deploy/
   generate-config.sh          Scaffold a dynamic config
   validate-config.sh          --check-config wrapper
   grafana/gfe-dashboard.json  Prebuilt dashboard
+  prometheus/gfe-alerts.yml   Alerting rules (GFE + host network)
 ```
 
 ## Development
@@ -269,6 +275,7 @@ whole system builds and unit-tests with no external services.
 ## Documentation
 
 - **[Data-plane spec](.docs/spec.md)** — proxy architecture and protocol details.
+- **[Observability guide](.docs/observability.md)** — which signal answers which question.
 - **[Control-plane spec](.docs/gfe-cp-spec.md)** — config management + deployment.
 
 ## License
