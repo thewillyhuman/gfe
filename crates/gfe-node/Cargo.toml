@@ -54,6 +54,7 @@ assets = [
     { source = "../../deploy/generate-config.sh", dest = "/usr/share/gfe/generate-config.sh", mode = "755" },
     { source = "../../deploy/validate-config.sh", dest = "/usr/share/gfe/validate-config.sh", mode = "755" },
     { source = "../../deploy/grafana/gfe-dashboard.json", dest = "/usr/share/gfe/grafana/gfe-dashboard.json", mode = "644" },
+    { source = "../../deploy/prometheus/gfe-alerts.yml", dest = "/usr/share/gfe/prometheus/gfe-alerts.yml", mode = "644" },
     { source = "../../config/gfe.example.toml", dest = "/usr/share/doc/gfe/gfe.example.toml", mode = "644", doc = true },
     { source = "../../config/gfe-dynamic.example.json", dest = "/usr/share/doc/gfe/gfe-dynamic.example.json", mode = "644", doc = true },
     { source = "../../README.md", dest = "/usr/share/doc/gfe/README.md", mode = "644", doc = true },

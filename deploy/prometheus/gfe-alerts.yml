@@ -1,0 +1,256 @@
+# Prometheus alerting rules for a GFE fleet.
+#
+# The first groups use what GFE itself exports (see .docs/spec.md, section 12).
+# The last group uses node_exporter: packets, drops and interface errors are
+# kernel facts the proxy cannot see from user space, so they are alerted on at
+# the host level and correlated by `instance`.
+#
+# Thresholds are starting points. Check with:
+#   promtool check rules deploy/prometheus/gfe-alerts.yml
+groups:
+  - name: gfe-availability
+    rules:
+      - alert: GfeNodeDown
+        expr: up{job="gfe"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "GFE node {{ $labels.instance }} is not being scraped"
+          description: "The node is down or its ops server is unreachable. The L4 LB withdraws it once /readyz fails."
+
+      - alert: GfeHighServerErrorRatio
+        expr: |
+          sum by (listener, host, route) (rate(gfe_requests_total{status=~"5.."}[5m]))
+            /
+          sum by (listener, host, route) (rate(gfe_requests_total[5m]))
+            > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of requests to route {{ $labels.route }} fail with 5xx"
+          description: "Look at the access log `error` field and at gfe_upstream_errors_total to tell GFE-generated errors from relayed ones."
+
+      - alert: GfeNoHealthyUpstream
+        expr: increase(gfe_no_healthy_upstream_total[5m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Requests on {{ $labels.instance }} found a pool with no healthy backend"
+          description: "Every backend of at least one pool is UNHEALTHY or DRAINING; clients receive 503."
+
+      - alert: GfeBackendUnhealthy
+        expr: gfe_backend_health_status == 0 and gfe_backend_draining == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Backend {{ $labels.backend }} of pool {{ $labels.pool }} fails its health check"
+
+      - alert: GfeUpstreamErrors
+        expr: sum by (pool, backend, kind) (rate(gfe_upstream_errors_total[5m])) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Requests to {{ $labels.backend }} ({{ $labels.pool }}) fail before a response: {{ $labels.kind }}"
+          description: "connect_refused: nothing listens. connect_timeout: host or path down. tls: certificate or trust problem. reset: backend closes connections. timeout: backend too slow."
+
+      - alert: GfeGrpcErrorRatio
+        expr: |
+          sum by (host, route) (rate(gfe_grpc_responses_total{grpc_status!="0"}[5m]))
+            /
+          sum by (host, route) (rate(gfe_grpc_responses_total[5m]))
+            > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of gRPC calls on route {{ $labels.route }} end with a non-OK status"
+          description: "gRPC calls are HTTP 200 whatever their outcome, so this does not show in the HTTP status."
+
+  - name: gfe-latency
+    rules:
+      - alert: GfeHighRequestLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, host, route) (rate(gfe_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p99 request duration on route {{ $labels.route }} is {{ $value | humanizeDuration }}"
+          description: "Measured to the last byte of the response. Compare with gfe_upstream_request_duration_seconds to see whether the time is spent in the backend. Routes carrying long-lived streams need their own threshold."
+
+      - alert: GfeSlowTlsHandshakes
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, instance) (rate(gfe_tls_handshake_duration_seconds_bucket[5m]))
+          ) > 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p99 TLS handshake on {{ $labels.instance }} takes {{ $value | humanizeDuration }}"
+          description: "Handshakes are the CPU-bound part of the proxy: check CPU saturation and the resumption ratio in gfe_tls_connections_total."
+
+  - name: gfe-saturation
+    rules:
+      - alert: GfeConnectionsNearLimit
+        expr: gfe_connections_active / gfe_connections_limit > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} uses {{ $value | humanizePercentage }} of its connection limit"
+
+      - alert: GfeConnectionsRejected
+        expr: rate(gfe_connections_rejected_total{reason="limit"}[5m]) > 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} is refusing connections at its connection limit"
+
+      - alert: GfeFileDescriptorsNearLimit
+        expr: process_open_fds{job="gfe"} / process_max_fds{job="gfe"} > 0.8
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} uses {{ $value | humanizePercentage }} of its file descriptors"
+          description: "At the limit, accept() fails and upstream connections cannot be opened. Raise LimitNOFILE or lower max_connections."
+
+      - alert: GfeRuntimeSaturated
+        expr: avg_over_time(gfe_runtime_global_queue_depth[5m]) > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "The async runtime on {{ $labels.instance }} has tasks waiting for a worker"
+          description: "The node is out of CPU: compare rate(process_cpu_seconds_total[5m]) with gfe_runtime_workers."
+
+  - name: gfe-clients
+    rules:
+      - alert: GfeClientAborts
+        expr: |
+          sum by (host, route) (rate(gfe_requests_aborted_total{by="client"}[5m]))
+            /
+          sum by (host, route) (rate(gfe_requests_total[5m]))
+            > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of requests to route {{ $labels.route }} are abandoned by the client"
+          description: "Clients give up before the response completes: usually a slow backend running into client timeouts, or a network problem on the client path (check the host-network alerts)."
+
+      - alert: GfeUpstreamAborts
+        expr: sum by (host, route) (rate(gfe_requests_aborted_total{by="upstream"}[5m])) > 0.1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Backends of route {{ $labels.route }} break off responses in the middle of the body"
+
+      - alert: GfeTlsHandshakeFailures
+        expr: |
+          sum by (instance) (rate(gfe_tls_handshakes_total{result="failed"}[5m]))
+            /
+          sum by (instance) (rate(gfe_tls_handshakes_total[5m]))
+            > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of TLS handshakes on {{ $labels.instance }} fail"
+          description: "gfe_tls_handshake_failures_total has the reason. alert_received after a certificate change usually means clients do not trust the new chain."
+
+  - name: gfe-config
+    rules:
+      - alert: GfeConfigReloadFailing
+        expr: increase(gfe_config_reload_errors_total[15m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} rejected a config reload and keeps serving the previous config"
+          description: "The node log has the reason. The fleet is now inconsistent if other nodes accepted the same config."
+
+      - alert: GfeCertificateExpiresSoon
+        expr: gfe_cert_expiry_timestamp - time() < 14 * 86400
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "Certificate for {{ $labels.sni }} expires in {{ $value | humanizeDuration }}"
+
+      - alert: GfeCertificateExpiresVerySoon
+        expr: gfe_cert_expiry_timestamp - time() < 3 * 86400
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "Certificate for {{ $labels.sni }} expires in {{ $value | humanizeDuration }}"
+
+      - alert: GfeNodeRestarted
+        expr: changes(process_start_time_seconds{job="gfe"}[15m]) > 1
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} restarted more than once in 15 minutes"
+
+  # Kernel-level network health, from node_exporter (collectors netdev,
+  # netstat, softnet and conntrack, all enabled by default).
+  - name: gfe-host-network
+    rules:
+      - alert: GfeHostInterfaceErrors
+        expr: |
+          rate(node_network_receive_errs_total{device!="lo"}[5m])
+            + rate(node_network_transmit_errs_total{device!="lo"}[5m]) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Interface {{ $labels.device }} on {{ $labels.instance }} reports errors"
+          description: "Receive or transmit errors point at the NIC, cable, transceiver or switch port."
+
+      - alert: GfeHostInterfaceDrops
+        expr: |
+          rate(node_network_receive_drop_total{device!="lo"}[5m])
+            + rate(node_network_transmit_drop_total{device!="lo"}[5m]) > 10
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Interface {{ $labels.device }} on {{ $labels.instance }} drops {{ $value | humanize }} packets/s"
+
+      - alert: GfeHostInterfaceDown
+        expr: node_network_up{device!~"lo|docker.*|veth.*"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Interface {{ $labels.device }} on {{ $labels.instance }} is down"
+          description: "Includes the GRE tunnel the L4 LB delivers traffic through."
+
+      - alert: GfeHostTcpRetransmissions
+        expr: |
+          rate(node_netstat_Tcp_RetransSegs[5m]) / rate(node_netstat_Tcp_OutSegs[5m]) > 0.02
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of TCP segments sent by {{ $labels.instance }} are retransmissions"
+          description: "Packet loss between the node and its clients or backends."
+
+      - alert: GfeHostListenQueueOverflow
+        expr: rate(node_netstat_TcpExt_ListenOverflows[5m]) > 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} drops incoming connections: a listen queue is full"
+          description: "Connections are lost before GFE can accept them, so they appear in no GFE metric or log. The node is not accepting fast enough: check CPU and raise net.core.somaxconn."
+
+      - alert: GfeHostPacketBacklogDrops
+        expr: rate(node_softnet_dropped_total[5m]) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} drops packets in the kernel receive backlog"
+          description: "The CPUs handling network interrupts cannot keep up (net.core.netdev_max_backlog, RSS/RPS distribution)."
+
+      - alert: GfeHostConntrackNearLimit
+        expr: node_nf_conntrack_entries / node_nf_conntrack_entries_limit > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "The connection tracking table on {{ $labels.instance }} is {{ $value | humanizePercentage }} full"
+          description: "When it fills up, new connections are dropped silently."
+
+      - alert: GfeHostUdpErrors
+        expr: |
+          rate(node_netstat_Udp_InErrors[5m]) + rate(node_netstat_Udp_RcvbufErrors[5m]) > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} drops incoming UDP datagrams"
+          description: "GFE serves no UDP, but name resolution of backends depends on it."
