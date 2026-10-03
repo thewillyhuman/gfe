@@ -25,9 +25,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # A tag can be pushed on any commit, including one CI never saw: nothing is
+  # built for release before the tests have passed on exactly that commit.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: cargo test --locked --workspace
+        run: cargo test --locked --workspace
+
   build-binaries:
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.runs-on }}
+    needs: test
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +69,13 @@ jobs:
         run: cross build --release --locked --target ${{ matrix.target }} --bin gfe-node
       - name: Build gfe-trace
         run: cross build --release --locked --target ${{ matrix.target }} --bin gfe-trace
+      - name: Run the built binaries
+        # The runner is x86_64: only that build can be executed here. It
+        # catches a binary that links but does not start.
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          target/${{ matrix.target }}/release/gfe-node --version
+          target/${{ matrix.target }}/release/gfe-trace --help > /dev/null
       - name: Package
         run: |
           set -euo pipefail
