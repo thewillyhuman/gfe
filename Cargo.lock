@@ -576,27 +576,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gfe-agent"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "gfe-cp",
- "gfe-cp-types",
- "gfe-types",
- "http-body-util",
- "hyper",
- "hyper-util",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "gfe-config"
 version = "0.1.0"
 dependencies = [
@@ -630,41 +609,6 @@ dependencies = [
  "rustls",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "gfe-cp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "gfe-config",
- "gfe-cp-types",
- "gfe-router",
- "gfe-tls",
- "gfe-types",
- "gfe-upstream",
- "http-body-util",
- "hyper",
- "hyper-util",
- "ring",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "gfe-cp-types"
-version = "0.1.0"
-dependencies = [
- "gfe-types",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -847,21 +791,6 @@ dependencies = [
  "tower-service",
  "tracing",
  "webpki-roots 0.26.11",
-]
-
-[[package]]
-name = "gfectl"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "http-body-util",
- "hyper",
- "hyper-util",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
