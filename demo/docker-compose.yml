@@ -1,0 +1,180 @@
+# A local GFE playground: one node, a handful of backends, clients that
+# misbehave, and the monitoring stack around it. See README.md.
+#
+#   docker compose up -d --build     then open http://localhost:13000
+#   docker compose down -v           to remove everything, volumes included
+#
+# Every published port is bound to 127.0.0.1 only.
+name: gfe-demo
+
+x-httpbin: &httpbin
+  # An HTTP server with endpoints for any status, delay or body size.
+  image: mccutchen/go-httpbin:latest
+  restart: unless-stopped
+
+x-greeter: &greeter
+  # grpc-java example server: Greeter, reflection and the gRPC health service.
+  image: grpc/java-example-hostname:latest
+  platform: linux/amd64
+  restart: unless-stopped
+
+services:
+  # ---------------------------------------------------------------- the node
+  setup:
+    # One-shot: a self-signed certificate for *.demo.local, and a log
+    # directory the unprivileged node may write to. Run it again with
+    # ROTATE=1 to replace the certificate under the running node.
+    image: alpine/openssl:latest
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      ROTATE: "${ROTATE:-}"
+    command:
+      - |
+        set -e
+        if [ ! -f /certs/tls.crt ] || [ -n "$$ROTATE" ]; then
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+            -keyout /certs/tls.key -out /certs/tls.crt -days 30 \
+            -subj "/CN=demo.local" -addext "subjectAltName=DNS:*.demo.local"
+          chmod 644 /certs/tls.key
+        fi
+        chown 65532:65532 /logs
+    volumes:
+      - certs:/certs
+      - gfe-logs:/logs
+
+  gfe:
+    build:
+      context: ..
+    image: gfe-node:demo
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    # The node logs JSON to stdout. `tee` also keeps it in a file, which is
+    # what Alloy ships to Loki, without anything needing the Docker socket.
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["/usr/local/bin/gfe-node --config /etc/gfe/gfe.toml 2>&1 | tee -a /var/log/gfe/gfe.log"]
+    restart: unless-stopped
+    volumes:
+      - ./gfe:/etc/gfe:ro
+      - certs:/etc/gfe-certs:ro
+      - gfe-logs:/var/log/gfe
+      - gfe-state:/var/lib/gfe
+    ports:
+      - "127.0.0.1:18080:8080"   # http listener
+      - "127.0.0.1:18443:8443"   # https listener
+      - "127.0.0.1:19000:9000"   # grpc listener (cleartext HTTP/2)
+      - "127.0.0.1:19101:9101"   # /metrics /healthz /readyz
+
+  # ---------------------------------------------------------------- backends
+  web1: *httpbin
+  web2: *httpbin
+  web3: *httpbin
+  api1: *httpbin
+  api2: *httpbin
+  media1: *httpbin
+
+  flapper:
+    # Up for 90 seconds, down for 30, forever: a backend that keeps failing
+    # its health check and coming back.
+    image: busybox:latest
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /www && echo "flapper" > /www/index.html
+        while true; do timeout 90 httpd -f -p 8080 -h /www; sleep 30; done
+
+  gone:
+    # A host that is up with nothing listening: connections are refused.
+    image: busybox:latest
+    restart: unless-stopped
+    command: ["sleep", "infinity"]
+
+  greeter1: *greeter
+  greeter2: *greeter
+
+  grpcbin:
+    # grpc-go test server: unary, streaming and error-returning methods.
+    image: moul/grpcbin:latest
+    platform: linux/amd64
+    restart: unless-stopped
+
+  # ----------------------------------------------------------------- clients
+  traffic:
+    build: ./traffic
+    restart: unless-stopped
+    depends_on: [gfe]
+    deploy:
+      replicas: 3        # three client addresses in the logs
+
+  # -------------------------------------------------------------- monitoring
+  node-exporter:
+    # Shares the node's network namespace, so the interface and TCP counters
+    # it reports are the ones of the GFE container.
+    image: prom/node-exporter:v1.12.1
+    restart: unless-stopped
+    network_mode: "service:gfe"
+    command:
+      - --web.listen-address=:9100
+      - --collector.disable-defaults
+      - --collector.netdev
+      - --collector.netstat
+      - --collector.netclass
+      - --collector.sockstat
+      - --collector.softnet
+      - --collector.conntrack
+
+  prometheus:
+    image: prom/prometheus:v3.12.0
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../deploy/prometheus/gfe-alerts.yml:/etc/prometheus/rules/gfe-alerts.yml:ro
+    ports:
+      - "127.0.0.1:19090:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.33.1
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "127.0.0.1:19093:9093"
+
+  loki:
+    image: grafana/loki:3.7.8
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+
+  alloy:
+    # Tails the node's log file and pushes it to Loki.
+    image: grafana/alloy:v1.20.1
+    restart: unless-stopped
+    depends_on: [loki]
+    command: ["run", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - gfe-logs:/var/log/gfe:ro
+
+  grafana:
+    image: grafana/grafana:13.2.0
+    restart: unless-stopped
+    depends_on: [prometheus, loki]
+    environment:
+      # A local playground: no login, full access. Never do this elsewhere.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/gfe/gfe-dashboard.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../deploy/grafana:/var/lib/grafana/dashboards/gfe:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards/demo:ro
+    ports:
+      - "127.0.0.1:13000:3000"
+
+volumes:
+  certs:
+  gfe-logs:
+  gfe-state:

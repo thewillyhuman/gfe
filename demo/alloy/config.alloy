@@ -1,0 +1,35 @@
+// Ship the node's JSON log lines to Loki. `target` (gfe::access, gfe::conn,
+// or a module path) and `level` become labels; everything else stays in the
+// line and is parsed at query time with `| json`.
+
+local.file_match "gfe" {
+  path_targets = [{ __path__ = "/var/log/gfe/gfe.log", job = "gfe" }]
+}
+
+loki.source.file "gfe" {
+  targets    = local.file_match.gfe.targets
+  forward_to = [loki.process.gfe.receiver]
+}
+
+loki.process "gfe" {
+  stage.json {
+    expressions = { target = "target", level = "level", timestamp = "timestamp" }
+  }
+
+  stage.labels {
+    values = { target = "", level = "" }
+  }
+
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339Nano"
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

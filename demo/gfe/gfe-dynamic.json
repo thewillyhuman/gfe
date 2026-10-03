@@ -1,0 +1,77 @@
+{
+  "certificates": [
+    {
+      "default": true,
+      "sni": ["*.demo.local"],
+      "cert_file": "/etc/gfe-certs/tls.crt",
+      "key_file": "/etc/gfe-certs/tls.key"
+    }
+  ],
+  "listeners": [
+    { "id": "http",  "address": "0.0.0.0", "port": 8080, "protocol": "http" },
+    { "id": "https", "address": "0.0.0.0", "port": 8443, "protocol": "https" },
+    { "id": "grpc",  "address": "0.0.0.0", "port": 9000, "protocol": "http" }
+  ],
+  "routes": [
+    { "id": "shop",          "listener": "https", "host": "shop.demo.local",  "path_prefix": "/",     "action": { "forward": "web" } },
+    { "id": "shop-api",      "listener": "https", "host": "shop.demo.local",  "path_prefix": "/api/", "action": { "forward": "api" } },
+    { "id": "api",           "listener": "https", "host": "api.demo.local",   "path_prefix": "/",     "action": { "forward": "api" } },
+    { "id": "media",         "listener": "https", "host": "media.demo.local", "path_prefix": "/",     "action": { "forward": "media" } },
+
+    { "id": "api-plain",     "listener": "http",  "host": "api.demo.local",    "path_prefix": "/", "action": { "forward": "api" } },
+    { "id": "legacy",        "listener": "http",  "host": "legacy.demo.local", "path_prefix": "/", "action": { "forward": "legacy" } },
+    { "id": "to-https",      "listener": "http",  "host": "shop.demo.local",   "path_prefix": "/", "action": { "redirect": { "scheme": "https", "status": 308 } } },
+    { "id": "ping",          "listener": "http",  "host": "*",                 "path_prefix": "/ping", "action": { "fixed": { "status": 200, "body": "pong\n" } } },
+
+    { "id": "greeter",       "listener": "grpc",  "host": "greeter.demo.local",     "path_prefix": "/", "action": { "forward": "greeter" } },
+    { "id": "grpcbin",       "listener": "grpc",  "host": "grpcbin.demo.local",     "path_prefix": "/", "action": { "forward": "grpcbin" } },
+    { "id": "grpc-legacy",   "listener": "grpc",  "host": "grpc-legacy.demo.local", "path_prefix": "/", "action": { "forward": "grpc-legacy" } }
+  ],
+  "pools": [
+    {
+      "id": "web", "scheme": "http", "lb_policy": "round_robin",
+      "upstreams": [
+        { "host": "web1", "port": 8080 },
+        { "host": "web2", "port": 8080 },
+        { "host": "web3", "port": 8080 }
+      ]
+    },
+    {
+      "id": "api", "scheme": "http", "lb_policy": "least_request",
+      "upstreams": [
+        { "host": "api1", "port": 8080 },
+        { "host": "api2", "port": 8080 }
+      ]
+    },
+    {
+      "id": "media", "scheme": "http", "lb_policy": "round_robin",
+      "upstreams": [
+        { "host": "media1",  "port": 8080 },
+        { "host": "flapper", "port": 8080 }
+      ],
+      "health_check": { "type": "http", "interval": "2s", "timeout": "1s", "healthy_threshold": 2, "unhealthy_threshold": 2, "path": "/", "expected_status": 200 }
+    },
+    {
+      "id": "legacy", "scheme": "http",
+      "upstreams": [ { "host": "gone", "port": 8080 } ]
+    },
+    {
+      "id": "greeter", "scheme": "h2c", "lb_policy": "round_robin",
+      "upstreams": [
+        { "host": "greeter1", "port": 50051 },
+        { "host": "greeter2", "port": 50051 }
+      ],
+      "health_check": { "type": "grpc", "interval": "2s", "timeout": "1s", "healthy_threshold": 2, "unhealthy_threshold": 2 }
+    },
+    {
+      "id": "grpcbin", "scheme": "h2c",
+      "upstreams": [ { "host": "grpcbin", "port": 9000 } ],
+      "health_check": { "type": "tcp", "interval": "2s", "timeout": "1s", "healthy_threshold": 2, "unhealthy_threshold": 2 }
+    },
+    {
+      "id": "grpc-legacy", "scheme": "h2c",
+      "upstreams": [ { "host": "gone", "port": 50051 } ],
+      "health_check": { "type": "tcp", "interval": "2s", "timeout": "1s", "healthy_threshold": 2, "unhealthy_threshold": 2 }
+    }
+  ]
+}

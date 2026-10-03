@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 5s        # short, so the demo's graphs move
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/gfe-alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # The alert rules expect this job name.
+  - job_name: gfe
+    static_configs:
+      - targets: ["gfe:9101"]
+
+  # node_exporter runs inside the node's network namespace.
+  - job_name: node
+    static_configs:
+      - targets: ["gfe:9100"]

@@ -1,0 +1,26 @@
+# Bootstrap config of the demo node. Read once at startup.
+
+[node]
+id           = "gfe-demo"
+loopback_vip = "127.0.0.1"
+metrics_addr = "0.0.0.0:9101"       # scraped by Prometheus over the demo network
+
+[control_plane]
+config_file = "/etc/gfe/gfe-dynamic.json"
+local_cache = "/var/lib/gfe/config-cache.json"
+
+[tls]
+min_version = "1.2"
+hsts        = "max-age=3600"
+
+[timeouts]
+upstream_first_byte = "3s"          # short, so the traffic's slow requests time out
+client_idle         = "30s"
+
+[health_check_defaults]
+type                = "http"
+interval            = "2s"
+timeout             = "1s"
+healthy_threshold   = 2
+unhealthy_threshold = 2
+path                = "/status/200"

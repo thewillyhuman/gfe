@@ -1,0 +1,591 @@
+{
+  "uid": "gfe-logs",
+  "title": "GFE — Logs",
+  "tags": [
+    "gfe",
+    "logs"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "timezone": "browser",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "refresh": "10s",
+  "annotations": {
+    "list": []
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "client",
+        "label": "Client IP (regex)",
+        "type": "textbox",
+        "query": ".*",
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        }
+      },
+      {
+        "name": "search",
+        "label": "Line contains (regex)",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requests/s by status",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "sum by (fields_status) (rate({job=\"gfe\", target=\"gfe::access\"} | json [$__auto]))",
+          "legendFormat": "{{fields_status}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "description": "Counted from the access log. 499 = the client gave up before any response.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Requests/s by gRPC status",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "sum by (fields_grpc_status) (rate({job=\"gfe\", target=\"gfe::access\"} | json | fields_grpc_status != \"\" [$__auto]))",
+          "legendFormat": "grpc-status {{fields_grpc_status}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "description": "gRPC calls are HTTP 200 whatever their outcome; this is the status that matters. 0 is OK.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "p99 duration by route",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "quantile_over_time(0.99, {job=\"gfe\", target=\"gfe::access\"} | json | unwrap fields_duration_ms [$__auto]) by (fields_route)",
+          "legendFormat": "{{fields_route}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "description": "Request head to the last byte of the response.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Top clients by requests",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (fields_client) (count_over_time({job=\"gfe\", target=\"gfe::access\"} | json [$__interval]))",
+          "legendFormat": "{{fields_client}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__series.name}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Top clients by bytes received",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (fields_client) (sum_over_time({job=\"gfe\", target=\"gfe::access\"} | json | unwrap fields_response_bytes [$__interval]))",
+          "legendFormat": "{{fields_client}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "displayName": "${__series.name}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Requests by user agent",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (fields_user_agent) (count_over_time({job=\"gfe\", target=\"gfe::access\"} | json | fields_user_agent != \"\" [$__interval]))",
+          "legendFormat": "{{fields_user_agent}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__series.name}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Why GFE answered instead of a backend",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "sum by (fields_error) (rate({job=\"gfe\", target=\"gfe::access\"} | json | fields_error != \"\" [$__auto]))",
+          "legendFormat": "{{fields_error}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "description": "The access log's `error` field: no route, no healthy upstream, backend unreachable, timeouts.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Exchanges broken off, by who and where",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "sum by (fields_termination, fields_route) (rate({job=\"gfe\", target=\"gfe::access\"} | json | fields_termination != \"complete\" [$__auto]))",
+          "legendFormat": "{{fields_termination}} · {{fields_route}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Requests served per backend",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (fields_backend) (count_over_time({job=\"gfe\", target=\"gfe::access\"} | json | fields_backend != \"\" [$__interval]))",
+          "legendFormat": "{{fields_backend}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__series.name}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Connections closed/s by reason",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "sum by (fields_reason) (rate({job=\"gfe\", target=\"gfe::conn\"} | json [$__auto]))",
+          "legendFormat": "{{fields_reason}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "TLS connections by version and cipher",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (fields_tls_version, fields_tls_cipher) (count_over_time({job=\"gfe\", target=\"gfe::conn\"} | json | fields_tls_version != \"\" [$__interval]))",
+          "legendFormat": "{{fields_tls_version}} {{fields_tls_cipher}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__series.name}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Failed TLS handshakes by cause",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (fields_error) (count_over_time({job=\"gfe\", target=\"gfe::conn\"} | json | fields_tls_error != \"\" [$__interval]))",
+          "legendFormat": "{{fields_error}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__series.name}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Requests that did not complete",
+      "type": "logs",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"gfe\", target=\"gfe::access\"} | json | fields_termination != \"complete\" | line_format \"{{.fields_client}} {{.fields_method}} {{.fields_host}}{{.fields_path}} → {{.fields_status}} {{.fields_termination}} after {{.fields_duration_ms}}ms (backend {{.fields_backend}})\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 14,
+      "title": "Server errors",
+      "type": "logs",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"gfe\", target=\"gfe::access\"} | json | fields_status >= 500 | line_format \"{{.fields_client}} {{.fields_method}} {{.fields_host}}{{.fields_path}} → {{.fields_status}} {{.fields_error}} (pool {{.fields_pool}}, backend {{.fields_backend}}, attempts {{.fields_attempts}})\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 15,
+      "title": "Access log (filter with the variables above)",
+      "type": "logs",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"gfe\", target=\"gfe::access\"} |~ \"$search\" | json | fields_client =~ \"$client\" | line_format \"{{.fields_client}} {{.fields_method}} {{.fields_host}}{{.fields_path}} → {{.fields_status}} in {{.fields_duration_ms}}ms, {{.fields_response_bytes}} bytes ({{.fields_http_version}}, route {{.fields_route}}, backend {{.fields_backend}})\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "description": "One event per request, raw. Expand a line to see every field.",
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 16,
+      "title": "Node events",
+      "type": "logs",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"gfe\", target!~\"gfe::(access|conn)\"} | json | line_format \"{{.level}} {{.target}}: {{.fields_message}} {{.fields_error}} {{.fields_backend}} {{.fields_status}}\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "description": "Everything that is not a request or a connection: reloads, health transitions, listeners.",
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    }
+  ]
+}

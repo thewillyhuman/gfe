@@ -190,6 +190,16 @@ cargo build --release
 ./target/release/gfe-trace --config config/gfe.example.toml --host atlas.example.org --path /
 ```
 
+## See it running
+
+[`demo/`](demo/) is a local playground: one node, HTTP and gRPC backends,
+clients that misbehave, and Prometheus, Loki and Grafana with the dashboards
+loaded.
+
+```bash
+cd demo && docker compose up -d --build   # then open http://localhost:13000
+```
+
 ## Project structure
 
 ```
@@ -212,6 +222,7 @@ crates/
 config/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
+demo/                         Local playground: node, backends, traffic, monitoring
 packaging/
   rpm/                        RPM scriptlets, build notes, Puppet usage
 deploy/

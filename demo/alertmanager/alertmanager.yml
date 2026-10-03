@@ -1,0 +1,6 @@
+# The demo only wants to see alerts fire, not to notify anyone.
+route:
+  receiver: nobody
+  group_by: [alertname]
+receivers:
+  - name: nobody
