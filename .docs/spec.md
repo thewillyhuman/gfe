@@ -808,6 +808,20 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_cert_expiry_timestamp` | Gauge | not-after Unix time (label: sni) — alert before expiry |
 | `gfe_active_routes` / `gfe_active_pools` | Gauge | Sizes of the current snapshot |
 
+**Saturation (`process_metrics.rs`, `proxy_metrics.rs`):**
+
+| Metric | Type | Description |
+|---|---|---|
+| `gfe_connections_limit` / `gfe_listener_connections_limit` | Gauge | The configured `max_connections` / `max_connections_listener`, so connection saturation is `gfe_connections_active / gfe_connections_limit` |
+| `process_open_fds` / `process_max_fds` | Gauge | Open file descriptors and their limit (Linux). Running out of descriptors is how a proxy usually fails first |
+| `process_resident_memory_bytes` | Gauge | Resident memory (Linux) |
+| `process_cpu_seconds_total` | Counter | User + system CPU time (Linux); `rate()` of it is cores in use |
+| `process_start_time_seconds` | Gauge | Process start, Unix seconds (restarts show as a step) |
+| `gfe_runtime_workers` / `gfe_runtime_alive_tasks` / `gfe_runtime_global_queue_depth` | Gauge | Async runtime: worker threads, live tasks, and tasks queued for a free worker — the last one rising means the workers are saturated |
+| `gfe_build_info` | Gauge | Always 1 (label: version) |
+
+The `process_*` names are the ones every Prometheus client library uses, so stock dashboards and alerts apply unchanged.
+
 ### 12.2 Request Tracer
 
 > **Code location:** `crates/gfe-trace/`

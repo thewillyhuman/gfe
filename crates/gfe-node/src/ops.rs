@@ -60,6 +60,15 @@ async fn handle(state: Arc<OpsState>, path: &str) -> Result<Response<Full<Bytes>
             }
         }
         "/metrics" => {
+            let runtime = tokio::runtime::Handle::current().metrics();
+            let process = &state.metrics.process;
+            process.runtime_workers.set(runtime.num_workers() as i64);
+            process
+                .runtime_alive_tasks
+                .set(runtime.num_alive_tasks() as i64);
+            process
+                .runtime_global_queue_depth
+                .set(runtime.global_queue_depth() as i64);
             let body = state.metrics.encode();
             let mut r = Response::new(Full::new(Bytes::from(body)));
             r.headers_mut().insert(

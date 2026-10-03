@@ -65,6 +65,16 @@ impl ProxyShared {
         timeouts: TimeoutsConfig,
         tls: TlsConfig,
     ) -> Self {
+        // Published next to the gauges they bound, so saturation is a ratio
+        // of two series rather than a number hardcoded in a dashboard.
+        metrics
+            .proxy
+            .connections_limit
+            .set(limits.max_connections as i64);
+        metrics
+            .proxy
+            .listener_connections_limit
+            .set(limits.max_connections_listener as i64);
         ProxyShared {
             routes: ArcSwap::from_pointee(RouteTable::default()),
             pools: ArcSwap::from_pointee(PoolSet::default()),
@@ -91,4 +101,34 @@ pub struct ConnCtx {
     pub sni: Option<String>,
     /// The negotiated TLS parameters, on a TLS connection.
     pub tls: Option<conn_record::TlsInfo>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publishes_connection_limits_as_gauges() {
+        let metrics = Arc::new(GfeMetrics::new());
+        let limits = LimitsConfig {
+            max_connections: 7,
+            max_connections_listener: 3,
+            ..Default::default()
+        };
+
+        ProxyShared::new(
+            UpstreamClient::new(1).unwrap(),
+            metrics.clone(),
+            limits,
+            TimeoutsConfig::default(),
+            TlsConfig::default(),
+        );
+
+        let exposed = metrics.encode();
+        assert!(exposed.contains("gfe_connections_limit 7"), "{exposed}");
+        assert!(
+            exposed.contains("gfe_listener_connections_limit 3"),
+            "{exposed}"
+        );
+    }
 }

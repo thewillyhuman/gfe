@@ -1,9 +1,11 @@
 //! Metrics registration and Prometheus exposition for GFE.
 
 pub mod control_metrics;
+pub mod process_metrics;
 pub mod proxy_metrics;
 
 pub use control_metrics::{BackendLabels, ControlMetrics, SniLabel};
+pub use process_metrics::ProcessMetrics;
 /// Counter and gauge handles, for callers that hold one series of a family.
 pub use prometheus_client::metrics::counter::Counter;
 pub use prometheus_client::metrics::gauge::Gauge;
@@ -21,6 +23,7 @@ pub struct GfeMetrics {
     pub registry: Mutex<Registry>,
     pub proxy: ProxyMetrics,
     pub control: ControlMetrics,
+    pub process: ProcessMetrics,
 }
 
 impl GfeMetrics {
@@ -28,15 +31,18 @@ impl GfeMetrics {
         let mut registry = Registry::default();
         let proxy = ProxyMetrics::register(&mut registry);
         let control = ControlMetrics::register(&mut registry);
+        let process = ProcessMetrics::register(&mut registry);
         GfeMetrics {
             registry: Mutex::new(registry),
             proxy,
             control,
+            process,
         }
     }
 
     /// Encode all metrics in the Prometheus text exposition format.
     pub fn encode(&self) -> String {
+        self.process.refresh();
         let registry = self.registry.lock().expect("metrics registry poisoned");
         let mut buf = String::new();
         prometheus_client::encoding::text::encode(&mut buf, &registry).expect("encode metrics");
@@ -61,5 +67,16 @@ mod tests {
         let out = m.encode();
         assert!(out.contains("gfe_no_route"));
         assert!(out.contains("gfe_backend_health_status"));
+    }
+
+    #[test]
+    fn reports_build_and_process_start() {
+        let out = GfeMetrics::new().encode();
+        let version = env!("CARGO_PKG_VERSION");
+        assert!(
+            out.contains(&format!("gfe_build_info{{version=\"{version}\"}} 1")),
+            "{out}"
+        );
+        assert!(out.contains("process_start_time_seconds "), "{out}");
     }
 }

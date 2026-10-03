@@ -121,6 +121,8 @@ pub struct ProxyMetrics {
     pub connections_accepted: Family<ListenerLabel, Counter>,
     pub connections_active: Gauge,
     pub listener_connections_active: Family<ListenerLabel, Gauge>,
+    pub connections_limit: Gauge,
+    pub listener_connections_limit: Gauge,
     pub connections_rejected: Family<RejectLabel, Counter>,
     pub connections_closed: Family<CloseLabels, Counter>,
     pub connection_duration_seconds: Family<ListenerLabel, Histogram>,
@@ -173,6 +175,8 @@ impl ProxyMetrics {
             connections_accepted: Family::default(),
             connections_active: Gauge::default(),
             listener_connections_active: Family::default(),
+            connections_limit: Gauge::default(),
+            listener_connections_limit: Gauge::default(),
             connections_rejected: Family::default(),
             connections_closed: Family::default(),
             connection_duration_seconds: Family::new_with_constructor(lifetime_histogram),
@@ -214,6 +218,16 @@ impl ProxyMetrics {
             "gfe_listener_connections_active",
             "Currently open client connections per listener",
             m.listener_connections_active.clone(),
+        );
+        registry.register(
+            "gfe_connections_limit",
+            "Configured limit on open client connections (max_connections)",
+            m.connections_limit.clone(),
+        );
+        registry.register(
+            "gfe_listener_connections_limit",
+            "Configured limit on open client connections per listener (max_connections_listener)",
+            m.listener_connections_limit.clone(),
         );
         registry.register(
             "gfe_connections_rejected",
