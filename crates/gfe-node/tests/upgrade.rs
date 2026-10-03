@@ -24,9 +24,9 @@ fn scratch(test: &str) -> PathBuf {
 
 /// Write to `dir` the config of a node that answers every request on `proxy`
 /// with a fixed `200 ok` and serves its ops endpoints on `ops`; returns the
-/// path of the bootstrap config. The node drains quickly, so that a test
-/// does not wait long for one to stop.
-fn write_config(dir: &Path, proxy: SocketAddr, ops: SocketAddr) -> PathBuf {
+/// path of the bootstrap config. A node that stops gets `drain_deadline` to
+/// finish what it is doing.
+fn write_config(dir: &Path, proxy: SocketAddr, ops: SocketAddr, drain_deadline: &str) -> PathBuf {
     let dynamic = format!(
         r#"{{"listeners":[{{"id":"http","address":"{}","port":{},"protocol":"http"}}],
             "routes":[{{"id":"fixed","listener":"http","host":"*","path_prefix":"/",
@@ -39,7 +39,7 @@ fn write_config(dir: &Path, proxy: SocketAddr, ops: SocketAddr) -> PathBuf {
         "[node]\nid = \"t\"\nloopback_vip = \"127.0.0.1\"\nmetrics_addr = \"{ops}\"\n\n\
          [control_plane]\nconfig_file = \"{dir}/gfe-dynamic.json\"\n\
          local_cache = \"{dir}/config-cache.json\"\n\n\
-         [timeouts]\ndrain_deadline = \"1s\"\n\n[health_check_defaults]\n",
+         [timeouts]\ndrain_deadline = \"{drain_deadline}\"\n\n[health_check_defaults]\n",
         dir = dir.display()
     );
     let path = dir.join("gfe.toml");
@@ -87,7 +87,9 @@ fn free_addr() -> SocketAddr {
 /// A node that was started to take over the sockets of this test, which
 /// plays the node being replaced. Stopped when dropped.
 struct Successor {
-    node: Child,
+    /// What the test started, which starts the successor and exits. It
+    /// leads a process group that the successor is in, too.
+    launcher: Child,
     proxy: SocketAddr,
     ops: SocketAddr,
     /// The outgoing node's copies of the sockets. Never accepted on, so
@@ -103,20 +105,21 @@ impl Successor {
         let ops_socket = TcpListener::bind("127.0.0.1:0").unwrap();
         let proxy = proxy_socket.local_addr().unwrap();
         let ops = ops_socket.local_addr().unwrap();
-        let bootstrap = write_config(&scratch(test), proxy, ops);
+        let bootstrap = write_config(&scratch(test), proxy, ops, "1s");
         let sockets = Sockets {
             listeners: vec![(proxy, proxy_socket)],
             ops: Some((ops, ops_socket)),
         };
 
         let (ours, theirs) = UnixStream::pair().unwrap();
-        let node = Command::new(env!("CARGO_BIN_EXE_gfe-node"))
+        let launcher = Command::new(env!("CARGO_BIN_EXE_gfe-node"))
             .arg("--config")
             .arg(bootstrap)
             .arg("--upgrade")
             .stdin(Stdio::from(OwnedFd::from(theirs)))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .process_group(0)
             .spawn()
             .unwrap();
         gfe_handover::send(&ours, &sockets).unwrap();
@@ -126,7 +129,7 @@ impl Successor {
         gfe_handover::await_confirmation(&ours).expect("the node should take over");
 
         Successor {
-            node,
+            launcher,
             proxy,
             ops,
             _sockets: sockets,
@@ -136,9 +139,18 @@ impl Successor {
 
 impl Drop for Successor {
     fn drop(&mut self) {
-        let _ = self.node.kill();
-        let _ = self.node.wait();
+        kill_group(&mut self.launcher);
     }
+}
+
+/// Kill every process of the group `leader` leads, and collect `leader`.
+fn kill_group(leader: &mut Child) {
+    let group = format!("-{}", leader.id());
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &group])
+        .stderr(Stdio::null())
+        .status();
+    let _ = leader.wait();
 }
 
 #[test]
@@ -173,11 +185,18 @@ struct Node {
 }
 
 impl Node {
-    /// Start a node and wait until it is ready.
+    /// Start a node that drains quickly, so that a test does not wait long
+    /// for it to stop, and wait until it is ready.
     fn start(test: &str) -> Node {
+        Node::start_draining_for(test, "1s")
+    }
+
+    /// Start a node with the given `drain_deadline` and wait until it is
+    /// ready.
+    fn start_draining_for(test: &str, drain_deadline: &str) -> Node {
         let (proxy, ops) = (free_addr(), free_addr());
         let dir = scratch(test);
-        let bootstrap = write_config(&dir, proxy, ops);
+        let bootstrap = write_config(&dir, proxy, ops, drain_deadline);
         let notify_socket = dir.join("notify");
         let _ = std::fs::remove_file(&notify_socket);
         let service_manager = UnixDatagram::bind(&notify_socket).unwrap();
@@ -247,12 +266,7 @@ impl Node {
 
 impl Drop for Node {
     fn drop(&mut self) {
-        let group = format!("-{}", self.process.id());
-        let _ = Command::new("kill")
-            .args(["-KILL", "--", &group])
-            .stderr(Stdio::null())
-            .status();
-        let _ = self.process.wait();
+        kill_group(&mut self.process);
     }
 }
 
@@ -458,9 +472,41 @@ fn tells_the_service_manager_that_an_upgrade_failed() {
         "{finished:?}"
     );
     assert!(
-        finished
-            .iter()
-            .any(|line| line.starts_with("STATUS=Upgrade failed")),
+        finished.iter().any(|line| line
+            .starts_with("STATUS=Upgrade failed, still serving: the successor went away")),
         "{finished:?}"
     );
+}
+
+/// The process id of the parent of process `pid`, as text.
+fn parent_of(pid: &str) -> String {
+    let ps = Command::new("ps")
+        .args(["-o", "ppid=", "-p", pid])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&ps.stdout).trim().to_string()
+}
+
+#[test]
+fn successor_is_no_child_of_the_node_when_it_is_announced() {
+    let mut node = Node::start_draining_for("detached", "8s");
+    node.tells_service_manager();
+    // A client that keeps its connection, and with it the node, around for
+    // a while after the node has handed over.
+    let mut client = TcpStream::connect(node.proxy).unwrap();
+    request_on(&mut client).unwrap();
+
+    node.signal("-USR2");
+    node.tells_service_manager();
+    let announced = node.tells_service_manager();
+    let successor = announced
+        .iter()
+        .find_map(|line| line.strip_prefix("MAINPID="))
+        .unwrap_or_else(|| panic!("no MAINPID in {announced:?}"));
+    let parent = parent_of(successor);
+
+    // A service manager takes a main process that is some other process's
+    // child for one it cannot wait for, and kills it outright on stop.
+    assert_eq!(node.process.try_wait().unwrap(), None);
+    assert_ne!(parent, node.process.id().to_string());
 }

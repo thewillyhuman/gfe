@@ -9,6 +9,14 @@
 //!
 //! Until that moment nothing has changed for the running node: if the
 //! successor does not start, the node goes on serving.
+//!
+//! The successor is not the node's child. What the node starts only starts
+//! the successor in turn and exits ([`detach`]), which leaves the successor
+//! to be adopted by the service manager. A service manager follows a service
+//! by its main process and can wait only for a process that is its own
+//! child: a main process that was the child of another when it was
+//! announced is one systemd does not wait for, and kills outright the next
+//! time the service is stopped.
 
 use anyhow::Result;
 use gfe_proxy::ListenerSet;
@@ -17,6 +25,9 @@ use std::time::Duration;
 
 /// The flag that tells a node it is a successor.
 pub const UPGRADE_FLAG: &str = "--upgrade";
+
+/// The flag that tells a successor it has been detached already.
+pub const DETACHED_FLAG: &str = "--detached";
 
 /// How long a successor may take to accept connections before the upgrade is
 /// given up. Generous, because the running node serves all the while.
@@ -84,7 +95,9 @@ pub fn take_over() -> Result<(Predecessor, Inherited)> {
 ///
 /// On success the caller must stop accepting and drain: the successor serves
 /// from now on. On failure nothing has changed: this node still holds its
-/// sockets and accepts on them, and the successor is gone.
+/// sockets and accepts on them, and the successor is gone or, if it was
+/// started but never said which process it is, will find nobody to take
+/// over from and exit.
 #[cfg(unix)]
 pub async fn hand_over(
     listeners: &ListenerSet,
@@ -135,25 +148,91 @@ fn start_successor(sockets: &gfe_handover::Sockets) -> Result<u32> {
     let program = args
         .next()
         .context("the command this node was started with is unknown")?;
-    let mut successor = Command::new(&program)
-        .args(args.filter(|arg| arg != UPGRADE_FLAG))
+    // This node may itself be a successor: its own flags are not passed on.
+    let launched = Command::new(&program)
+        .args(args.filter(|arg| arg != UPGRADE_FLAG && arg != DETACHED_FLAG))
         .arg(UPGRADE_FLAG)
         .stdin(Stdio::from(OwnedFd::from(theirs)))
-        .spawn()
+        .status()
         .with_context(|| format!("starting {}", program.to_string_lossy()))?;
+    anyhow::ensure!(
+        launched.success(),
+        "the successor could not be started ({launched})"
+    );
 
-    let taken_over = gfe_handover::send(&ours, sockets)
-        .and_then(|()| ours.set_read_timeout(Some(SUCCESSOR_START_TIMEOUT)))
-        .and_then(|()| gfe_handover::await_receipt(&ours))
-        .and_then(|pid| gfe_handover::await_confirmation(&ours).map(|()| pid));
-    match taken_over {
-        Ok(pid) => Ok(pid),
-        Err(e) => {
+    gfe_handover::send(&ours, sockets).map_err(not_taken_over)?;
+    ours.set_read_timeout(Some(SUCCESSOR_START_TIMEOUT))
+        .context("setting how long to wait for the successor")?;
+    let successor = gfe_handover::await_receipt(&ours).map_err(not_taken_over)?;
+    gfe_handover::await_confirmation(&ours).map_err(|e| {
+        if timed_out(&e) {
             // It says it accepts connections as soon as it does, so one that
             // has not said so holds none that killing it would break.
-            let _ = successor.kill();
-            let _ = successor.wait();
-            Err(e).context("the successor did not take over")
+            kill(successor);
         }
+        not_taken_over(e)
+    })?;
+    Ok(successor)
+}
+
+#[cfg(unix)]
+fn timed_out(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind::{TimedOut, WouldBlock};
+    matches!(e.kind(), TimedOut | WouldBlock)
+}
+
+/// Why the successor did not take over, in words an operator can act on.
+#[cfg(unix)]
+fn not_taken_over(e: std::io::Error) -> anyhow::Error {
+    use std::io::ErrorKind::{BrokenPipe, ConnectionReset, UnexpectedEof};
+    if timed_out(&e) {
+        anyhow::anyhow!(
+            "the successor did not accept connections within {} s",
+            SUCCESSOR_START_TIMEOUT.as_secs()
+        )
+    } else if matches!(e.kind(), UnexpectedEof | ConnectionReset | BrokenPipe) {
+        anyhow::anyhow!("the successor went away before it took over; its own log says why")
+    } else {
+        anyhow::Error::new(e).context("the successor did not take over")
     }
+}
+
+/// Kill the process `pid`, which is not a child of this one.
+#[cfg(unix)]
+fn kill(pid: u32) {
+    use rustix::process::{kill_process, Pid, Signal};
+    let Some(pid) = i32::try_from(pid).ok().and_then(Pid::from_raw) else {
+        return;
+    };
+    if let Err(e) = kill_process(pid, Signal::KILL) {
+        tracing::warn!(error = %e, "could not stop the successor that did not take over");
+    }
+}
+
+/// Start this command again as the successor proper, and return at once.
+///
+/// This is what detaches the successor from the node it replaces: started
+/// by a process that then exits, it is nobody's child and the service
+/// manager adopts it. Its standard input, the socket to that node, is this
+/// process's own.
+#[cfg(unix)]
+pub fn detach() -> Result<()> {
+    use anyhow::Context;
+    use std::process::Command;
+
+    let mut args = std::env::args_os();
+    let program = args
+        .next()
+        .context("the command this process was started with is unknown")?;
+    Command::new(&program)
+        .args(args)
+        .arg(DETACHED_FLAG)
+        .spawn()
+        .with_context(|| format!("starting {}", program.to_string_lossy()))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn detach() -> Result<()> {
+    anyhow::bail!("--upgrade is not supported on this platform")
 }

@@ -737,6 +737,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rcgen",
+ "rustix",
  "rustls",
  "rustls-pemfile",
  "serde_json",

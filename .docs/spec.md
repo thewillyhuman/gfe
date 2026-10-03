@@ -968,14 +968,14 @@ GET /metrics   → Prometheus exposition
 
 A new binary, or a change to the bootstrap config (which is read once, at startup), needs a new process. It does not need the listening sockets to be closed. On `SIGUSR2` a node replaces itself (Unix only):
 
-1. It starts the binary it was started from, as that binary is on disk now, with the same arguments and `--upgrade`.
+1. It starts the binary it was started from, as that binary is on disk now, with the same arguments and `--upgrade`. What it starts only starts the successor proper and exits, so the successor is not the node's child and is adopted by the service manager at once.
 2. It gives that successor its listening sockets, the proxy's and the ops server's, over a Unix socket (`SCM_RIGHTS`). Both processes now hold the same sockets, and each socket has a single queue of waiting connections, which either process accepts from.
 3. The successor loads its config as any node does, listens on the sockets it was given instead of binding, and tells the node once it accepts connections.
 4. Only then does the node stop accepting, leave the ops endpoints to the successor, and drain as on `SIGTERM` (Section 7.4): requests in flight are answered, clients are asked to reconnect, and they reach the successor when they do.
 
 No connection is refused, because the sockets are never closed, and none waiting to be accepted is lost, because the queue it waits in outlives the node. What an upgrade can still cut is what a drain cuts: a request or stream still running when the drain deadline elapses.
 
-Under systemd this is `systemctl reload gfe-node`. The unit is of `Type=notify`: the node tells systemd when it serves and, once its successor has taken over, that the successor is the service's main process, so the node's own exit is not taken for the service stopping.
+Under systemd this is `systemctl reload gfe-node`. The unit is of `Type=notify`: the node tells systemd when it serves and, once its successor has taken over, that the successor is the service's main process, so the node's own exit is not taken for the service stopping. By then the successor is systemd's own child, which matters: systemd does not wait for a main process that is some other process's child, and kills it outright when the service is next stopped.
 
 If the successor does not take over (the binary does not start, the config is rejected, it does not answer within 60 s), nothing has changed for the node: it goes on serving, logs why, and counts the attempt in `gfe_upgrade_failures_total`. This makes a bootstrap config change as safe to roll out as a dynamic one.
 

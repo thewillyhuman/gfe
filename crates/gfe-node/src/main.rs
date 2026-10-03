@@ -49,10 +49,19 @@ struct Args {
     /// by hand.
     #[arg(long, conflicts_with = "check_config")]
     upgrade: bool,
+    /// With `--upgrade`: this process is no longer a child of the node it
+    /// takes over from. Passed by this binary to itself.
+    #[arg(long, requires = "upgrade", hide = true)]
+    detached: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if args.upgrade && !args.detached {
+        // Before anything else, the config included: all this process does
+        // is start the successor and get out of its way.
+        return upgrade::detach();
+    }
 
     let node = args
         .config
