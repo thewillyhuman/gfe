@@ -8,14 +8,28 @@ use gfe_proxy::ProxyShared;
 use http_body_util::Full;
 use hyper::service::service_fn;
 use hyper::{Response, StatusCode};
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{watch, Semaphore};
+
+/// How many connections the ops server serves at once. Probes and scrapes
+/// need a handful; the node's file descriptors are for the proxy. A
+/// connection over the cap is closed at once.
+const MAX_CONNECTIONS: usize = 64;
+
+/// How long a client has to send a request head, and how long a connection
+/// it keeps may wait idle for the next one.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long to wait after `accept` fails before trying again. It fails
+/// again at once while its cause (no file descriptor left) lasts.
+const ACCEPT_ERROR_PAUSE: Duration = Duration::from_millis(100);
 
 /// Shared readiness state for the ops server.
 pub struct OpsState {
@@ -57,6 +71,7 @@ pub async fn serve(
     state: Arc<OpsState>,
     mut stop: watch::Receiver<bool>,
 ) {
+    let slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     loop {
         let accepted = tokio::select! {
             changed = stop.changed() => {
@@ -71,18 +86,38 @@ pub async fn serve(
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(error = %e, "ops accept error");
+                tokio::time::sleep(ACCEPT_ERROR_PAUSE).await;
                 continue;
             }
+        };
+        let Ok(slot) = slots.clone().try_acquire_owned() else {
+            tracing::debug!("ops connection over the cap closed");
+            continue;
         };
         let state = state.clone();
         let mut stop = stop.clone();
         tokio::spawn(async move {
+            // Taken back when the connection closes.
+            let _slot = slot;
+            // hyper learns the protocol from the first bytes and starts its
+            // timer only once it knows it: a client that sends nothing would
+            // be waited for for ever.
+            if tokio::time::timeout(HEADER_READ_TIMEOUT, stream.readable())
+                .await
+                .is_err()
+            {
+                return;
+            }
             let io = TokioIo::new(stream);
             let svc = service_fn(move |req| {
                 let state = state.clone();
                 async move { handle(state, req.uri().path()).await }
             });
-            let builder = auto::Builder::new(TokioExecutor::new());
+            let mut builder = auto::Builder::new(TokioExecutor::new());
+            builder
+                .http1()
+                .timer(TokioTimer::new())
+                .header_read_timeout(HEADER_READ_TIMEOUT);
             let conn = builder.serve_connection(io, svc);
             tokio::pin!(conn);
             tokio::select! {
@@ -147,7 +182,17 @@ async fn handle(state: Arc<OpsState>, path: &str) -> Result<Response<Full<Bytes>
                     })
                     .set(i64::try_from(lost).unwrap_or(i64::MAX));
             }
-            let body = state.metrics.encode();
+            // Encoding refreshes the process metrics from /proc, which
+            // includes listing every open descriptor: blocking work that
+            // grows with the connections the proxy holds, kept off the
+            // threads that serve them.
+            let metrics = state.metrics.clone();
+            let Ok(body) = tokio::task::spawn_blocking(move || metrics.encode()).await else {
+                return Ok(text(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "metrics unavailable",
+                ));
+            };
             let mut r = Response::new(Full::new(Bytes::from(body)));
             r.headers_mut().insert(
                 hyper::header::CONTENT_TYPE,
@@ -166,4 +211,124 @@ fn text(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
     let mut r = Response::new(Full::new(Bytes::from(format!("{body}\n"))));
     *r.status_mut() = status;
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::OnceLock;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    /// The process has one log, started once for all the tests.
+    fn log() -> Arc<Log> {
+        static LOG: OnceLock<Arc<Log>> = OnceLock::new();
+        LOG.get_or_init(|| Arc::new(Log::start(&Default::default()).unwrap()))
+            .clone()
+    }
+
+    /// An ops server of a ready node, on a loopback port; its address.
+    async fn ops_server() -> SocketAddr {
+        let metrics = Arc::new(GfeMetrics::new());
+        let shared = ProxyShared::new(
+            gfe_upstream::UpstreamClient::new(1).unwrap(),
+            metrics.clone(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        );
+        let state = Arc::new(OpsState {
+            metrics,
+            ready: Arc::new(AtomicBool::new(true)),
+            shared: Arc::new(shared),
+            kernel: None,
+            log: log(),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (stop, stopped) = watch::channel(false);
+        tokio::spawn(async move {
+            serve(Arc::new(listener), state, stopped).await;
+            drop(stop);
+        });
+        addr
+    }
+
+    /// What the server at the other end of `stream` sends until it closes
+    /// the connection, or `None` if it is still open after `wait`.
+    async fn read_until_closed(stream: &mut TcpStream, wait: Duration) -> Option<String> {
+        let mut received = Vec::new();
+        match tokio::time::timeout(wait, stream.read_to_end(&mut received)).await {
+            Ok(_) => Some(String::from_utf8_lossy(&received).to_string()),
+            Err(_) => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn closes_a_connection_that_never_sends_a_request() {
+        let addr = ops_server().await;
+        let mut silent = TcpStream::connect(addr).await.unwrap();
+
+        let closed = read_until_closed(&mut silent, HEADER_READ_TIMEOUT * 2).await;
+
+        assert_eq!(closed.as_deref(), Some(""));
+    }
+
+    #[tokio::test]
+    async fn closes_a_kept_connection_that_sends_no_further_request() {
+        let addr = ops_server().await;
+        let mut kept = TcpStream::connect(addr).await.unwrap();
+        kept.write_all(b"GET /healthz HTTP/1.1\r\nhost: t\r\n\r\n")
+            .await
+            .unwrap();
+
+        let closed = read_until_closed(&mut kept, HEADER_READ_TIMEOUT * 2).await;
+
+        assert!(
+            closed
+                .as_deref()
+                .is_some_and(|c| c.starts_with("HTTP/1.1 200")),
+            "{closed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn closes_a_connection_over_the_cap_at_once() {
+        let addr = ops_server().await;
+        let mut under_the_cap = Vec::new();
+        for _ in 0..MAX_CONNECTIONS {
+            under_the_cap.push(TcpStream::connect(addr).await.unwrap());
+        }
+        let mut over_the_cap = TcpStream::connect(addr).await.unwrap();
+
+        over_the_cap
+            .write_all(b"GET /healthz HTTP/1.1\r\nhost: t\r\n\r\n")
+            .await
+            .unwrap();
+        let answer = read_until_closed(&mut over_the_cap, Duration::from_secs(2)).await;
+
+        assert_eq!(answer.as_deref(), Some(""));
+    }
+
+    #[tokio::test]
+    async fn serves_connections_under_the_cap() {
+        let addr = ops_server().await;
+        let mut others = Vec::new();
+        for _ in 0..MAX_CONNECTIONS - 1 {
+            others.push(TcpStream::connect(addr).await.unwrap());
+        }
+        let mut last = TcpStream::connect(addr).await.unwrap();
+
+        last.write_all(b"GET /healthz HTTP/1.1\r\nhost: t\r\nconnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let answer = read_until_closed(&mut last, Duration::from_secs(2)).await;
+
+        assert!(
+            answer
+                .as_deref()
+                .is_some_and(|a| a.starts_with("HTTP/1.1 200")),
+            "{answer:?}"
+        );
+    }
 }

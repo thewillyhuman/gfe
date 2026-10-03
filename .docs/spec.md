@@ -943,6 +943,8 @@ GET /readyz    → 200 if at least one listener is bound and a valid config is l
 GET /metrics   → Prometheus exposition
 ```
 
+The ops server serves at most 64 connections at once and closes any over that at once, so it cannot use up the descriptors the proxy needs. A client has 5 s to send a request head, and a connection it keeps is closed after 5 s without one.
+
 ---
 
 ## 13. Failure Modes and Resilience
