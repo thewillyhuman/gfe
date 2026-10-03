@@ -35,6 +35,8 @@ ExecStart=/usr/bin/gfe-node --config /etc/gfe/gfe.toml
 # for the outcome.
 #
 # The dynamic config needs no reload: GFE picks it up when the file changes.
+# SIGHUP (`kill -HUP`, a logrotate postrotate) and SIGUSR1 do nothing but
+# log a warning.
 ExecReload=/bin/kill -USR2 $MAINPID
 
 Restart=on-failure

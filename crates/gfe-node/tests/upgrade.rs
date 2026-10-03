@@ -676,3 +676,26 @@ fn successor_is_no_child_of_the_node_when_it_is_announced() {
     assert_eq!(node.process.try_wait().unwrap(), None);
     assert_ne!(parent, node.process.id().to_string());
 }
+
+/// Whether a node still serves a while after it was sent `signal`.
+fn still_serves_after(signal: &str) -> bool {
+    let mut node = Node::start(&format!("signal{signal}"));
+
+    node.signal(signal);
+    std::thread::sleep(Duration::from_millis(500));
+
+    node.process.try_wait().unwrap().is_none()
+        && http_get(node.proxy, "/").starts_with("HTTP/1.1 200")
+}
+
+/// What operators send out of habit to make a daemon reload, and what log
+/// rotation typically sends once it has rotated.
+#[test]
+fn keeps_serving_when_sent_a_hangup() {
+    assert!(still_serves_after("-HUP"));
+}
+
+#[test]
+fn keeps_serving_when_sent_the_other_user_signal() {
+    assert!(still_serves_after("-USR1"));
+}

@@ -52,6 +52,7 @@ spread connections across a fleet with no coordination.
   the running node with the binary now on disk without closing a listening
   socket: no connection is refused, and the old process drains while its
   successor serves. A successor that does not start changes nothing.
+  `SIGHUP` and `SIGUSR1` are logged and ignored, never fatal.
 - **ACME http-01** — serves `/.well-known/acme-challenge/*` from a challenge
   store (the CA-ordering driver is a documented integration point).
 - **Observability** — Prometheus metrics for requests, latency, status and gRPC

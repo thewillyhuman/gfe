@@ -1,4 +1,4 @@
-//! The signals a node acts on.
+//! The signals a node acts on, and the ones it refuses to die of.
 
 /// What a signal asks of the node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +18,14 @@ pub struct Signals {
     interrupt: tokio::signal::unix::Signal,
     #[cfg(unix)]
     upgrade: tokio::signal::unix::Signal,
+    /// `SIGHUP`, sent out of habit to make a daemon reload and by log
+    /// rotation. Ignored: by default it kills the process without a drain,
+    /// and systemd takes that for a clean exit and does not restart it.
+    #[cfg(unix)]
+    hangup: tokio::signal::unix::Signal,
+    /// `SIGUSR1`, which would kill the node just as well. Ignored.
+    #[cfg(unix)]
+    user1: tokio::signal::unix::Signal,
 }
 
 impl Signals {
@@ -31,21 +39,31 @@ impl Signals {
                 terminate: signal(SignalKind::terminate())?,
                 interrupt: signal(SignalKind::interrupt())?,
                 upgrade: signal(SignalKind::user_defined2())?,
+                hangup: signal(SignalKind::hangup())?,
+                user1: signal(SignalKind::user_defined1())?,
             })
         }
         #[cfg(not(unix))]
         Ok(Signals {})
     }
 
-    /// Wait for the next request.
+    /// Wait for the next request. A signal that asks for nothing is logged
+    /// and waited past.
     pub async fn next(&mut self) -> Request {
         #[cfg(unix)]
-        {
-            tokio::select! {
-                _ = self.terminate.recv() => Request::Stop,
-                _ = self.interrupt.recv() => Request::Stop,
-                _ = self.upgrade.recv() => Request::Upgrade,
-            }
+        loop {
+            let ignored = tokio::select! {
+                _ = self.terminate.recv() => return Request::Stop,
+                _ = self.interrupt.recv() => return Request::Stop,
+                _ = self.upgrade.recv() => return Request::Upgrade,
+                _ = self.hangup.recv() => "SIGHUP",
+                _ = self.user1.recv() => "SIGUSR1",
+            };
+            tracing::warn!(
+                signal = ignored,
+                "signal ignored: the dynamic config is reloaded when its file changes; \
+                 to upgrade in place use SIGUSR2 (systemctl reload)"
+            );
         }
         #[cfg(not(unix))]
         {
