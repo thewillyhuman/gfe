@@ -320,10 +320,12 @@ pub async fn forward(
                     record.request_id(),
                 );
             }
-            Err(()) if !progress.request_complete() => {
-                // Nothing has been sent to the backend for too long while
-                // the request body is still incomplete: the client stalled,
-                // which is not the backend's failure.
+            Err(()) if progress.waiting_for_client() => {
+                // Nothing has been sent to the backend for too long because
+                // the client has not sent the rest of the body: the client
+                // stalled, which is not the backend's failure. A backend
+                // that stops taking the body is not: GFE does not ask the
+                // client for more until the backend has taken what it has.
                 tracing::debug!(backend = %authority, "request body stalled");
                 record.failed("request_body_timeout");
                 return synthetic(

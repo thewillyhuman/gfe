@@ -2100,6 +2100,74 @@ async fn refuses_a_request_whose_target_is_not_a_path() {
     }
 }
 
+/// Spawn a backend that reads a request's head and then stops reading,
+/// keeping the connection open: it never takes the body.
+async fn spawn_upstream_not_reading_the_body() -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if stream.read_exact(&mut byte).await.is_err() {
+                        return;
+                    }
+                    head.push(byte[0]);
+                }
+                std::future::pending::<()>().await;
+                drop(stream);
+            });
+        }
+    });
+    addr
+}
+
+/// When it is the backend that stops taking the upload, the client is not
+/// to blame: it gets a 504 and the backend is counted as having timed out.
+#[tokio::test]
+async fn backend_that_stops_reading_an_upload_is_answered_with_504() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_upstream_not_reading_the_body().await;
+    let shared = build_shared_with_first_byte(Duration::from_millis(300));
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+
+    // More than every buffer between client and backend can hold, sent as
+    // fast as it is taken.
+    let total: usize = 256 * 1024 * 1024;
+    let (mut from_proxy, mut to_proxy) = TcpStream::connect(proxy).await.unwrap().into_split();
+    let head =
+        format!("POST /upload HTTP/1.1\r\nhost: a.example.org\r\ncontent-length: {total}\r\n\r\n");
+    tokio::spawn(async move {
+        to_proxy.write_all(head.as_bytes()).await.unwrap();
+        let chunk = vec![b'x'; 64 * 1024];
+        for _ in 0..total / chunk.len() {
+            if to_proxy.write_all(&chunk).await.is_err() {
+                return;
+            }
+        }
+    });
+    let mut status_line = [0u8; 12];
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        from_proxy.read_exact(&mut status_line),
+    )
+    .await
+    .expect("a response should arrive")
+    .unwrap();
+    let event = logs.access_event().await;
+
+    assert_eq!(String::from_utf8_lossy(&status_line), "HTTP/1.1 504");
+    assert_eq!(event["error"], "upstream_timeout");
+    let metrics = shared.metrics.encode();
+    let timed_out = format!(
+        r#"gfe_upstream_errors_total{{pool="pool",backend="{upstream}",kind="timeout"}} 1"#
+    );
+    assert!(metrics.contains(&timed_out), "{metrics}");
+}
+
 /// A streaming call may legitimately have nothing to send, not even headers,
 /// for a long time. It is bounded by the deadline its client sets, not by the
 /// timeouts meant for request/response exchanges.

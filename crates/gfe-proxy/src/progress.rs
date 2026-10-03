@@ -10,9 +10,15 @@
 //! * `request_total` — across attempts: once the request has been sent in
 //!   full, a response must arrive within this long, however many backends are
 //!   tried.
+//!
+//! When the wait runs out, who is to blame depends on who holds the request
+//! up: the client, if GFE last asked it for more of the body and it had none
+//! to give; otherwise the backend, which includes one that stopped taking
+//! the body, since GFE only asks the client for more once the backend has
+//! taken what came before.
 
 use gfe_types::TimeoutsConfig;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -27,6 +33,9 @@ pub struct SendProgress {
     last_sent_ms: AtomicU64,
     /// When the request was complete, in ms since `started`.
     completed_ms: AtomicU64,
+    /// Whether the client had nothing to give when last asked for more of
+    /// the request body.
+    waiting_for_client: AtomicBool,
 }
 
 impl SendProgress {
@@ -37,6 +46,7 @@ impl SendProgress {
             started: now,
             last_sent_ms: AtomicU64::new(0),
             completed_ms: AtomicU64::new(if has_body { NOT_COMPLETED } else { 0 }),
+            waiting_for_client: AtomicBool::new(false),
         })
     }
 
@@ -61,6 +71,18 @@ impl SendProgress {
         let now_ms = self.elapsed_ms(now);
         self.last_sent_ms.store(now_ms, Ordering::Relaxed);
         self.completed_ms.store(now_ms, Ordering::Relaxed);
+    }
+
+    /// The client was asked for more of the request body; `pending` says
+    /// whether it had nothing to give yet.
+    pub fn body_polled(&self, pending: bool) {
+        self.waiting_for_client.store(pending, Ordering::Relaxed);
+    }
+
+    /// Whether the client is what holds the request up: it had nothing to
+    /// give when last asked for more of the request body.
+    pub fn waiting_for_client(&self) -> bool {
+        self.waiting_for_client.load(Ordering::Relaxed)
     }
 
     /// Whether the request has been sent in full.
@@ -137,6 +159,25 @@ mod tests {
 
         assert!(!progress.request_complete());
         assert_eq!(progress.response_deadline(&timeouts()), after(start, 630));
+    }
+
+    #[test]
+    fn client_with_nothing_to_send_is_waited_for() {
+        let progress = SendProgress::begin(Instant::now(), true);
+
+        progress.body_polled(true);
+
+        assert!(progress.waiting_for_client());
+    }
+
+    #[test]
+    fn client_is_not_waited_for_once_it_sends_again() {
+        let progress = SendProgress::begin(Instant::now(), true);
+        progress.body_polled(true);
+
+        progress.body_polled(false);
+
+        assert!(!progress.waiting_for_client());
     }
 
     #[test]

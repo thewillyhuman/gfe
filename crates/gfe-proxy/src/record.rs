@@ -390,7 +390,8 @@ impl Body for ObservedBody {
 
 /// A request body on its way to a backend: the bytes read from it are added
 /// to a shared counter, and its progress and end are noted on a
-/// [`SendProgress`], which is what the response deadline is derived from.
+/// [`SendProgress`], which is what the response deadline is derived from, as
+/// is whether the client had nothing to give when last asked for more.
 pub struct CountedBody<B> {
     inner: B,
     bytes: Arc<AtomicU64>,
@@ -423,7 +424,9 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, B::Error>>> {
         let this = &mut *self;
-        let frame = ready!(Pin::new(&mut this.inner).poll_frame(cx));
+        let polled = Pin::new(&mut this.inner).poll_frame(cx);
+        this.progress.body_polled(polled.is_pending());
+        let frame = ready!(polled);
         match &frame {
             Some(Ok(frame)) => {
                 if let Some(data) = frame.data_ref() {
@@ -472,6 +475,47 @@ mod tests {
         assert_eq!(grpc_status(&http::HeaderMap::new()), None);
         assert_eq!(grpc_status(&headers("17")), None);
         assert_eq!(grpc_status(&headers("ok")), None);
+    }
+
+    /// A body whose client has nothing to give yet.
+    struct Stalled;
+
+    impl Body for Stalled {
+        type Data = Bytes;
+        type Error = std::convert::Infallible;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+            Poll::Pending
+        }
+    }
+
+    fn poll_once<B: Body<Data = Bytes> + Unpin>(body: &mut CountedBody<B>) {
+        let mut cx = Context::from_waker(std::task::Waker::noop());
+        let _ = Pin::new(body).poll_frame(&mut cx);
+    }
+
+    #[test]
+    fn notes_a_client_with_nothing_to_give() {
+        let progress = SendProgress::begin(Instant::now(), true);
+        let mut body = CountedBody::new(Stalled, Arc::default(), progress.clone());
+
+        poll_once(&mut body);
+
+        assert!(progress.waiting_for_client());
+    }
+
+    #[test]
+    fn does_not_wait_for_a_client_that_gave_a_frame() {
+        let progress = SendProgress::begin(Instant::now(), true);
+        let chunk = http_body_util::Full::new(Bytes::from_static(b"chunk"));
+        let mut body = CountedBody::new(chunk, Arc::default(), progress.clone());
+
+        poll_once(&mut body);
+
+        assert!(!progress.waiting_for_client());
     }
 
     #[test]
