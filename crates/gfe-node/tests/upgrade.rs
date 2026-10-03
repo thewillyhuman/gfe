@@ -6,7 +6,7 @@ use gfe_handover::Sockets;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::OwnedFd;
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixDatagram, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -167,16 +167,26 @@ struct Node {
     proxy: SocketAddr,
     ops: SocketAddr,
     bootstrap: PathBuf,
+    /// Where the node sends what it tells the service manager.
+    service_manager: UnixDatagram,
 }
 
 impl Node {
     /// Start a node and wait until it is ready.
     fn start(test: &str) -> Node {
         let (proxy, ops) = (free_addr(), free_addr());
-        let bootstrap = write_config(&scratch(test), proxy, ops);
+        let dir = scratch(test);
+        let bootstrap = write_config(&dir, proxy, ops);
+        let notify_socket = dir.join("notify");
+        let _ = std::fs::remove_file(&notify_socket);
+        let service_manager = UnixDatagram::bind(&notify_socket).unwrap();
+        service_manager
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
         let process = Command::new(env!("CARGO_BIN_EXE_gfe-node"))
             .arg("--config")
             .arg(&bootstrap)
+            .env("NOTIFY_SOCKET", &notify_socket)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .process_group(0)
@@ -187,6 +197,7 @@ impl Node {
             proxy,
             ops,
             bootstrap,
+            service_manager,
         };
         assert!(
             eventually(|| node.ops_get("/readyz").starts_with("HTTP/1.1 200")),
@@ -206,6 +217,20 @@ impl Node {
         let pid = self.process.id().to_string();
         let sent = Command::new("kill").args([signal, &pid]).status().unwrap();
         assert!(sent.success(), "kill {signal} {pid}");
+    }
+
+    /// The next thing the node tells the service manager, as `KEY=value`
+    /// lines.
+    fn tells_service_manager(&self) -> Vec<String> {
+        let mut message = [0u8; 1024];
+        let length = self
+            .service_manager
+            .recv(&mut message)
+            .expect("the node should have told the service manager something");
+        String::from_utf8_lossy(&message[..length])
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     /// How the process the test started ended, if it did within a while.
@@ -386,4 +411,55 @@ fn keeps_serving_when_its_successor_cannot_start() {
     assert!(counted, "the failed upgrade was not counted");
     assert_eq!(node.process.try_wait().unwrap(), None);
     assert!(http_get(node.proxy, "/").starts_with("HTTP/1.1 200"));
+}
+
+#[test]
+fn tells_the_service_manager_when_it_is_ready() {
+    let node = Node::start("ready");
+
+    let told = node.tells_service_manager();
+
+    assert!(told.contains(&"READY=1".to_string()), "{told:?}");
+}
+
+#[test]
+fn tells_the_service_manager_which_process_has_taken_over() {
+    let node = Node::start("main-pid");
+    node.tells_service_manager();
+
+    node.signal("-USR2");
+    let started = node.tells_service_manager();
+    let finished = node.tells_service_manager();
+
+    assert_eq!(started, ["RELOADING=1"]);
+    let successor = finished
+        .iter()
+        .find_map(|line| line.strip_prefix("MAINPID="))
+        .unwrap_or_else(|| panic!("no MAINPID in {finished:?}"));
+    assert_ne!(successor, node.process.id().to_string());
+    assert!(finished.contains(&"READY=1".to_string()), "{finished:?}");
+}
+
+#[test]
+fn tells_the_service_manager_that_an_upgrade_failed() {
+    let node = Node::start("failed");
+    node.tells_service_manager();
+    std::fs::write(&node.bootstrap, "not a config").unwrap();
+
+    node.signal("-USR2");
+    node.tells_service_manager();
+    let finished = node.tells_service_manager();
+
+    // Ready again, as the same process, and saying why.
+    assert!(finished.contains(&"READY=1".to_string()), "{finished:?}");
+    assert!(
+        !finished.iter().any(|line| line.starts_with("MAINPID=")),
+        "{finished:?}"
+    );
+    assert!(
+        finished
+            .iter()
+            .any(|line| line.starts_with("STATUS=Upgrade failed")),
+        "{finished:?}"
+    );
 }

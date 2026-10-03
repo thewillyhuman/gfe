@@ -975,6 +975,8 @@ A new binary, or a change to the bootstrap config (which is read once, at startu
 
 No connection is refused, because the sockets are never closed, and none waiting to be accepted is lost, because the queue it waits in outlives the node. What an upgrade can still cut is what a drain cuts: a request or stream still running when the drain deadline elapses.
 
+Under systemd this is `systemctl reload gfe-node`. The unit is of `Type=notify`: the node tells systemd when it serves and, once its successor has taken over, that the successor is the service's main process, so the node's own exit is not taken for the service stopping.
+
 If the successor does not take over (the binary does not start, the config is rejected, it does not answer within 60 s), nothing has changed for the node: it goes on serving, logs why, and counts the attempt in `gfe_upgrade_failures_total`. This makes a bootstrap config change as safe to roll out as a dynamic one.
 
 What does not carry over: the successor starts with empty connection pools to the backends, every backend presumed healthy until probed, and its counters at zero.

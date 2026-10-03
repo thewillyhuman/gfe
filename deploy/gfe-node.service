@@ -5,7 +5,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+# The node tells systemd when it serves and, after it has replaced itself
+# (see ExecReload), which process the service now is.
+Type=notify
 
 # Run as a dedicated unprivileged user. The RPM creates it; when installing
 # by hand, create it once:
@@ -21,9 +23,15 @@ Group=gfe-node
 # starting at all. A pre-start check would turn that into an outage.
 ExecStart=/usr/bin/gfe-node --config /etc/gfe/gfe.toml
 
-# Reload semantics: GFE hot-reloads the dynamic config on file change, so a
-# SIGHUP is not required. `systemctl reload` is a no-op; just rewrite the
-# dynamic JSON and GFE picks it up.
+# Reload upgrades the node in place: it starts the binary now on disk (a new
+# package, or a changed gfe.toml), hands it its listening sockets, and drains
+# once the new process accepts connections. No connection is refused. If the
+# new process does not start, the running one goes on serving and says why
+# in `systemctl status` and the journal. `systemctl reload` does not wait
+# for the outcome.
+#
+# The dynamic config needs no reload: GFE picks it up when the file changes.
+ExecReload=/bin/kill -USR2 $MAINPID
 
 Restart=on-failure
 RestartSec=5s

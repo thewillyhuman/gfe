@@ -4,6 +4,7 @@
 mod kernel;
 mod ops;
 mod signals;
+mod systemd;
 mod upgrade;
 
 use anyhow::{Context, Result};
@@ -209,12 +210,14 @@ async fn run(
 
     ready.store(true, Ordering::SeqCst);
     tracing::info!("gfe-node ready");
-    if let Some(predecessor) = predecessor {
+    match predecessor {
         // Without this the predecessor does not stop: it gives up on this
-        // node and goes on serving next to it.
-        predecessor
+        // node and goes on serving next to it. It is also the predecessor
+        // that tells systemd, which only listens to the process it knows.
+        Some(predecessor) => predecessor
             .release()
-            .context("telling the running node that this one has taken over")?;
+            .context("telling the running node that this one has taken over")?,
+        None => systemd::ready(),
     }
 
     // Serve until told to stop, or until a successor has taken over.
@@ -226,21 +229,25 @@ async fn run(
             }
             Request::Upgrade => {
                 tracing::info!("upgrade requested, starting a successor");
+                systemd::upgrading();
                 let ops = ops_socket.as_deref().map(|socket| (ops_addr, socket));
                 match upgrade::hand_over(&listeners, ops).await {
                     Ok(successor) => {
                         tracing::info!(successor, "the successor has taken over, draining");
+                        systemd::upgraded(successor);
                         // The ops endpoints are the successor's from now on:
                         // answering next to it would mix two nodes' metrics.
                         let _ = stop_ops.send(true);
                         break;
                     }
                     Err(e) => {
+                        let reason = format!("{e:#}");
                         tracing::error!(
-                            error = format!("{e:#}"),
+                            error = reason,
                             "upgrade failed, this node goes on serving"
                         );
                         metrics.control.upgrade_failures.inc();
+                        systemd::upgrade_failed(&reason);
                     }
                 }
             }
