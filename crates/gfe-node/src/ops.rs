@@ -6,8 +6,9 @@ use bytes::Bytes;
 use gfe_metrics::{GfeMetrics, LogDestinationLabel};
 use gfe_proxy::ProxyShared;
 use http_body_util::Full;
+use hyper::header::{HeaderValue, CONNECTION};
 use hyper::service::service_fn;
-use hyper::{Response, StatusCode};
+use hyper::{Response, StatusCode, Version};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use std::convert::Infallible;
@@ -63,8 +64,8 @@ pub async fn listen(
 }
 
 /// Serve the ops endpoints on `listener` until `stop` flips to `true`, which
-/// is when another process has taken the socket over. Requests already
-/// accepted are still answered, and their connections then closed, so that
+/// is when another process has taken the socket over. Connections already
+/// accepted are still answered, `/readyz` as ready, and then closed, so that
 /// a client that keeps one asks the new process next.
 pub async fn serve(
     listener: Arc<TcpListener>,
@@ -109,9 +110,29 @@ pub async fn serve(
                 return;
             }
             let io = TokioIo::new(stream);
-            let svc = service_fn(move |req| {
-                let state = state.clone();
-                async move { handle(state, req.uri().path()).await }
+            // Set once a request has been answered here: shutting a
+            // connection down before then could close it on a request
+            // already on its way.
+            let answered = Arc::new(AtomicBool::new(false));
+            let svc = service_fn({
+                let answered = answered.clone();
+                let stop = stop.clone();
+                move |req| {
+                    let state = state.clone();
+                    let answered = answered.clone();
+                    let handed_over = *stop.borrow();
+                    // HTTP/2 has no such header: its clients get a GOAWAY.
+                    let http1 = req.version() < Version::HTTP_2;
+                    async move {
+                        let mut resp = handle(state, req.uri().path(), handed_over).await?;
+                        if handed_over && http1 {
+                            resp.headers_mut()
+                                .insert(CONNECTION, HeaderValue::from_static("close"));
+                        }
+                        answered.store(true, Ordering::SeqCst);
+                        Ok::<_, Infallible>(resp)
+                    }
+                }
             });
             let mut builder = auto::Builder::new(TokioExecutor::new());
             builder
@@ -122,10 +143,13 @@ pub async fn serve(
             tokio::pin!(conn);
             tokio::select! {
                 _ = conn.as_mut() => {}
-                // Whatever this process answers from now on is about a node
-                // that is leaving, not the one that serves.
+                // Clients are moved to the process that serves now: one that
+                // has been answered here is shut down gracefully, and one
+                // that has not is told to close with its first answer.
                 () = stopped(&mut stop) => {
-                    conn.as_mut().graceful_shutdown();
+                    if answered.load(Ordering::SeqCst) {
+                        conn.as_mut().graceful_shutdown();
+                    }
                     let _ = conn.await;
                 }
             }
@@ -138,12 +162,20 @@ async fn stopped(stop: &mut watch::Receiver<bool>) {
     let _ = stop.wait_for(|stopped| *stopped).await;
 }
 
-async fn handle(state: Arc<OpsState>, path: &str) -> Result<Response<Full<Bytes>>, Infallible> {
+/// Answer a request for `path`. `handed_over` is whether another process has
+/// taken the ops socket over, which it does only once it is ready: the
+/// address is then ready whatever this process is doing.
+async fn handle(
+    state: Arc<OpsState>,
+    path: &str,
+    handed_over: bool,
+) -> Result<Response<Full<Bytes>>, Infallible> {
     let resp = match path {
         "/healthz" => text(StatusCode::OK, "ok"),
         "/readyz" => {
-            let ready =
-                state.ready.load(Ordering::SeqCst) && !state.shared.draining.load(Ordering::SeqCst);
+            let ready = handed_over
+                || state.ready.load(Ordering::SeqCst)
+                    && !state.shared.draining.load(Ordering::SeqCst);
             if ready {
                 text(StatusCode::OK, "ready")
             } else {
@@ -229,6 +261,15 @@ mod tests {
 
     /// An ops server of a ready node, on a loopback port; its address.
     async fn ops_server() -> SocketAddr {
+        let (addr, _, stop) = ops_server_to_hand_over().await;
+        // Kept for as long as the server runs: dropping it stops serving.
+        tokio::spawn(async move { stop.closed().await });
+        addr
+    }
+
+    /// An ops server of a ready node, on a loopback port: its address, its
+    /// state, and what tells it another process has taken its socket over.
+    async fn ops_server_to_hand_over() -> (SocketAddr, Arc<OpsState>, watch::Sender<bool>) {
         let metrics = Arc::new(GfeMetrics::new());
         let shared = ProxyShared::new(
             gfe_upstream::UpstreamClient::new(1).unwrap(),
@@ -247,11 +288,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let (stop, stopped) = watch::channel(false);
-        tokio::spawn(async move {
-            serve(Arc::new(listener), state, stopped).await;
-            drop(stop);
-        });
-        addr
+        tokio::spawn(serve(Arc::new(listener), state.clone(), stopped));
+        (addr, state, stop)
     }
 
     /// What the server at the other end of `stream` sends until it closes
@@ -262,6 +300,29 @@ mod tests {
             Ok(_) => Some(String::from_utf8_lossy(&received).to_string()),
             Err(_) => None,
         }
+    }
+
+    /// A prober whose connection the outgoing node accepted just before
+    /// the handover asks it, not the successor, and the outgoing node is
+    /// draining by then.
+    #[tokio::test]
+    async fn answers_for_the_successor_on_a_connection_accepted_before_the_handover() {
+        let (addr, state, stop) = ops_server_to_hand_over().await;
+        let mut prober = TcpStream::connect(addr).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        stop.send(true).unwrap();
+        state.shared.draining.store(true, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        prober
+            .write_all(b"GET /readyz HTTP/1.1\r\nhost: t\r\n\r\n")
+            .await
+            .unwrap();
+        let answer = read_until_closed(&mut prober, Duration::from_secs(2)).await;
+
+        let answer = answer.unwrap_or_default().to_ascii_lowercase();
+        assert!(answer.starts_with("http/1.1 200"), "{answer}");
+        assert!(answer.contains("connection: close"), "{answer}");
     }
 
     #[tokio::test]
