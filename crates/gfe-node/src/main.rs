@@ -100,7 +100,7 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
         resolver: resolver.clone(),
         challenges: Arc::new(ChallengeStore::new()),
         health: Arc::new(HealthMap::new(true)),
-        upstream: build_upstream_client(&node.upstream)?,
+        upstream: build_upstream_client(&node.upstream, &node.timeouts)?,
         metrics: metrics.clone(),
         limits: node.limits.clone(),
         timeouts: node.timeouts.clone(),
@@ -172,8 +172,12 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
 }
 
 /// Build the upstream client from the node's `[upstream]` config (idle pool
-/// size, optional extra CA bundle, optional mTLS client certificate).
-fn build_upstream_client(cfg: &gfe_types::UpstreamConfig) -> Result<UpstreamClient> {
+/// size, optional extra CA bundle, optional mTLS client certificate) and the
+/// `upstream_connect` timeout.
+fn build_upstream_client(
+    cfg: &gfe_types::UpstreamConfig,
+    timeouts: &gfe_types::TimeoutsConfig,
+) -> Result<UpstreamClient> {
     fn read(p: &Path) -> Result<Vec<u8>> {
         std::fs::read(p).with_context(|| format!("reading {}", p.display()))
     }
@@ -182,6 +186,7 @@ fn build_upstream_client(cfg: &gfe_types::UpstreamConfig) -> Result<UpstreamClie
         client_cert_pem: cfg.client_cert_file.as_deref().map(read).transpose()?,
         client_key_pem: cfg.client_key_file.as_deref().map(read).transpose()?,
         extra_ca_pem: cfg.extra_ca_file.as_deref().map(read).transpose()?,
+        connect_timeout: Some(timeouts.upstream_connect),
     };
     UpstreamClient::with_options(opts).map_err(|e| anyhow::anyhow!("building upstream client: {e}"))
 }

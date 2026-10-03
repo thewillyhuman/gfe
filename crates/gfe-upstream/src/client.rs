@@ -13,6 +13,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Boxed error type carried across the proxy/upstream boundary.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -32,6 +33,9 @@ pub struct UpstreamClientOptions {
     pub client_key_pem: Option<Vec<u8>>,
     /// Extra CA bundle (PEM) trusted on top of webpki roots.
     pub extra_ca_pem: Option<Vec<u8>>,
+    /// Upper bound on establishing the TCP connection to a backend. `None`
+    /// leaves it to the operating system, which can take minutes.
+    pub connect_timeout: Option<Duration>,
 }
 
 /// A cloneable, pooled client for forwarding requests to upstreams.
@@ -87,6 +91,7 @@ impl UpstreamClient {
 
         let mut http = HttpConnector::new();
         http.enforce_http(false);
+        http.set_connect_timeout(opts.connect_timeout);
 
         let https = hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(tls)
@@ -165,7 +170,41 @@ mod tests {
             client_cert_pem: Some(cert.cert.pem().into_bytes()),
             client_key_pem: Some(cert.key_pair.serialize_pem().into_bytes()),
             extra_ca_pem: Some(cert.cert.pem().into_bytes()),
+            ..Default::default()
         };
         assert!(UpstreamClient::with_options(opts).is_ok());
+    }
+
+    /// A backend that never answers the TCP handshake must fail within the
+    /// connect timeout, not the operating system's (minutes-long) default.
+    #[tokio::test]
+    async fn gives_up_connecting_after_connect_timeout() {
+        use http_body_util::{BodyExt, Empty};
+        use std::time::{Duration, Instant};
+
+        let client = UpstreamClient::with_options(UpstreamClientOptions {
+            connect_timeout: Some(Duration::from_millis(200)),
+            ..Default::default()
+        })
+        .unwrap();
+        let req = Request::builder()
+            .uri("/")
+            .body(
+                Empty::<Bytes>::new()
+                    .map_err(|e| Box::new(e) as BoxError)
+                    .boxed(),
+            )
+            .unwrap();
+
+        // TEST-NET-1 (RFC 5737) is never routed, so the SYN goes unanswered.
+        let start = Instant::now();
+        let result = client.send(Scheme::Http, "192.0.2.1:80", req).await;
+
+        assert!(result.is_err());
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
     }
 }

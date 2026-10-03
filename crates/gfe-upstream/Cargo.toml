@@ -23,6 +23,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 rcgen = { workspace = true }
+tokio = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

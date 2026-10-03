@@ -909,7 +909,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] `gfe-upstream`: `least_request` and `ring_hash` (affinity) policies, upstream TLS validation
 - [~] bounded pools — idle connections bounded per host; a global upstream-connection cap is a follow-up
 - [x] `gfe-proxy`: graceful drain (deadline), request-total timeout, conservative idempotent retries, connection limits
-- [~] per-stage timeouts — overall `request_total` + TLS-handshake timeouts applied; per-stage (upstream connect / first-byte) is a follow-up
+- [~] per-stage timeouts — overall `request_total`, TLS-handshake and upstream-connect timeouts applied; upstream first-byte is a follow-up
 - [x] `gfe-metrics`: control-plane metrics; structured access logging (`gfe::access`)
 - [x] `gfe-trace` CLI (offline routing tracer)
 
