@@ -25,15 +25,17 @@ use std::sync::Arc;
     about = "General Front End — L7 TLS proxy node"
 )]
 struct Args {
-    /// Path to the bootstrap node config (TOML).
-    #[arg(long)]
-    config: PathBuf,
+    /// Path to the bootstrap node config (TOML). Required, except when
+    /// checking a dynamic config on its own with `--dynamic-config`.
+    #[arg(long, required_unless_present = "dynamic_config")]
+    config: Option<PathBuf>,
     /// Validate the bootstrap and dynamic config, then exit.
     #[arg(long)]
     check_config: bool,
     /// With `--check-config`: validate this dynamic config instead of the one
     /// named by the bootstrap config, so a candidate file can be checked
-    /// before it replaces the deployed one.
+    /// before it replaces the deployed one. Without `--config`, only this
+    /// file is checked.
     #[arg(long, requires = "check_config", value_name = "FILE")]
     dynamic_config: Option<PathBuf>,
 }
@@ -42,12 +44,19 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     // Load and validate config before doing anything else.
-    let node = gfe_config::load_node_config(&args.config)
-        .with_context(|| format!("loading node config {}", args.config.display()))?;
+    let node = args
+        .config
+        .as_deref()
+        .map(|path| {
+            gfe_config::load_node_config(path)
+                .with_context(|| format!("loading node config {}", path.display()))
+        })
+        .transpose()?;
     let dynamic_path = args
         .dynamic_config
         .as_ref()
-        .unwrap_or(&node.control_plane.config_file);
+        .or(node.as_ref().map(|node| &node.control_plane.config_file))
+        .context("either --config or --dynamic-config is required")?;
     let dynamic = gfe_config::load_dynamic_config(dynamic_path)
         .with_context(|| format!("loading dynamic config {}", dynamic_path.display()))?;
     gfe_config::validate(&dynamic).context("validating dynamic config")?;
@@ -66,6 +75,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    let node = node.context("--config is required to run a node")?;
     init_tracing();
 
     let mut rt = tokio::runtime::Builder::new_multi_thread();

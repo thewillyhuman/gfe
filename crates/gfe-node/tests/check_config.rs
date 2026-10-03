@@ -42,9 +42,12 @@ fn write_bootstrap(dir: &Path, dynamic: &Path) -> PathBuf {
     path
 }
 
-fn check_config(bootstrap: &Path, candidate: Option<&Path>) -> Output {
+fn check_config(bootstrap: Option<&Path>, candidate: Option<&Path>) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_gfe-node"));
-    cmd.arg("--config").arg(bootstrap).arg("--check-config");
+    cmd.arg("--check-config");
+    if let Some(bootstrap) = bootstrap {
+        cmd.arg("--config").arg(bootstrap);
+    }
     if let Some(candidate) = candidate {
         cmd.arg("--dynamic-config").arg(candidate);
     }
@@ -59,7 +62,7 @@ fn accepts_valid_candidate_instead_of_deployed_file() {
     let candidate = dir.join("candidate.json");
     std::fs::write(&candidate, VALID_DYNAMIC).unwrap();
 
-    let out = check_config(&bootstrap, Some(&candidate));
+    let out = check_config(Some(&bootstrap), Some(&candidate));
 
     assert!(out.status.success(), "{out:?}");
 }
@@ -73,7 +76,7 @@ fn rejects_invalid_candidate_even_when_deployed_file_is_valid() {
     let candidate = dir.join("candidate.json");
     std::fs::write(&candidate, INVALID_DYNAMIC).unwrap();
 
-    let out = check_config(&bootstrap, Some(&candidate));
+    let out = check_config(Some(&bootstrap), Some(&candidate));
 
     assert!(!out.status.success(), "{out:?}");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -87,7 +90,7 @@ fn checks_deployed_file_when_no_candidate_is_given() {
     std::fs::write(&deployed, INVALID_DYNAMIC).unwrap();
     let bootstrap = write_bootstrap(&dir, &deployed);
 
-    let out = check_config(&bootstrap, None);
+    let out = check_config(Some(&bootstrap), None);
 
     assert!(!out.status.success(), "{out:?}");
 }
@@ -99,9 +102,35 @@ fn rejects_certificates_that_cannot_be_loaded() {
     std::fs::write(&deployed, MISSING_CERT_DYNAMIC).unwrap();
     let bootstrap = write_bootstrap(&dir, &deployed);
 
-    let out = check_config(&bootstrap, None);
+    let out = check_config(Some(&bootstrap), None);
 
     assert!(!out.status.success(), "{out:?}");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("/nonexistent/gfe.crt"), "{stderr}");
+}
+
+/// On a node being bootstrapped the dynamic config is written before the
+/// bootstrap config exists, so a candidate must be checkable on its own.
+#[test]
+fn accepts_valid_candidate_without_a_bootstrap_config() {
+    let dir = scratch("standalone-valid");
+    let candidate = dir.join("candidate.json");
+    std::fs::write(&candidate, VALID_DYNAMIC).unwrap();
+
+    let out = check_config(None, Some(&candidate));
+
+    assert!(out.status.success(), "{out:?}");
+}
+
+#[test]
+fn rejects_invalid_candidate_without_a_bootstrap_config() {
+    let dir = scratch("standalone-invalid");
+    let candidate = dir.join("candidate.json");
+    std::fs::write(&candidate, INVALID_DYNAMIC).unwrap();
+
+    let out = check_config(None, Some(&candidate));
+
+    assert!(!out.status.success(), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unknown pool missing"), "{stderr}");
 }

@@ -3,9 +3,10 @@
 #
 # With a second argument, that candidate dynamic config is validated instead of
 # the deployed one named in the bootstrap config. This is the form to use as a
-# pre-flight gate in config management, e.g. Puppet:
+# pre-flight gate in config management. The candidate can also be checked on
+# its own, without a bootstrap config, e.g. as a Puppet validate_cmd:
 #
-#   validate_cmd => '/usr/bin/gfe-node --config /etc/gfe/gfe.toml --check-config --dynamic-config %'
+#   validate_cmd => '/usr/bin/gfe-node --check-config --dynamic-config %'
 #
 # Usage:
 #   ./validate-config.sh /etc/gfe/gfe.toml
