@@ -697,6 +697,15 @@ async fn answers_400_to_a_cleartext_request_without_a_host() {
     assert_eq!(event["error"], "host_missing");
 }
 
+#[tokio::test]
+async fn serves_an_http10_request_without_a_host_from_the_catch_all_route() {
+    let (proxy, _tx) = start_proxy(&fixed_response_config(), build_shared()).await;
+
+    let response = raw_exchange(proxy, "GET / HTTP/1.0\r\n\r\n").await;
+
+    assert!(response.starts_with("HTTP/1.0 200"), "{response}");
+}
+
 /// An HTTPS listener answering every request with a fixed `200 ok`, with one
 /// certificate for `a.example.org` and `b.example.org` and another for
 /// `c.example.org`. Returns the config and the first certificate's file.

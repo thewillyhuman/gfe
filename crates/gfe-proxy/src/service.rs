@@ -179,6 +179,10 @@ impl HostError {
 /// A request carrying both an authority and a `Host` header is refused
 /// unless they name the same host, and the same port when both carry one:
 /// otherwise it would be routed by one and forwarded with the other.
+///
+/// A request that names no host at all is refused, except over HTTP/1.0,
+/// which has no `Host` header to require: that one is for no host in
+/// particular (the empty host), and only a catch-all route matches it.
 fn request_host<B>(req: &Request<B>, sni: Option<&str>) -> Result<String, HostError> {
     let header = req.headers().get(HOST).map(|value| {
         value
@@ -205,7 +209,11 @@ fn request_host<B>(req: &Request<B>, sni: Option<&str>) -> Result<String, HostEr
         (Some(target), None) => Ok(target.host().to_ascii_lowercase()),
         (None, Some(Some(header))) => Ok(header.host().to_ascii_lowercase()),
         (None, Some(None)) => Err(HostError::Missing),
-        (None, None) => sni.map(str::to_ascii_lowercase).ok_or(HostError::Missing),
+        (None, None) => match sni {
+            Some(sni) => Ok(sni.to_ascii_lowercase()),
+            None if req.version() == hyper::Version::HTTP_10 => Ok(String::new()),
+            None => Err(HostError::Missing),
+        },
     }
 }
 
@@ -299,6 +307,13 @@ mod tests {
     fn no_authority_no_host_header_and_no_sni_is_missing() {
         let r = req(None, "/path");
         assert_eq!(request_host(&r, None), Err(HostError::Missing));
+    }
+
+    #[test]
+    fn http10_request_without_a_host_is_for_no_host_in_particular() {
+        let mut r = req(None, "/path");
+        *r.version_mut() = hyper::Version::HTTP_10;
+        assert_eq!(request_host(&r, None), Ok(String::new()));
     }
 
     #[test]

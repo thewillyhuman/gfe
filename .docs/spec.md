@@ -426,7 +426,7 @@ After the handshake, the connection is served by **hyper**:
 - **Limits:** max header size, max concurrent h2 streams, and request/idle timeouts are enforced per connection (Section 6.8).
 - **Normalization:** before routing, the request's host is checked (`service.rs`), and GFE answers itself when it fails:
   - a request whose target authority (`:authority`, or an absolute-form target) and `Host` header name different hosts, or different ports when both carry one, gets a `400` (`host_conflict`);
-  - a request with no host at all (no target authority, no valid `Host` header, no SNI) gets a `400` (`host_missing`);
+  - a request with no host at all (no target authority, no valid `Host` header, no SNI) gets a `400` (`host_missing`). The exception is an HTTP/1.0 request, since HTTP/1.0 has no `Host` header to require: it is for no host in particular, and only a catch-all (`*`) route matches it. Simple health probes are such requests;
   - on HTTPS, a request for another host than the SNI is served only if the certificate store resolves both names to the same certificate entry (the default one included), as a client coalescing HTTP/2 connections does; otherwise it gets a `421 Misdirected Request` (`misdirected_request`), which tells the client to retry on a new connection.
 
 ### 6.4 Routing
