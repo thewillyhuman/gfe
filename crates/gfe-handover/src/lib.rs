@@ -14,7 +14,8 @@
 //!   listener 0.0.0.0:443         →     one line per socket, the socket
 //!   ops 127.0.0.1:9101           →     itself travelling with its line
 //!   (closes its sending half)    →
-//!                                ←     ready
+//!                                ←     received 4242     its process id
+//!                                ←     ready             once it accepts
 //! ```
 //!
 //! The sockets travel as ancillary data (`SCM_RIGHTS`), which is how a Unix
@@ -27,7 +28,7 @@ use rustix::net::{
     recvmsg, sendmsg, RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags,
     SendAncillaryBuffer, SendAncillaryMessage, SendFlags,
 };
-use std::io::{self, BufRead, BufReader, IoSlice, IoSliceMut, Write};
+use std::io::{self, IoSlice, IoSliceMut, Read, Write};
 use std::mem::MaybeUninit;
 use std::net::{Shutdown, SocketAddr, TcpListener};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -35,6 +36,10 @@ use std::os::unix::net::UnixStream;
 
 /// The first line of a handover, naming the version of the exchange.
 const HEADER: &str = "gfe-handover 1";
+
+/// What the successor answers when it has the sockets, followed by its
+/// process id.
+const RECEIVED: &str = "received";
 
 /// What the successor answers once it accepts connections.
 const READY: &str = "ready";
@@ -94,8 +99,9 @@ pub fn send(mut channel: &UnixStream, sockets: &Sockets) -> io::Result<()> {
     channel.shutdown(Shutdown::Write)
 }
 
-/// Take the sockets the outgoing node at the other end of `channel` gives.
-pub fn receive(channel: &UnixStream) -> io::Result<Sockets> {
+/// Take the sockets the outgoing node at the other end of `channel` gives,
+/// and tell it which process has them.
+pub fn receive(mut channel: &UnixStream) -> io::Result<Sockets> {
     let mut text = Vec::new();
     let mut fds: Vec<OwnedFd> = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -152,7 +158,20 @@ pub fn receive(channel: &UnixStream) -> io::Result<Sockets> {
     if fds.next().is_some() {
         return Err(invalid("more sockets than lines"));
     }
+    writeln!(channel, "{RECEIVED} {}", std::process::id())?;
     Ok(sockets)
+}
+
+/// Wait until the successor has the sockets; returns its process id.
+///
+/// Fails if the successor goes away first or, when `channel` has a read
+/// timeout, does not answer in time.
+pub fn await_receipt(channel: &UnixStream) -> io::Result<u32> {
+    let answer = read_line(channel)?;
+    answer
+        .strip_prefix(RECEIVED)
+        .and_then(|pid| pid.trim().parse().ok())
+        .ok_or_else(|| invalid("not a receipt"))
 }
 
 /// Tell the outgoing node that this process now accepts connections on the
@@ -166,15 +185,29 @@ pub fn confirm(mut channel: &UnixStream) -> io::Result<()> {
 /// Fails if the successor goes away without confirming or, when `channel`
 /// has a read timeout, does not confirm in time.
 pub fn await_confirmation(channel: &UnixStream) -> io::Result<()> {
-    let mut answer = String::new();
-    BufReader::new(channel).read_line(&mut answer)?;
-    if answer.trim_end() == READY {
+    if read_line(channel)? == READY {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "the successor went away before it was ready",
-        ))
+        Err(invalid("not a confirmation"))
+    }
+}
+
+/// The next line the successor sends, without its line break. Read a byte at
+/// a time, so that nothing of the line after it is consumed.
+fn read_line(mut channel: &UnixStream) -> io::Result<String> {
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        if channel.read(&mut byte)? == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "the successor went away",
+            ));
+        }
+        if byte[0] == b'\n' {
+            return String::from_utf8(line).map_err(|_| invalid("not text"));
+        }
+        line.push(byte[0]);
     }
 }
 
@@ -270,6 +303,28 @@ mod tests {
         let received = receive(&successor);
 
         assert_eq!(received.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn outgoing_node_learns_which_process_received_the_sockets() {
+        let (outgoing, successor) = UnixStream::pair().unwrap();
+        send(&outgoing, &Sockets::default()).unwrap();
+
+        receive(&successor).unwrap();
+
+        assert_eq!(await_receipt(&outgoing).unwrap(), std::process::id());
+    }
+
+    #[test]
+    fn confirmation_is_not_lost_when_it_arrives_with_the_receipt() {
+        let (outgoing, successor) = UnixStream::pair().unwrap();
+        send(&outgoing, &Sockets::default()).unwrap();
+        receive(&successor).unwrap();
+        confirm(&successor).unwrap();
+
+        await_receipt(&outgoing).unwrap();
+
+        assert!(await_confirmation(&outgoing).is_ok());
     }
 
     #[test]

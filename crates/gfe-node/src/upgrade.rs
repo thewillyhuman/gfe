@@ -144,9 +144,10 @@ fn start_successor(sockets: &gfe_handover::Sockets) -> Result<u32> {
 
     let taken_over = gfe_handover::send(&ours, sockets)
         .and_then(|()| ours.set_read_timeout(Some(SUCCESSOR_START_TIMEOUT)))
-        .and_then(|()| gfe_handover::await_confirmation(&ours));
+        .and_then(|()| gfe_handover::await_receipt(&ours))
+        .and_then(|pid| gfe_handover::await_confirmation(&ours).map(|()| pid));
     match taken_over {
-        Ok(()) => Ok(successor.id()),
+        Ok(pid) => Ok(pid),
         Err(e) => {
             // It says it accepts connections as soon as it does, so one that
             // has not said so holds none that killing it would break.

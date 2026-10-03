@@ -122,6 +122,7 @@ impl Successor {
         gfe_handover::send(&ours, &sockets).unwrap();
         ours.set_read_timeout(Some(Duration::from_secs(20)))
             .unwrap();
+        gfe_handover::await_receipt(&ours).expect("the node should take the sockets");
         gfe_handover::await_confirmation(&ours).expect("the node should take over");
 
         Successor {
