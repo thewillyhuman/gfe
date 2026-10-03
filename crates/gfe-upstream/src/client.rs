@@ -19,6 +19,7 @@ use crate::failure::UpstreamFailure;
 use crate::limit::{ConnectionLimit, LimitedConnector};
 use bytes::Bytes;
 use gfe_types::{GfeError, Scheme};
+use http::uri::PathAndQuery;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;
 use hyper::header::HOST;
@@ -198,8 +199,8 @@ impl UpstreamClient {
         let path_and_query = req
             .uri()
             .path_and_query()
-            .map(|pq| pq.as_str().to_string())
-            .unwrap_or_else(|| "/".to_string());
+            .cloned()
+            .unwrap_or_else(|| PathAndQuery::from_static("/"));
         let needs_http2 = req.version() == Version::HTTP_2;
         let (client, uri_scheme, over_http1) = match scheme {
             Scheme::Http => (&self.http1, "http", true),
@@ -213,8 +214,13 @@ impl UpstreamClient {
         } else {
             req.headers_mut().remove(HOST);
         }
-        let uri: hyper::Uri = format!("{uri_scheme}://{authority}{path_and_query}")
-            .parse()
+        // Built from its parts, so that no request target can run into the
+        // authority and change the backend the request goes to.
+        let uri = hyper::Uri::builder()
+            .scheme(uri_scheme)
+            .authority(authority)
+            .path_and_query(path_and_query)
+            .build()
             .map_err(|e| UpstreamFailure::other(Box::new(e)))?;
         *req.uri_mut() = uri;
 
@@ -370,6 +376,21 @@ mod tests {
                     .boxed(),
             )
             .unwrap()
+    }
+
+    /// The backend is reached at its own address whatever the request's
+    /// target: `*` must not run into the backend's port.
+    #[tokio::test]
+    async fn reaches_the_backend_whatever_the_request_target() {
+        let backend = spawn_slow_server(Duration::ZERO).await;
+        let client = UpstreamClient::new(1).unwrap();
+        let mut req = get();
+        *req.method_mut() = hyper::Method::OPTIONS;
+        *req.uri_mut() = hyper::Uri::from_static("*");
+
+        let result = client.send(Scheme::Http, &backend, req).await;
+
+        assert!(result.is_ok(), "{:?}", result.err());
     }
 
     #[tokio::test]

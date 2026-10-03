@@ -91,6 +91,14 @@ fn set_requested_host(parts: &mut http::request::Parts) {
     }
 }
 
+/// Whether a request target names a path on the origin server: origin form
+/// (`/path`) or absolute form (`http://host/path`). The asterisk form of
+/// `OPTIONS *` and the authority form of `CONNECT` do not, and GFE forwards
+/// neither.
+fn names_a_path(uri: &http::Uri) -> bool {
+    uri.path().starts_with('/')
+}
+
 /// Idempotent methods that are safe to retry on a pre-response failure.
 fn is_idempotent(method: &http::Method) -> bool {
     matches!(
@@ -126,6 +134,14 @@ pub async fn forward(
     let shared = &ctx.shared;
     let hash_key = Some(gfe_upstream::policy::hash64(ctx.client_ip));
     let proto = if ctx.is_tls { "https" } else { "http" };
+    if !names_a_path(req.uri()) {
+        record.failed("unsupported_request_target");
+        return synthetic(
+            StatusCode::BAD_REQUEST,
+            "unsupported request target",
+            record.request_id(),
+        );
+    }
     record.forwarding_to(pool.id.to_string());
 
     let (mut parts, body) = req.into_parts();

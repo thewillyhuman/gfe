@@ -2071,6 +2071,35 @@ async fn sends_no_host_to_an_h2c_pool() {
     );
 }
 
+/// A request whose target is not a path (asterisk form `OPTIONS *`, or
+/// authority form `CONNECT`) names nothing a backend could serve: it is
+/// refused before a backend is chosen, so no backend is blamed for it.
+#[tokio::test]
+async fn refuses_a_request_whose_target_is_not_a_path() {
+    let upstream = spawn_upstream().await;
+    for request in [
+        "OPTIONS * HTTP/1.1\r\nhost: a.example.org\r\nconnection: close\r\n\r\n",
+        "CONNECT a.example.org:443 HTTP/1.1\r\nhost: a.example.org\r\nconnection: close\r\n\r\n",
+    ] {
+        let (logs, _guard) = CapturedLogs::start();
+        let shared = build_shared();
+        let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+
+        let response = raw_exchange(proxy, request).await;
+        let event = logs.access_event().await;
+
+        assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+        assert_eq!(event["error"], "unsupported_request_target");
+        assert!(event["backend"].is_null(), "{event}");
+        let metrics = shared.metrics.encode();
+        assert!(!metrics.contains("gfe_upstream_errors_total{"), "{metrics}");
+        assert!(
+            !metrics.contains("gfe_upstream_requests_total{"),
+            "{metrics}"
+        );
+    }
+}
+
 /// A streaming call may legitimately have nothing to send, not even headers,
 /// for a long time. It is bounded by the deadline its client sets, not by the
 /// timeouts meant for request/response exchanges.
