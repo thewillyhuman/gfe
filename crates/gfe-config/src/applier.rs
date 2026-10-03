@@ -64,16 +64,15 @@ pub fn apply(shared: &ProxyShared, cfg: &DynamicConfig) -> Result<(), GfeError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arc_swap::ArcSwap;
+
     use gfe_metrics::GfeMetrics;
-    use gfe_tls::{ChallengeStore, SniResolver};
+
     use gfe_types::{
         CertEntry, LimitsConfig, ListenProtocol, Listener, ListenerId, PoolId, Route, RouteAction,
         RouteId, Scheme, TimeoutsConfig, TlsConfig, Upstream, UpstreamPool,
     };
-    use gfe_upstream::{HealthMap, UpstreamClient};
+    use gfe_upstream::UpstreamClient;
     use std::io::Write;
-    use std::sync::atomic::AtomicBool;
 
     fn temp_cert() -> (std::path::PathBuf, std::path::PathBuf) {
         let cert = rcgen::generate_simple_self_signed(vec!["example.org".into()]).unwrap();
@@ -92,19 +91,13 @@ mod tests {
     }
 
     fn shared() -> ProxyShared {
-        ProxyShared {
-            routes: ArcSwap::from_pointee(RouteTable::default()),
-            pools: ArcSwap::from_pointee(PoolSet::default()),
-            resolver: Arc::new(SniResolver::new(CertStore::default())),
-            challenges: Arc::new(ChallengeStore::new()),
-            health: Arc::new(HealthMap::new(true)),
-            upstream: UpstreamClient::new(8).unwrap(),
-            metrics: Arc::new(GfeMetrics::new()),
-            limits: LimitsConfig::default(),
-            timeouts: TimeoutsConfig::default(),
-            tls: TlsConfig::default(),
-            draining: AtomicBool::new(false),
-        }
+        ProxyShared::new(
+            UpstreamClient::new(8).unwrap(),
+            Arc::new(GfeMetrics::new()),
+            LimitsConfig::default(),
+            TimeoutsConfig::default(),
+            TlsConfig::default(),
+        )
     }
 
     #[test]

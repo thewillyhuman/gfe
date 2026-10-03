@@ -22,7 +22,7 @@ pub use listeners::ListenerSet;
 use arc_swap::ArcSwap;
 use gfe_metrics::GfeMetrics;
 use gfe_router::RouteTable;
-use gfe_tls::{ChallengeStore, SniResolver};
+use gfe_tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_types::{LimitsConfig, ListenerId, TimeoutsConfig, TlsConfig};
 use gfe_upstream::{HealthMap, PoolSet, UpstreamClient};
 use std::net::IpAddr;
@@ -50,6 +50,33 @@ pub struct ProxyShared {
     pub tls: TlsConfig,
     /// Set when the node is draining (fails `/readyz`).
     pub draining: AtomicBool,
+}
+
+impl ProxyShared {
+    /// Shared state with nothing configured yet: no routes, pools or
+    /// certificates, and every backend presumed healthy until probed. The
+    /// control plane fills it in by applying a dynamic config.
+    pub fn new(
+        upstream: UpstreamClient,
+        metrics: Arc<GfeMetrics>,
+        limits: LimitsConfig,
+        timeouts: TimeoutsConfig,
+        tls: TlsConfig,
+    ) -> Self {
+        ProxyShared {
+            routes: ArcSwap::from_pointee(RouteTable::default()),
+            pools: ArcSwap::from_pointee(PoolSet::default()),
+            resolver: Arc::new(SniResolver::new(CertStore::default())),
+            challenges: Arc::new(ChallengeStore::new()),
+            health: Arc::new(HealthMap::new(true)),
+            upstream,
+            metrics,
+            limits,
+            timeouts,
+            tls,
+            draining: AtomicBool::new(false),
+        }
+    }
 }
 
 /// Per-connection context passed to request handling.

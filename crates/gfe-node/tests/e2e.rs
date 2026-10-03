@@ -1,17 +1,14 @@
 //! End-to-end Phase 1 integration tests: a real GFE proxy in front of a mock
 //! upstream, exercised over plaintext HTTP and over TLS.
 
-use arc_swap::ArcSwap;
 use bytes::Bytes;
 use gfe_metrics::GfeMetrics;
 use gfe_proxy::{ListenerSet, ProxyShared};
-use gfe_router::RouteTable;
-use gfe_tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_types::{
     CertEntry, DynamicConfig, LimitsConfig, ListenProtocol, Listener, ListenerId, PoolId, Route,
     RouteAction, RouteId, Scheme, TimeoutsConfig, TlsConfig, Upstream, UpstreamPool,
 };
-use gfe_upstream::{HealthMap, PoolSet, UpstreamClient};
+use gfe_upstream::UpstreamClient;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -19,7 +16,6 @@ use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -83,20 +79,13 @@ fn build_shared() -> Arc<ProxyShared> {
 }
 
 fn build_shared_with(timeouts: TimeoutsConfig, limits: LimitsConfig) -> Arc<ProxyShared> {
-    let resolver = Arc::new(SniResolver::new(CertStore::default()));
-    Arc::new(ProxyShared {
-        routes: ArcSwap::from_pointee(RouteTable::default()),
-        pools: ArcSwap::from_pointee(PoolSet::default()),
-        resolver,
-        challenges: Arc::new(ChallengeStore::new()),
-        health: Arc::new(HealthMap::new(true)),
-        upstream: UpstreamClient::new(16).unwrap(),
-        metrics: Arc::new(GfeMetrics::new()),
+    Arc::new(ProxyShared::new(
+        UpstreamClient::new(16).unwrap(),
+        Arc::new(GfeMetrics::new()),
         limits,
         timeouts,
-        tls: TlsConfig::default(),
-        draining: AtomicBool::new(false),
-    })
+        TlsConfig::default(),
+    ))
 }
 
 /// Apply `cfg` and start its listeners; returns the listener set (to

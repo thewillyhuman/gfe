@@ -16,7 +16,6 @@ gfe-metrics = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
-arc-swap = { workspace = true }
 notify = { workspace = true }
 tokio = { workspace = true }
 

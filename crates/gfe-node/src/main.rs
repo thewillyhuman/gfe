@@ -4,14 +4,12 @@
 mod ops;
 
 use anyhow::{Context, Result};
-use arc_swap::ArcSwap;
 use clap::Parser;
 use gfe_controller::Controller;
 use gfe_metrics::GfeMetrics;
 use gfe_proxy::{DrainController, ListenerSet, ProxyShared};
-use gfe_router::RouteTable;
-use gfe_tls::{CertStore, ChallengeStore, SniResolver};
-use gfe_upstream::{HealthMap, PoolSet, UpstreamClient, UpstreamClientOptions};
+use gfe_tls::CertStore;
+use gfe_upstream::{UpstreamClient, UpstreamClientOptions};
 use ops::OpsState;
 use std::path::Path;
 use std::path::PathBuf;
@@ -102,21 +100,15 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
 
     let metrics = Arc::new(GfeMetrics::new());
 
-    // Build the shared data-plane state with empty snapshots.
-    let resolver = Arc::new(SniResolver::new(CertStore::default()));
-    let shared = Arc::new(ProxyShared {
-        routes: ArcSwap::from_pointee(RouteTable::default()),
-        pools: ArcSwap::from_pointee(PoolSet::default()),
-        resolver: resolver.clone(),
-        challenges: Arc::new(ChallengeStore::new()),
-        health: Arc::new(HealthMap::new(true)),
-        upstream: build_upstream_client(&node.upstream, &node.timeouts)?,
-        metrics: metrics.clone(),
-        limits: node.limits.clone(),
-        timeouts: node.timeouts.clone(),
-        tls: node.tls.clone(),
-        draining: AtomicBool::new(false),
-    });
+    // The shared data-plane state starts empty; the controller fills it in.
+    let shared = Arc::new(ProxyShared::new(
+        build_upstream_client(&node.upstream, &node.timeouts)?,
+        metrics.clone(),
+        node.limits.clone(),
+        node.timeouts.clone(),
+        node.tls.clone(),
+    ));
+    let resolver = shared.resolver.clone();
 
     // The TLS server config is shared across https listeners. Cert rotation
     // flows through the resolver's swappable store, so it is never rebuilt.

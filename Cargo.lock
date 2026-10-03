@@ -540,7 +540,6 @@ dependencies = [
 name = "gfe-config"
 version = "0.1.0"
 dependencies = [
- "arc-swap",
  "gfe-metrics",
  "gfe-proxy",
  "gfe-router",
@@ -559,12 +558,10 @@ dependencies = [
 name = "gfe-controller"
 version = "0.1.0"
 dependencies = [
- "arc-swap",
  "gfe-config",
  "gfe-health",
  "gfe-metrics",
  "gfe-proxy",
- "gfe-router",
  "gfe-tls",
  "gfe-types",
  "gfe-upstream",
@@ -655,7 +652,6 @@ name = "gfe-node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "bytes",
  "clap",
  "gfe-config",
@@ -663,7 +659,6 @@ dependencies = [
  "gfe-health",
  "gfe-metrics",
  "gfe-proxy",
- "gfe-router",
  "gfe-tls",
  "gfe-types",
  "gfe-upstream",

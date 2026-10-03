@@ -1,18 +1,14 @@
 //! Hot reload through the controller: changes on disk must reach the data
 //! plane without a restart.
 
-use arc_swap::ArcSwap;
 use gfe_controller::Controller;
 use gfe_metrics::GfeMetrics;
 use gfe_proxy::{ListenerSet, ProxyShared};
-use gfe_router::RouteTable;
-use gfe_tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_types::{LimitsConfig, MinVersion, TimeoutsConfig, TlsConfig};
-use gfe_upstream::{HealthMap, PoolSet, UpstreamClient};
+use gfe_upstream::UpstreamClient;
 use rustls::pki_types::CertificateDer;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -46,19 +42,13 @@ impl Node {
         .unwrap();
         let node = gfe_config::load_node_config(&bootstrap).unwrap();
 
-        let shared = Arc::new(ProxyShared {
-            routes: ArcSwap::from_pointee(RouteTable::default()),
-            pools: ArcSwap::from_pointee(PoolSet::default()),
-            resolver: Arc::new(SniResolver::new(CertStore::default())),
-            challenges: Arc::new(ChallengeStore::new()),
-            health: Arc::new(HealthMap::new(true)),
-            upstream: UpstreamClient::new(1).unwrap(),
-            metrics: Arc::new(GfeMetrics::new()),
-            limits: LimitsConfig::default(),
-            timeouts: TimeoutsConfig::default(),
-            tls: TlsConfig::default(),
-            draining: AtomicBool::new(false),
-        });
+        let shared = Arc::new(ProxyShared::new(
+            UpstreamClient::new(1).unwrap(),
+            Arc::new(GfeMetrics::new()),
+            LimitsConfig::default(),
+            TimeoutsConfig::default(),
+            TlsConfig::default(),
+        ));
         let server_config =
             Arc::new(gfe_tls::server_config(shared.resolver.clone(), MinVersion::Tls12).unwrap());
         let (shutdown, shutdown_rx) = watch::channel(false);
