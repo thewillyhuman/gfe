@@ -5,7 +5,7 @@ pub mod proxy_metrics;
 
 pub use control_metrics::{BackendLabels, ControlMetrics, SniLabel};
 pub use proxy_metrics::{
-    ListenerLabel, ProxyMetrics, RejectLabel, RequestDurationLabels, RequestLabels, TlsResultLabel,
+    ListenerLabel, ProxyMetrics, RejectLabel, RequestLabels, RouteLabels, TlsResultLabel,
     UpstreamDurationLabels, UpstreamLabels,
 };
 

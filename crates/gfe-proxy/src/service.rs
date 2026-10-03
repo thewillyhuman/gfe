@@ -3,7 +3,7 @@
 use crate::errors::{synthetic, RespBody};
 use crate::forward::{fixed_response, forward, redirect_response};
 use crate::ConnCtx;
-use gfe_metrics::{RequestDurationLabels, RequestLabels};
+use gfe_metrics::{RequestLabels, RouteLabels};
 use gfe_types::{PoolId, RouteAction};
 use hyper::body::Incoming;
 use hyper::{Request, Response, StatusCode};
@@ -101,7 +101,7 @@ pub async fn handle_request(
         .metrics
         .proxy
         .request_duration_seconds
-        .get_or_create(&RequestDurationLabels {
+        .get_or_create(&RouteLabels {
             listener: ctx.listener_id.to_string(),
             host: host_label,
             route: route_label.clone(),

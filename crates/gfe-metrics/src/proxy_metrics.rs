@@ -33,10 +33,10 @@ pub struct RequestLabels {
     pub status: String,
 }
 
-/// Labels for the request-latency histogram (no `status`, to keep histogram
-/// series — buckets × label-combos — bounded).
+/// Labels for per-route request metrics that do not split by `status` (the
+/// latency histogram, to keep its series — buckets × label-combos — bounded).
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
-pub struct RequestDurationLabels {
+pub struct RouteLabels {
     pub listener: String,
     pub host: String,
     pub route: String,
@@ -67,7 +67,7 @@ pub struct ProxyMetrics {
     pub tls_handshake_duration_seconds: Histogram,
     pub tls_sni_no_cert: Counter,
     pub requests: Family<RequestLabels, Counter>,
-    pub request_duration_seconds: Family<RequestDurationLabels, Histogram>,
+    pub request_duration_seconds: Family<RouteLabels, Histogram>,
     pub no_route: Counter,
     pub no_healthy_upstream: Counter,
     pub upstream_requests: Family<UpstreamLabels, Counter>,
