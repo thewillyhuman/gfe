@@ -249,6 +249,8 @@ impl Drop for RequestRecord {
             proto = if self.ctx.is_tls { "https" } else { "http" },
             http_version = ?self.http_version,
             sni = self.ctx.sni.as_deref(),
+            tls_version = self.ctx.tls.as_ref().map(|t| t.version),
+            tls_cipher = self.ctx.tls.as_ref().map(|t| t.cipher.as_str()),
             method = %self.method,
             host = %self.host,
             path = %self.path,
@@ -270,7 +272,7 @@ impl Drop for RequestRecord {
 }
 
 /// A duration in milliseconds, with microsecond resolution.
-fn millis(duration: Duration) -> f64 {
+pub(crate) fn millis(duration: Duration) -> f64 {
     duration.as_micros() as f64 / 1000.0
 }
 

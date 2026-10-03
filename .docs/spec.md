@@ -771,10 +771,15 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 |---|---|---|
 | `gfe_connections_accepted_total` | Counter | Client connections accepted (labels: listener) |
 | `gfe_connections_active` | Gauge | Currently open client connections |
+| `gfe_listener_connections_active` | Gauge | Currently open client connections (label: listener) |
 | `gfe_connections_rejected_total` | Counter | Connections rejected (label: reason ∈ {limit, handshake_timeout}) |
+| `gfe_connections_closed_total` | Counter | Closed connections (labels: listener, reason ∈ {closed, client_abort, idle_timeout, header_timeout, protocol_error, tls_handshake_failed, tls_handshake_timeout, error, shutdown}) |
+| `gfe_connection_duration_seconds` | Histogram | Lifetime of client connections (label: listener) |
+| `gfe_bytes_in_total` / `gfe_bytes_out_total` | Counter | Bytes read from / written to client sockets, on the wire (TLS included), counted as they flow (label: listener) |
 | `gfe_tls_handshakes_total` | Counter | TLS handshakes (label: result ∈ {ok, failed}) |
+| `gfe_tls_handshake_failures_total` | Counter | Failed handshakes (label: reason ∈ {invalid_message, peer_incompatible, alert_received, peer_misbehaved, client_closed, io_error, other}) |
+| `gfe_tls_connections_total` | Counter | TLS connections established (labels: version, cipher, alpn, resumed) |
 | `gfe_tls_handshake_duration_seconds` | Histogram | Handshake latency |
-| `gfe_tls_resumptions_total` | Counter | Resumed sessions (label: kind ∈ {ticket, psk}) |
 | `gfe_tls_sni_no_cert_total` | Counter | Handshakes with no matching certificate |
 | `gfe_requests_total` | Counter | Finished requests (labels: listener, host, route, status). `host` is the matched route's configured pattern, never the raw `Host`. Status `499` = abandoned by the client before GFE had a response |
 | `gfe_requests_in_flight` | Gauge | Requests received whose response is not finished yet |
@@ -787,7 +792,6 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_upstream_request_duration_seconds` | Histogram | Upstream round-trip latency |
 | `gfe_upstream_connect_errors_total` | Counter | Failures opening an upstream connection |
 | `gfe_upstream_pool_connections` | Gauge | Upstream connections (labels: pool, backend, state ∈ {idle, active}) |
-| `gfe_bytes_in_total` / `gfe_bytes_out_total` | Counter | Client-side bytes received / sent |
 
 **Control-plane metrics (`control_metrics.rs`):**
 
@@ -832,7 +836,10 @@ It prints which listener/route matched, which pool and which backend would be se
   | `duration_ms` | Request head to last response byte, microsecond resolution |
   | `upstream_ttfb_ms` | First upstream attempt to upstream response headers |
 
+  | `tls_version`, `tls_cipher` | Negotiated TLS parameters of the connection the request arrived on |
+
   Fields that do not apply to a request are omitted.
+- **Connection logs** (`conn_record.rs`): one structured event per client connection under the target `gfe::conn`, emitted when the connection is gone. Fields: `client`, `client_port`, `listener`, `proto`, `sni`, `tls_version`, `tls_cipher`, `alpn`, `tls_resumed`, `tls_handshake_ms`, `tls_error` (why a handshake failed), `requests` (served on the connection), `bytes_in` / `bytes_out` (on the wire), `duration_ms`, `reason` (as in `gfe_connections_closed_total`) and `error` (the error text, when there was one). Both targets can be silenced or routed independently, e.g. `RUST_LOG=info,gfe::conn=off`.
 - Log levels: ERROR/WARN always on; INFO/DEBUG adjustable at runtime via an env-filter reload, no restart.
 - **No body logging.** Headers are logged selectively (allowlist) to avoid leaking secrets.
 

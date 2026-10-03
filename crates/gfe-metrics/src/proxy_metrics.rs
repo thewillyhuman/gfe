@@ -17,6 +17,28 @@ pub struct RejectLabel {
     pub reason: String,
 }
 
+/// Labels for closed connections. `reason` is why the connection ended.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct CloseLabels {
+    pub listener: String,
+    pub reason: String,
+}
+
+/// The parameters a TLS handshake settled on.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct TlsLabels {
+    pub version: String,
+    pub cipher: String,
+    pub alpn: String,
+    pub resumed: String,
+}
+
+/// `reason` label for failed TLS handshakes.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct TlsFailureLabel {
+    pub reason: String,
+}
+
 /// `result` label for TLS handshakes.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct TlsResultLabel {
@@ -72,8 +94,13 @@ pub struct UpstreamDurationLabels {
 pub struct ProxyMetrics {
     pub connections_accepted: Family<ListenerLabel, Counter>,
     pub connections_active: Gauge,
+    pub listener_connections_active: Family<ListenerLabel, Gauge>,
     pub connections_rejected: Family<RejectLabel, Counter>,
+    pub connections_closed: Family<CloseLabels, Counter>,
+    pub connection_duration_seconds: Family<ListenerLabel, Histogram>,
     pub tls_handshakes: Family<TlsResultLabel, Counter>,
+    pub tls_handshake_failures: Family<TlsFailureLabel, Counter>,
+    pub tls_connections: Family<TlsLabels, Counter>,
     pub tls_handshake_duration_seconds: Histogram,
     pub tls_sni_no_cert: Counter,
     pub requests: Family<RequestLabels, Counter>,
@@ -87,8 +114,8 @@ pub struct ProxyMetrics {
     pub upstream_requests: Family<UpstreamLabels, Counter>,
     pub upstream_request_duration_seconds: Family<UpstreamDurationLabels, Histogram>,
     pub upstream_connect_errors: Counter,
-    pub bytes_in: Counter,
-    pub bytes_out: Counter,
+    pub bytes_in: Family<ListenerLabel, Counter>,
+    pub bytes_out: Family<ListenerLabel, Counter>,
 }
 
 fn latency_buckets() -> [f64; 11] {
@@ -96,6 +123,12 @@ fn latency_buckets() -> [f64; 11] {
     [
         0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0, 30.0,
     ]
+}
+
+/// Constructor for connection-lifetime histograms in a `Family`. Seconds:
+/// 10ms .. 1h, as connections live anywhere from one request to hours.
+fn lifetime_histogram() -> Histogram {
+    Histogram::new([0.01, 0.1, 0.5, 1.0, 5.0, 15.0, 60.0, 300.0, 900.0, 3600.0])
 }
 
 /// Constructor for latency histograms in a `Family`. A plain `fn` (not a
@@ -109,8 +142,13 @@ impl ProxyMetrics {
         let m = ProxyMetrics {
             connections_accepted: Family::default(),
             connections_active: Gauge::default(),
+            listener_connections_active: Family::default(),
             connections_rejected: Family::default(),
+            connections_closed: Family::default(),
+            connection_duration_seconds: Family::new_with_constructor(lifetime_histogram),
             tls_handshakes: Family::default(),
+            tls_handshake_failures: Family::default(),
+            tls_connections: Family::default(),
             tls_handshake_duration_seconds: Histogram::new(latency_buckets()),
             tls_sni_no_cert: Counter::default(),
             requests: Family::default(),
@@ -124,8 +162,8 @@ impl ProxyMetrics {
             upstream_requests: Family::default(),
             upstream_request_duration_seconds: Family::new_with_constructor(latency_histogram),
             upstream_connect_errors: Counter::default(),
-            bytes_in: Counter::default(),
-            bytes_out: Counter::default(),
+            bytes_in: Family::default(),
+            bytes_out: Family::default(),
         };
 
         registry.register(
@@ -139,14 +177,39 @@ impl ProxyMetrics {
             m.connections_active.clone(),
         );
         registry.register(
+            "gfe_listener_connections_active",
+            "Currently open client connections per listener",
+            m.listener_connections_active.clone(),
+        );
+        registry.register(
             "gfe_connections_rejected",
-            "Connections rejected (limit, handshake_timeout)",
+            "Connections refused at accept because a connection limit was reached",
             m.connections_rejected.clone(),
+        );
+        registry.register(
+            "gfe_connections_closed",
+            "Closed client connections by reason",
+            m.connections_closed.clone(),
+        );
+        registry.register(
+            "gfe_connection_duration_seconds",
+            "Lifetime of client connections",
+            m.connection_duration_seconds.clone(),
         );
         registry.register(
             "gfe_tls_handshakes",
             "TLS handshakes by result",
             m.tls_handshakes.clone(),
+        );
+        registry.register(
+            "gfe_tls_handshake_failures",
+            "Failed TLS handshakes by reason",
+            m.tls_handshake_failures.clone(),
+        );
+        registry.register(
+            "gfe_tls_connections",
+            "TLS connections established, by negotiated parameters",
+            m.tls_connections.clone(),
         );
         registry.register(
             "gfe_tls_handshake_duration_seconds",
@@ -215,12 +278,12 @@ impl ProxyMetrics {
         );
         registry.register(
             "gfe_bytes_in",
-            "Client-side bytes received",
+            "Bytes read from client sockets (on the wire, TLS included)",
             m.bytes_in.clone(),
         );
         registry.register(
             "gfe_bytes_out",
-            "Client-side bytes sent",
+            "Bytes written to client sockets (on the wire, TLS included)",
             m.bytes_out.clone(),
         );
 

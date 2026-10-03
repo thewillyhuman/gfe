@@ -8,6 +8,7 @@
 
 pub mod acceptor;
 pub mod activity;
+pub mod conn_record;
 pub mod connection;
 pub mod drain;
 pub mod errors;
@@ -88,4 +89,6 @@ pub struct ConnCtx {
     pub client_ip: IpAddr,
     pub client_port: u16,
     pub sni: Option<String>,
+    /// The negotiated TLS parameters, on a TLS connection.
+    pub tls: Option<conn_record::TlsInfo>,
 }

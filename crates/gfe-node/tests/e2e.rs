@@ -261,8 +261,6 @@ async fn http_redirect_action() {
 
 #[tokio::test]
 async fn terminates_tls_and_proxies() {
-    use tokio_rustls::TlsConnector;
-
     let upstream = spawn_upstream().await;
     let (cp, kp) = self_signed_files("secure.example.org");
 
@@ -301,8 +299,22 @@ async fn terminates_tls_and_proxies() {
     let shared = build_shared();
     let (proxy_addr, _tx) = start_proxy(&cfg, shared).await;
 
-    // Build a client trusting the self-signed cert.
-    let cert_pem = std::fs::read(&cp).unwrap();
+    let (status, text) = https_get(proxy_addr, &cp, "secure.example.org").await;
+
+    assert_eq!(status, 200);
+    assert!(text.contains("upstream-ok"), "body: {text}");
+}
+
+/// `GET /` over TLS (HTTP/1.1), trusting the certificate in `cert_file` and
+/// sending `server_name` as SNI and `Host`. The connection is closed on return.
+async fn https_get(
+    addr: SocketAddr,
+    cert_file: &std::path::Path,
+    server_name: &str,
+) -> (u16, String) {
+    use tokio_rustls::TlsConnector;
+
+    let cert_pem = std::fs::read(cert_file).unwrap();
     let mut reader = std::io::BufReader::new(&cert_pem[..]);
     let mut roots = rustls::RootCertStore::empty();
     for c in rustls_pemfile::certs(&mut reader) {
@@ -317,24 +329,23 @@ async fn terminates_tls_and_proxies() {
     client_cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
     let connector = TlsConnector::from(Arc::new(client_cfg));
 
-    let tcp = TcpStream::connect(proxy_addr).await.unwrap();
-    let domain = rustls::pki_types::ServerName::try_from("secure.example.org").unwrap();
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let domain = rustls::pki_types::ServerName::try_from(server_name.to_string()).unwrap();
     let tls = connector.connect(domain, tcp).await.unwrap();
     let io = TokioIo::new(tls);
     let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
-    tokio::spawn(async move {
-        let _ = conn.await;
-    });
+    let conn = tokio::spawn(conn);
     let req = Request::builder()
         .uri("/")
-        .header("host", "secure.example.org")
+        .header("host", server_name)
         .body(Empty::<Bytes>::new())
         .unwrap();
     let resp = sender.send_request(req).await.unwrap();
-    assert_eq!(resp.status().as_u16(), 200);
+    let status = resp.status().as_u16();
     let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let text = String::from_utf8_lossy(&body);
-    assert!(text.contains("upstream-ok"), "body: {text}");
+    drop(sender);
+    let _ = conn.await;
+    (status, String::from_utf8_lossy(&body).to_string())
 }
 
 #[tokio::test]
@@ -914,15 +925,25 @@ impl CapturedLogs {
     /// The fields of the single access-log event of the test, waiting for it
     /// to be emitted.
     async fn access_event(&self) -> serde_json::Value {
+        self.single_event_of("gfe::access").await
+    }
+
+    /// The fields of the single connection-log event of the test, waiting
+    /// for it to be emitted.
+    async fn connection_event(&self) -> serde_json::Value {
+        self.single_event_of("gfe::conn").await
+    }
+
+    async fn single_event_of(&self, target: &str) -> serde_json::Value {
         for _ in 0..250 {
-            let events = self.events_of("gfe::access");
+            let events = self.events_of(target);
             if let [event] = events.as_slice() {
                 return event.clone();
             }
-            assert!(events.len() < 2, "more than one access event: {events:?}");
+            assert!(events.len() < 2, "more than one {target} event: {events:?}");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        panic!("no access event was logged");
+        panic!("no {target} event was logged");
     }
 
     fn events_of(&self, target: &str) -> Vec<serde_json::Value> {
@@ -1081,4 +1102,131 @@ async fn logs_client_abort_in_the_middle_of_a_response() {
     assert_eq!(event["termination"], "client_abort");
     assert_eq!(event["response_bytes"], 3);
     assert_eq!(event["request_bytes"], 3);
+}
+
+/// One HTTPS listener with a self-signed certificate for `secure.example.org`
+/// answering every request with a fixed `200 ok`. Returns the config and the
+/// certificate file for clients to trust.
+fn tls_fixed_response_config() -> (DynamicConfig, std::path::PathBuf) {
+    let (cert_file, key_file) = self_signed_files("secure.example.org");
+    let mut cfg = fixed_response_config();
+    cfg.listeners[0].protocol = ListenProtocol::Https;
+    cfg.certificates = vec![CertEntry {
+        sni: vec!["secure.example.org".into()],
+        default: false,
+        cert_file: cert_file.clone(),
+        key_file,
+    }];
+    (cfg, cert_file)
+}
+
+#[tokio::test]
+async fn connection_log_reports_a_finished_connection() {
+    let (logs, _guard) = CapturedLogs::start();
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&fixed_response_config(), shared.clone()).await;
+
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    let request = "GET / HTTP/1.1\r\nhost: a.example.org\r\nconnection: close\r\n\r\n";
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let response = read_until_closed(&mut stream).await;
+    let event = logs.connection_event().await;
+
+    assert_eq!(event["reason"], "closed");
+    assert_eq!(event["listener"], "http");
+    assert_eq!(event["client"], "127.0.0.1");
+    assert_eq!(event["requests"], 1);
+    assert_eq!(event["bytes_in"], request.len());
+    assert_eq!(event["bytes_out"], response.len());
+    assert!(event["duration_ms"].as_f64().unwrap() > 0.0, "{event}");
+    let metrics = shared.metrics.encode();
+    for expected in [
+        r#"gfe_connections_closed_total{listener="http",reason="closed"} 1"#.to_string(),
+        format!(r#"gfe_bytes_in_total{{listener="http"}} {}"#, request.len()),
+        format!(
+            r#"gfe_bytes_out_total{{listener="http"}} {}"#,
+            response.len()
+        ),
+        "gfe_connections_active 0".to_string(),
+    ] {
+        assert!(
+            metrics.contains(&expected),
+            "missing {expected} in:\n{metrics}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn connection_and_access_logs_report_tls_parameters() {
+    let (logs, _guard) = CapturedLogs::start();
+    let (cfg, cert_file) = tls_fixed_response_config();
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&cfg, shared.clone()).await;
+
+    https_get(proxy, &cert_file, "secure.example.org").await;
+    let connection = logs.connection_event().await;
+    let access = logs.access_event().await;
+
+    assert_eq!(connection["tls_version"], "TLSv1.3");
+    assert_eq!(connection["alpn"], "http/1.1");
+    assert_eq!(connection["sni"], "secure.example.org");
+    assert_eq!(connection["tls_resumed"], false);
+    assert!(connection["tls_handshake_ms"].as_f64().unwrap() > 0.0);
+    let cipher = connection["tls_cipher"].as_str().unwrap();
+    assert!(cipher.starts_with("TLS13_"), "{cipher}");
+    assert_eq!(access["tls_version"], "TLSv1.3");
+    assert_eq!(access["tls_cipher"], cipher);
+    let metrics = shared.metrics.encode();
+    let expected = format!(
+        r#"gfe_tls_connections_total{{version="TLSv1.3",cipher="{cipher}",alpn="http/1.1",resumed="false"}} 1"#
+    );
+    assert!(
+        metrics.contains(&expected),
+        "missing {expected} in:\n{metrics}"
+    );
+}
+
+#[tokio::test]
+async fn connection_log_reports_why_a_silent_connection_was_closed() {
+    let (logs, _guard) = CapturedLogs::start();
+    let timeouts = TimeoutsConfig {
+        request_header: Duration::from_millis(200),
+        ..Default::default()
+    };
+    let shared = build_shared_with(timeouts, LimitsConfig::default());
+    let (proxy, _tx) = start_proxy(&fixed_response_config(), shared).await;
+
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    read_until_closed(&mut stream).await;
+    let event = logs.connection_event().await;
+
+    assert_eq!(event["reason"], "header_timeout");
+    assert_eq!(event["requests"], 0);
+}
+
+/// Plain HTTP sent to an HTTPS listener: the most common "broken handshake".
+#[tokio::test]
+async fn failed_tls_handshake_is_logged_and_counted_by_reason() {
+    let (logs, _guard) = CapturedLogs::start();
+    let (cfg, _cert_file) = tls_fixed_response_config();
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&cfg, shared.clone()).await;
+
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nhost: secure.example.org\r\n\r\n")
+        .await
+        .unwrap();
+    let mut discarded = Vec::new();
+    let _ = stream.read_to_end(&mut discarded).await;
+    let event = logs.connection_event().await;
+
+    assert_eq!(event["reason"], "tls_handshake_failed");
+    assert_eq!(event["tls_error"], "invalid_message");
+    let metrics = shared.metrics.encode();
+    let expected = r#"gfe_tls_handshake_failures_total{reason="invalid_message"} 1"#;
+    assert!(
+        metrics.contains(expected),
+        "missing {expected} in:\n{metrics}"
+    );
 }

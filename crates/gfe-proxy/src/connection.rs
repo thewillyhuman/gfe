@@ -3,9 +3,10 @@
 //! client-side timeouts and limits.
 
 use crate::activity::{ConnActivity, InFlightBody, Verdict};
+use crate::conn_record::{ConnRecord, TlsInfo};
 use crate::service::handle_request;
 use crate::{ConnCtx, ProxyShared};
-use gfe_metrics::{ListenerLabel, RejectLabel, TlsResultLabel};
+use gfe_metrics::RejectLabel;
 use gfe_types::Listener;
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
@@ -23,7 +24,8 @@ use tokio_rustls::TlsAcceptor;
 /// finish before it is closed outright.
 const CLOSE_GRACE: Duration = Duration::from_secs(5);
 
-/// Serve a single accepted TCP connection.
+/// Serve a single accepted TCP connection. The connection is accounted for
+/// by a [`ConnRecord`], which reports it when this function returns.
 pub async fn serve(
     stream: TcpStream,
     peer: SocketAddr,
@@ -32,61 +34,38 @@ pub async fn serve(
     tls: Option<Arc<ServerConfig>>,
 ) {
     let _ = stream.set_nodelay(true);
+    let mut record = ConnRecord::open(shared.clone(), &listener, peer);
+    let stream = record.count_traffic(stream);
+    let mut ctx = ConnCtx {
+        shared: shared.clone(),
+        listener_id: listener.id.clone(),
+        is_tls: tls.is_some(),
+        client_ip: peer.ip(),
+        client_port: peer.port(),
+        sni: None,
+        tls: None,
+    };
 
-    shared
-        .metrics
-        .proxy
-        .connections_accepted
-        .get_or_create(&ListenerLabel {
-            listener: listener.id.to_string(),
-        })
-        .inc();
-    shared.metrics.proxy.connections_active.inc();
-
-    let client_ip = peer.ip();
-
-    match tls {
+    let closed = match tls {
         Some(cfg) => {
-            let acceptor = TlsAcceptor::from(cfg);
-            let hs_start = Instant::now();
-            let accepted =
-                tokio::time::timeout(shared.timeouts.tls_handshake, acceptor.accept(stream)).await;
-            match accepted {
+            let handshake_started = Instant::now();
+            let handshake = TlsAcceptor::from(cfg).accept(stream);
+            match tokio::time::timeout(shared.timeouts.tls_handshake, handshake).await {
                 Ok(Ok(tls_stream)) => {
-                    shared
-                        .metrics
-                        .proxy
-                        .tls_handshakes
-                        .get_or_create(&TlsResultLabel {
-                            result: "ok".into(),
-                        })
-                        .inc();
-                    shared
-                        .metrics
-                        .proxy
-                        .tls_handshake_duration_seconds
-                        .observe(hs_start.elapsed().as_secs_f64());
-                    let sni = tls_stream.get_ref().1.server_name().map(|s| s.to_string());
-                    let ctx = Arc::new(ConnCtx {
-                        shared: shared.clone(),
-                        listener_id: listener.id.clone(),
-                        is_tls: true,
-                        client_ip,
-                        client_port: peer.port(),
-                        sni,
-                    });
-                    serve_io(tls_stream, ctx).await;
+                    let session = tls_stream.get_ref().1;
+                    ctx.sni = session.server_name().map(str::to_string);
+                    ctx.tls = Some(TlsInfo::of(session));
+                    record.tls_established(
+                        TlsInfo::of(session),
+                        ctx.sni.clone(),
+                        handshake_started.elapsed(),
+                    );
+                    serve_io(tls_stream, Arc::new(ctx)).await
                 }
                 Ok(Err(e)) => {
-                    shared
-                        .metrics
-                        .proxy
-                        .tls_handshakes
-                        .get_or_create(&TlsResultLabel {
-                            result: "failed".into(),
-                        })
-                        .inc();
                     tracing::debug!(error = %e, "tls handshake failed");
+                    record.tls_failed(&e);
+                    return;
                 }
                 Err(_) => {
                     shared
@@ -97,23 +76,21 @@ pub async fn serve(
                             reason: "handshake_timeout".into(),
                         })
                         .inc();
+                    record.tls_timed_out();
+                    return;
                 }
             }
         }
-        None => {
-            let ctx = Arc::new(ConnCtx {
-                shared: shared.clone(),
-                listener_id: listener.id.clone(),
-                is_tls: false,
-                client_ip,
-                client_port: peer.port(),
-                sni: None,
-            });
-            serve_io(stream, ctx).await;
-        }
-    }
+        None => serve_io(stream, Arc::new(ctx)).await,
+    };
+    record.closed(closed.reason, closed.requests, closed.error);
+}
 
-    shared.metrics.proxy.connections_active.dec();
+/// How a served connection ended.
+struct Closed {
+    reason: &'static str,
+    requests: u64,
+    error: Option<String>,
 }
 
 /// Run the HTTP server (h1/h2 auto-detected) over the given IO until the
@@ -123,7 +100,7 @@ pub async fn serve(
 ///   of the connection being established, else the connection is dropped.
 /// * `client_idle` — a connection with no request in flight for this long is
 ///   shut down gracefully (HTTP/2 clients get a `GOAWAY`).
-async fn serve_io<S>(stream: S, ctx: Arc<ConnCtx>)
+async fn serve_io<S>(stream: S, ctx: Arc<ConnCtx>) -> Closed
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -148,35 +125,70 @@ where
 
     let watchdog = tokio::time::sleep(shared.timeouts.request_header);
     tokio::pin!(watchdog);
-    let mut closing = false;
+    let mut idle_shutdown = false;
 
-    loop {
+    let (reason, error) = loop {
         tokio::select! {
-            result = conn.as_mut() => {
-                if let Err(e) = result {
+            result = conn.as_mut() => break match result {
+                Ok(()) if idle_shutdown => ("idle_timeout", None),
+                Ok(()) => ("closed", None),
+                Err(e) => {
                     tracing::debug!(error = %e, "connection closed with error");
+                    (error_close_reason(e.as_ref()), Some(e.to_string()))
                 }
-                return;
-            }
+            },
             _ = watchdog.as_mut() => {
                 let now = Instant::now();
                 let next_check = match activity.verdict(now, &shared.timeouts) {
                     Verdict::CheckAgainAt(at) => at,
-                    Verdict::IdleTimeout if !closing => {
-                        tracing::debug!("client idle timeout, shutting connection down");
+                    Verdict::IdleTimeout if !idle_shutdown => {
                         conn.as_mut().graceful_shutdown();
-                        closing = true;
+                        idle_shutdown = true;
                         now + CLOSE_GRACE
                     }
-                    verdict => {
-                        tracing::debug!(?verdict, "client timeout, closing connection");
-                        return;
-                    }
+                    Verdict::IdleTimeout => break ("idle_timeout", None),
+                    Verdict::HeaderTimeout => break ("header_timeout", None),
                 };
                 watchdog.as_mut().reset(next_check.into());
             }
         }
+    };
+    Closed {
+        reason,
+        requests: activity.requests(),
+        error,
     }
+}
+
+/// Why a connection that ended with an error did so, as a bounded label
+/// value. The error text itself goes to the connection log.
+fn error_close_reason(error: &(dyn std::error::Error + 'static)) -> &'static str {
+    if let Some(http) = error.downcast_ref::<hyper::Error>() {
+        if http.is_timeout() {
+            // hyper's own HTTP/1 timer, which runs for `client_idle`.
+            return "idle_timeout";
+        }
+        if http.is_parse() || http.is_parse_too_large() {
+            return "protocol_error";
+        }
+        if http.is_incomplete_message() {
+            return "client_abort";
+        }
+    }
+    let mut cause = Some(error);
+    while let Some(current) = cause {
+        if let Some(io) = current.downcast_ref::<std::io::Error>() {
+            return match io.kind() {
+                std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::UnexpectedEof => "client_abort",
+                _ => "error",
+            };
+        }
+        cause = current.source();
+    }
+    "error"
 }
 
 /// The hyper server builder with the configured client-side limits applied.
