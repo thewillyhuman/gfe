@@ -16,7 +16,7 @@ use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
@@ -698,4 +698,186 @@ async fn stage_fails_without_side_effects_when_address_is_taken() {
     assert_eq!(listeners.local_addr(&unbindable.id), None);
     let addr = listeners.local_addr(&cfg.listeners[0].id).unwrap();
     assert!(accepts_connections(addr, true).await);
+}
+
+/// A body fed frame by frame through a channel, so a test controls exactly
+/// when each message (and the trailers) of a stream is sent.
+struct ChannelBody(tokio::sync::mpsc::Receiver<hyper::body::Frame<Bytes>>);
+
+impl hyper::body::Body for ChannelBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Infallible>>> {
+        self.0.poll_recv(cx).map(|frame| frame.map(Ok))
+    }
+}
+
+/// Spawn a cleartext HTTP/2 upstream that behaves like a gRPC echo service:
+/// every request message is sent straight back, and the call ends with
+/// `grpc-status: 0` trailers. The `x-seen-te` response header reports the
+/// `te` request header the upstream received.
+async fn spawn_grpc_upstream() -> SocketAddr {
+    use hyper::body::Frame;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let svc = service_fn(|req: Request<Incoming>| async move {
+                    let seen_te = req
+                        .headers()
+                        .get("te")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("none")
+                        .to_string();
+                    let (tx, rx) = tokio::sync::mpsc::channel(1);
+                    tokio::spawn(async move {
+                        let mut messages = req.into_body();
+                        while let Some(Ok(frame)) = messages.frame().await {
+                            if let Ok(data) = frame.into_data() {
+                                let _ = tx.send(Frame::data(data)).await;
+                            }
+                        }
+                        let mut trailers = http::HeaderMap::new();
+                        trailers.insert("grpc-status", "0".parse().unwrap());
+                        let _ = tx.send(Frame::trailers(trailers)).await;
+                    });
+                    let resp = Response::builder()
+                        .header("content-type", "application/grpc")
+                        .header("x-seen-te", seen_te)
+                        .body(ChannelBody(rx))
+                        .unwrap();
+                    Ok::<_, Infallible>(resp)
+                });
+                let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(stream), svc)
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+/// A plaintext listener routing everything to one cleartext-HTTP/2 backend.
+fn grpc_config(upstream: SocketAddr) -> DynamicConfig {
+    DynamicConfig {
+        listeners: vec![Listener {
+            id: ListenerId("grpc".into()),
+            address: "127.0.0.1".parse().unwrap(),
+            port: 0,
+            protocol: ListenProtocol::Http,
+        }],
+        routes: vec![Route {
+            id: RouteId("grpc".into()),
+            listener: ListenerId("grpc".into()),
+            host: "*".into(),
+            path_prefix: "/".into(),
+            action: RouteAction::Forward("grpc".into()),
+        }],
+        pools: vec![UpstreamPool {
+            id: PoolId("grpc".into()),
+            scheme: Scheme::H2c,
+            lb_policy: Default::default(),
+            upstreams: vec![Upstream {
+                host: upstream.ip().to_string(),
+                port: upstream.port(),
+                weight: 1,
+            }],
+            health_check: None,
+        }],
+        ..Default::default()
+    }
+}
+
+/// An open gRPC-style call through the proxy: the sending half of the
+/// request stream and the response.
+struct GrpcCall {
+    request: tokio::sync::mpsc::Sender<hyper::body::Frame<Bytes>>,
+    response: Response<Incoming>,
+}
+
+impl GrpcCall {
+    /// Open a call over cleartext HTTP/2, as a gRPC client would.
+    async fn open(proxy: SocketAddr) -> GrpcCall {
+        let stream = TcpStream::connect(proxy).await.unwrap();
+        let (mut sender, conn) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await
+                .unwrap();
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        let (request, rx) = tokio::sync::mpsc::channel(1);
+        let req = Request::builder()
+            .method("POST")
+            .uri("http://grpc.example.org/echo.Echo/Stream")
+            .header("content-type", "application/grpc")
+            .header("te", "trailers")
+            .body(ChannelBody(rx))
+            .unwrap();
+        let response = sender.send_request(req).await.unwrap();
+        GrpcCall { request, response }
+    }
+
+    async fn send(&self, message: &'static str) {
+        let frame = hyper::body::Frame::data(Bytes::from(message));
+        self.request.send(frame).await.unwrap();
+    }
+
+    /// The next frame of the response, failing the test if none arrives.
+    async fn next_frame(&mut self) -> hyper::body::Frame<Bytes> {
+        tokio::time::timeout(Duration::from_secs(5), self.response.body_mut().frame())
+            .await
+            .expect("a response frame should arrive")
+            .expect("the response stream should not have ended")
+            .unwrap()
+    }
+
+    /// End the request stream and return the trailers that close the call,
+    /// which is where gRPC carries the call's status.
+    async fn finish(mut self) -> http::HeaderMap {
+        let (closed, _) = tokio::sync::mpsc::channel(1);
+        drop(std::mem::replace(&mut self.request, closed));
+        // HTTP/2 may end the request with an empty DATA frame, which the echo
+        // upstream sends back before the trailers.
+        loop {
+            if let Ok(trailers) = self.next_frame().await.into_trailers() {
+                return trailers;
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn relays_grpc_call_with_trailers_to_h2c_upstream() {
+    let upstream = spawn_grpc_upstream().await;
+    let (proxy, _tx) = start_proxy(&grpc_config(upstream), build_shared()).await;
+
+    let mut call = GrpcCall::open(proxy).await;
+    call.send("ping").await;
+    assert_eq!(call.response.status(), 200);
+    assert_eq!(call.next_frame().await.into_data().unwrap(), "ping");
+    let trailers = call.finish().await;
+
+    assert_eq!(trailers["grpc-status"], "0");
+}
+
+#[tokio::test]
+async fn relays_grpc_stream_message_by_message() {
+    let upstream = spawn_grpc_upstream().await;
+    let (proxy, _tx) = start_proxy(&grpc_config(upstream), build_shared()).await;
+
+    // Each reply is awaited before the next message is sent, with the request
+    // stream still open: anything buffered until end-of-stream would stall.
+    let mut call = GrpcCall::open(proxy).await;
+    call.send("one").await;
+    assert_eq!(call.next_frame().await.into_data().unwrap(), "one");
+    call.send("two").await;
+    assert_eq!(call.next_frame().await.into_data().unwrap(), "two");
 }

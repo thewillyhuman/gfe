@@ -2,6 +2,11 @@
 //! h1/h2 are handled by `hyper-util`'s `Client`, keyed per authority; TLS to
 //! `https` upstreams is provided by a `hyper-rustls` connector using the
 //! `ring` provider and webpki roots.
+//!
+//! The HTTP version on the upstream leg follows the pool's [`Scheme`]:
+//! HTTP/1.1 for `http`, whatever ALPN negotiates for `https`, and HTTP/2
+//! with prior knowledge for `h2c`. The last one needs a client of its own,
+//! as cleartext offers no way to negotiate the version per connection.
 
 use bytes::Bytes;
 use gfe_types::{GfeError, Scheme};
@@ -41,7 +46,10 @@ pub struct UpstreamClientOptions {
 /// A cloneable, pooled client for forwarding requests to upstreams.
 #[derive(Clone)]
 pub struct UpstreamClient {
-    client: Client<HttpsConnector<HttpConnector>, ReqBody>,
+    /// `http` and `https` pools.
+    negotiating: Client<HttpsConnector<HttpConnector>, ReqBody>,
+    /// `h2c` pools.
+    http2_prior_knowledge: Client<HttpsConnector<HttpConnector>, ReqBody>,
 }
 
 impl UpstreamClient {
@@ -99,11 +107,18 @@ impl UpstreamClient {
             .enable_all_versions()
             .wrap_connector(http);
 
-        let client = Client::builder(TokioExecutor::new())
+        let negotiating = Client::builder(TokioExecutor::new())
             .pool_max_idle_per_host(idle)
+            .build(https.clone());
+        let http2_prior_knowledge = Client::builder(TokioExecutor::new())
+            .pool_max_idle_per_host(idle)
+            .http2_only(true)
             .build(https);
 
-        Ok(UpstreamClient { client })
+        Ok(UpstreamClient {
+            negotiating,
+            http2_prior_knowledge,
+        })
     }
 
     /// Forward a request to the given upstream. The request's URI is rebuilt
@@ -120,14 +135,15 @@ impl UpstreamClient {
             .path_and_query()
             .map(|pq| pq.as_str().to_string())
             .unwrap_or_else(|| "/".to_string());
-        let scheme_str = match scheme {
-            Scheme::Http => "http",
-            Scheme::Https => "https",
+        let (client, uri_scheme) = match scheme {
+            Scheme::Http => (&self.negotiating, "http"),
+            Scheme::Https => (&self.negotiating, "https"),
+            Scheme::H2c => (&self.http2_prior_knowledge, "http"),
         };
-        let uri: hyper::Uri = format!("{scheme_str}://{authority}{path_and_query}").parse()?;
+        let uri: hyper::Uri = format!("{uri_scheme}://{authority}{path_and_query}").parse()?;
         *req.uri_mut() = uri;
 
-        self.client
+        client
             .request(req)
             .await
             .map_err(|e| Box::new(e) as BoxError)

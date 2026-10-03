@@ -335,6 +335,7 @@ fn scheme_label(s: gfe_types::Scheme) -> &'static str {
     match s {
         gfe_types::Scheme::Http => "http",
         gfe_types::Scheme::Https => "https",
+        gfe_types::Scheme::H2c => "h2c",
     }
 }
 

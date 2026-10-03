@@ -16,9 +16,14 @@ impl std::fmt::Display for PoolId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Scheme {
+    /// Cleartext HTTP/1.1.
     #[default]
     Http,
+    /// TLS; HTTP/2 or HTTP/1.1 as negotiated by ALPN.
     Https,
+    /// Cleartext HTTP/2 with prior knowledge, for backends that speak only
+    /// HTTP/2 without TLS (typically gRPC servers).
+    H2c,
 }
 
 /// Load-balancing policy for distributing requests across healthy upstreams.
@@ -107,6 +112,13 @@ mod tests {
         assert_eq!(p.lb_policy, LbPolicy::RoundRobin);
         assert_eq!(p.upstreams[0].weight, 1);
         assert_eq!(p.upstreams[0].authority(), "10.0.0.1:8443");
+    }
+
+    #[test]
+    fn pool_scheme_h2c_is_spelled_h2c() {
+        let json = r#"{"id":"p","scheme":"h2c","upstreams":[{"host":"10.0.0.1","port":50051}]}"#;
+        let p: UpstreamPool = serde_json::from_str(json).unwrap();
+        assert_eq!(p.scheme, Scheme::H2c);
     }
 
     #[test]

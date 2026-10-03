@@ -309,7 +309,7 @@ A **route** maps an incoming request to an action.
 An **upstream pool** is a named set of application backends serving the same role.
 
 - Each **upstream** is `host:port` plus optional `weight`.
-- `scheme`: `http` or `https` for the GFE→upstream leg (independent of the client-facing protocol).
+- `scheme`: how GFE talks to the pool's backends, independent of the client-facing protocol: `http` (cleartext HTTP/1.1), `https` (TLS; HTTP/2 or HTTP/1.1 by ALPN) or `h2c` (cleartext HTTP/2 with prior knowledge, for backends that speak only HTTP/2 without TLS, typically gRPC servers).
 - `lb_policy`: how requests are distributed across healthy upstreams (Section 6.5).
 - `health_check`: L7 probe config (Section 7.1).
 - Pools may be **referenced by multiple routes**. Health checks are deduplicated across pools by `(ip, port, probe)`.
@@ -405,7 +405,7 @@ GFE terminates TLS with **rustls**. Centralized certificate management is GFE's 
 
 After the handshake, the connection is served by **hyper**:
 
-- **Downstream protocols:** HTTP/1.1 and HTTP/2 (selected by ALPN; h2 over cleartext is not offered on public listeners). HTTP/1.0 is accepted but kept alive only when the client opts in.
+- **Downstream protocols:** HTTP/1.1 and HTTP/2. On HTTPS listeners the version is selected by ALPN; plaintext listeners detect HTTP/2 by its connection preface (prior knowledge), which is what cleartext gRPC clients use. HTTP/1.0 is accepted but kept alive only when the client opts in.
 - **Keep-alive / multiplexing:** h1 keep-alive and h2 multiplexing are honored; each request on the connection is routed independently.
 - **Limits:** max header size, max concurrent h2 streams, and request/idle timeouts are enforced per connection (Section 6.8).
 - **Normalization:** `Host` / `:authority` is validated and, for HTTPS, cross-checked against the negotiated SNI; conflicting or absent authority yields a 400.
@@ -443,7 +443,7 @@ Weights are honored by `round_robin` and `ring_hash`. If a pool has **no healthy
 
 Long-lived pooled upstream connections are a primary reason to run a shared edge: they amortize TCP + TLS handshake cost across all client requests to a backend.
 
-- **Per-backend idle pools.** Keyed by `(scheme, host, port)`. Idle connections are reused; the pool caps idle count and idle age per backend.
+- **Per-backend idle pools.** Keyed by `(scheme, host, port)`. Idle connections are reused; the pool caps idle count and idle age per backend. HTTP/2 upstream connections (`https` via ALPN, or `h2c`) are multiplexed: many concurrent requests share one connection per backend.
 - **HTTP/1.1 and HTTP/2 upstreams.** For h2 upstreams, a single connection multiplexes many concurrent requests (subject to the upstream's `SETTINGS_MAX_CONCURRENT_STREAMS`); for h1, one request per connection at a time.
 - **Upstream TLS (`client.rs`).** When `scheme=https`, GFE validates the upstream certificate against a configured trust store (system roots or a pinned CA). Optional mTLS (client cert to upstream) is supported for zero-trust backends.
 - **Health-aware eviction.** When a backend transitions to UNHEALTHY or DRAINING, its idle connections are dropped and no new ones are opened.
