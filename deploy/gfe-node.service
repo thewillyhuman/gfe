@@ -3,6 +3,10 @@ Description=GFE Node - General Front End (L7 TLS-terminating reverse proxy)
 Documentation=https://github.com/thewillyhuman/gfe
 After=network-online.target
 Wants=network-online.target
+# Give up on a node that fails five times within a minute, instead of
+# restarting it for ever.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 # The node tells systemd when it serves and, after it has replaced itself
@@ -35,8 +39,6 @@ ExecReload=/bin/kill -USR2 $MAINPID
 
 Restart=on-failure
 RestartSec=5s
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # Many concurrent client + upstream connections need a high FD ceiling.
 LimitNOFILE=1048576
