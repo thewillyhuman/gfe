@@ -6,6 +6,8 @@ use crate::record::RequestRecord;
 use crate::ConnCtx;
 use gfe_types::{PoolId, RouteAction};
 use hyper::body::Incoming;
+use hyper::header::HOST;
+use hyper::http::uri::Authority;
 use hyper::{Request, Response, StatusCode};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -21,8 +23,18 @@ pub async fn handle_request(
     req: Request<Incoming>,
 ) -> Result<Response<RespBody>, Infallible> {
     let shared = ctx.shared.clone();
-    let host = extract_host(&req, &ctx.sni);
-    let mut record = RequestRecord::begin(ctx.clone(), &req, host, request_id(&req));
+    let host = request_host(&req, ctx.sni.as_deref()).and_then(|host| covered_by_sni(&ctx, host));
+    let logged_host = match &host {
+        Ok(host) => host.clone(),
+        Err(e) => e.host().to_string(),
+    };
+    let mut record = RequestRecord::begin(ctx.clone(), &req, logged_host, request_id(&req));
+    if let Err(e) = host {
+        record.failed(e.reason());
+        let resp = synthetic(e.status(), e.message(), record.request_id());
+        let resp = in_callers_protocol(resp, &record);
+        return Ok(record.respond(resp));
+    }
     let path = req.uri().path().to_string();
 
     // ACME http-01 challenge: served on the plaintext HTTP listener before
@@ -109,18 +121,109 @@ fn in_callers_protocol(resp: Response<RespBody>, record: &RequestRecord) -> Resp
     }
 }
 
-/// Extract the request host: prefer the URI authority (h2 / absolute-form),
-/// then the `Host` header (h1), then the SNI.
-fn extract_host<B>(req: &Request<B>, sni: &Option<String>) -> String {
-    if let Some(h) = req.uri().host() {
-        return h.to_ascii_lowercase();
-    }
-    if let Some(hv) = req.headers().get(hyper::header::HOST) {
-        if let Ok(s) = hv.to_str() {
-            return s.split(':').next().unwrap_or("").to_ascii_lowercase();
+/// Why a request's host cannot be used to route it. GFE answers such a
+/// request itself.
+#[derive(Debug, PartialEq, Eq)]
+enum HostError {
+    /// The request target's authority and the `Host` header name different
+    /// hosts; `target` is the former.
+    Conflict { target: String },
+    /// Nothing names the host: no authority in the target, no valid `Host`
+    /// header and no SNI.
+    Missing,
+    /// `host` is not served by the certificate the client accepted for the
+    /// connection's SNI.
+    Misdirected { host: String },
+}
+
+impl HostError {
+    fn status(&self) -> StatusCode {
+        match self {
+            HostError::Conflict { .. } | HostError::Missing => StatusCode::BAD_REQUEST,
+            // Tells a client that reused a connection to retry on a new one.
+            HostError::Misdirected { .. } => StatusCode::MISDIRECTED_REQUEST,
         }
     }
-    sni.clone().unwrap_or_default()
+
+    /// The access-log `error`.
+    fn reason(&self) -> &'static str {
+        match self {
+            HostError::Conflict { .. } => "host_conflict",
+            HostError::Missing => "host_missing",
+            HostError::Misdirected { .. } => "misdirected_request",
+        }
+    }
+
+    fn message(&self) -> &'static str {
+        match self {
+            HostError::Conflict { .. } => "conflicting host",
+            HostError::Missing => "missing host",
+            HostError::Misdirected { .. } => "misdirected request",
+        }
+    }
+
+    /// The host the request is logged under.
+    fn host(&self) -> &str {
+        match self {
+            HostError::Conflict { target } => target,
+            HostError::Missing => "",
+            HostError::Misdirected { host } => host,
+        }
+    }
+}
+
+/// The host a request is for, lowercased and without its port: the request
+/// target's authority (HTTP/2 `:authority`, HTTP/1 absolute form), else the
+/// `Host` header, else the SNI.
+///
+/// A request carrying both an authority and a `Host` header is refused
+/// unless they name the same host, and the same port when both carry one:
+/// otherwise it would be routed by one and forwarded with the other.
+fn request_host<B>(req: &Request<B>, sni: Option<&str>) -> Result<String, HostError> {
+    let header = req.headers().get(HOST).map(|value| {
+        value
+            .to_str()
+            .ok()
+            .and_then(|value| value.parse::<Authority>().ok())
+    });
+    match (req.uri().authority(), header) {
+        (Some(target), Some(header)) => {
+            let agree = header.is_some_and(|header| {
+                header.host().eq_ignore_ascii_case(target.host())
+                    && match (header.port_u16(), target.port_u16()) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => true,
+                    }
+            });
+            let target = target.host().to_ascii_lowercase();
+            if agree {
+                Ok(target)
+            } else {
+                Err(HostError::Conflict { target })
+            }
+        }
+        (Some(target), None) => Ok(target.host().to_ascii_lowercase()),
+        (None, Some(Some(header))) => Ok(header.host().to_ascii_lowercase()),
+        (None, Some(None)) => Err(HostError::Missing),
+        (None, None) => sni.map(str::to_ascii_lowercase).ok_or(HostError::Missing),
+    }
+}
+
+/// On a TLS connection, a request for another host than the SNI is served
+/// only if the certificate the client accepted for the SNI is also the one
+/// for `host`: that client is reusing the connection for a name it trusts
+/// the connection for (HTTP/2 connection coalescing). Anything else could
+/// reach a tenant over another tenant's certificate.
+fn covered_by_sni(ctx: &ConnCtx, host: String) -> Result<String, HostError> {
+    match &ctx.sni {
+        Some(sni)
+            if !sni.eq_ignore_ascii_case(&host)
+                && !ctx.shared.resolver.current().same_certificate(sni, &host) =>
+        {
+            Err(HostError::Misdirected { host })
+        }
+        _ => Ok(host),
+    }
 }
 
 /// Take a client-supplied `X-Request-Id` if valid, else generate one.
@@ -152,17 +255,58 @@ mod tests {
     #[test]
     fn host_from_authority() {
         let r = req(None, "http://API.example.org/x");
-        assert_eq!(extract_host(&r, &None), "api.example.org");
+        assert_eq!(request_host(&r, None), Ok("api.example.org".into()));
     }
 
     #[test]
     fn host_from_header_then_sni() {
         let r = req(Some("Host.Example.org:443"), "/path");
-        assert_eq!(extract_host(&r, &None), "host.example.org");
+        assert_eq!(request_host(&r, None), Ok("host.example.org".into()));
         let r2 = req(None, "/path");
         assert_eq!(
-            extract_host(&r2, &Some("sni.example.org".into())),
-            "sni.example.org"
+            request_host(&r2, Some("sni.example.org")),
+            Ok("sni.example.org".into())
+        );
+    }
+
+    #[test]
+    fn authority_and_host_header_naming_the_same_host_agree() {
+        let r = req(Some("API.example.org"), "http://api.example.org:8080/x");
+        assert_eq!(request_host(&r, None), Ok("api.example.org".into()));
+    }
+
+    #[test]
+    fn authority_and_host_header_naming_different_hosts_conflict() {
+        let r = req(Some("internal.example.org"), "http://public.example.org/");
+        assert_eq!(
+            request_host(&r, None),
+            Err(HostError::Conflict {
+                target: "public.example.org".into()
+            })
+        );
+    }
+
+    #[test]
+    fn authority_and_host_header_naming_different_ports_conflict() {
+        let r = req(Some("a.example.org:8443"), "http://a.example.org:443/");
+        assert!(matches!(
+            request_host(&r, None),
+            Err(HostError::Conflict { .. })
+        ));
+    }
+
+    #[test]
+    fn no_authority_no_host_header_and_no_sni_is_missing() {
+        let r = req(None, "/path");
+        assert_eq!(request_host(&r, None), Err(HostError::Missing));
+    }
+
+    #[test]
+    fn unparseable_host_header_is_missing() {
+        let r = req(Some("a b"), "/path");
+        assert_eq!(
+            request_host(&r, Some("sni.example.org")),
+            Err(HostError::Missing)
         );
     }
 

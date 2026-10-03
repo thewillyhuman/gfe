@@ -640,6 +640,149 @@ async fn wildcard_route_matches_only_subdomains_of_its_suffix() {
     assert_eq!(lookalike, 404);
 }
 
+/// Send `request` (which should ask for `connection: close`) on a fresh
+/// connection and return everything the proxy answers.
+async fn raw_exchange(proxy: SocketAddr, request: &str) -> String {
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    read_until_closed(&mut stream).await
+}
+
+#[tokio::test]
+async fn answers_400_when_the_target_and_host_header_disagree() {
+    let (logs, _guard) = CapturedLogs::start();
+    let (proxy, _tx) = start_proxy(&fixed_response_config(), build_shared()).await;
+
+    let response = raw_exchange(
+        proxy,
+        "GET http://public.example.org/ HTTP/1.1\r\nhost: internal.example.org\r\n\
+         connection: close\r\n\r\n",
+    )
+    .await;
+    let event = logs.access_event().await;
+
+    assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+    assert_eq!(event["status"], 400);
+    assert_eq!(event["error"], "host_conflict");
+}
+
+#[tokio::test]
+async fn serves_absolute_form_target_that_agrees_with_the_host_header() {
+    let (proxy, _tx) = start_proxy(&fixed_response_config(), build_shared()).await;
+
+    let response = raw_exchange(
+        proxy,
+        "GET http://Public.example.org:80/ HTTP/1.1\r\nhost: public.example.org\r\n\
+         connection: close\r\n\r\n",
+    )
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+}
+
+#[tokio::test]
+async fn answers_400_to_a_cleartext_request_without_a_host() {
+    let (logs, _guard) = CapturedLogs::start();
+    let (proxy, _tx) = start_proxy(&fixed_response_config(), build_shared()).await;
+
+    let response = raw_exchange(proxy, "GET / HTTP/1.1\r\nconnection: close\r\n\r\n").await;
+    let event = logs.access_event().await;
+
+    assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+    assert_eq!(event["error"], "host_missing");
+}
+
+/// An HTTPS listener answering every request with a fixed `200 ok`, with one
+/// certificate for `a.example.org` and `b.example.org` and another for
+/// `c.example.org`. Returns the config and the first certificate's file.
+fn tls_two_certificates_config() -> (DynamicConfig, std::path::PathBuf) {
+    let dir = std::env::temp_dir();
+    let mut certificates = Vec::new();
+    for names in [
+        vec!["a.example.org", "b.example.org"],
+        vec!["c.example.org"],
+    ] {
+        let names: Vec<String> = names.into_iter().map(String::from).collect();
+        let cert = rcgen::generate_simple_self_signed(names.clone()).unwrap();
+        let tag = format!("gfe-e2e-{}-coalesce-{}", std::process::id(), names[0]);
+        let cert_file = dir.join(format!("{tag}.crt"));
+        let key_file = dir.join(format!("{tag}.key"));
+        std::fs::write(&cert_file, cert.cert.pem()).unwrap();
+        std::fs::write(&key_file, cert.key_pair.serialize_pem()).unwrap();
+        certificates.push(CertEntry {
+            sni: names,
+            default: false,
+            cert_file,
+            key_file,
+        });
+    }
+    let first_cert = certificates[0].cert_file.clone();
+    let mut cfg = fixed_response_config();
+    cfg.listeners[0].protocol = ListenProtocol::Https;
+    cfg.certificates = certificates;
+    (cfg, first_cert)
+}
+
+/// The status of `GET /` over TLS (HTTP/1.1), sending `sni` in the handshake
+/// and `host` in the request, as a client reusing a connection would.
+async fn https_status_with_host(
+    addr: SocketAddr,
+    cert_file: &std::path::Path,
+    sni: &str,
+    host: &str,
+) -> u16 {
+    use tokio_rustls::TlsConnector;
+
+    let cert_pem = std::fs::read(cert_file).unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    for c in rustls_pemfile::certs(&mut std::io::BufReader::new(&cert_pem[..])) {
+        roots.add(c.unwrap()).unwrap();
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let client_cfg = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let connector = TlsConnector::from(Arc::new(client_cfg));
+    let tcp = TcpStream::connect(addr).await.unwrap();
+    let domain = rustls::pki_types::ServerName::try_from(sni.to_string()).unwrap();
+    let tls = connector.connect(domain, tcp).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    let req = Request::builder()
+        .uri("/")
+        .header("host", host)
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    sender.send_request(req).await.unwrap().status().as_u16()
+}
+
+#[tokio::test]
+async fn serves_a_host_covered_by_the_certificate_of_the_sni() {
+    let (cfg, cert_file) = tls_two_certificates_config();
+    let (proxy, _tx) = start_proxy(&cfg, build_shared()).await;
+
+    let status = https_status_with_host(proxy, &cert_file, "a.example.org", "b.example.org").await;
+
+    assert_eq!(status, 200);
+}
+
+#[tokio::test]
+async fn answers_421_to_a_host_covered_by_another_certificate_than_the_sni() {
+    let (logs, _guard) = CapturedLogs::start();
+    let (cfg, cert_file) = tls_two_certificates_config();
+    let (proxy, _tx) = start_proxy(&cfg, build_shared()).await;
+
+    let status = https_status_with_host(proxy, &cert_file, "a.example.org", "c.example.org").await;
+    let event = logs.access_event().await;
+
+    assert_eq!(status, 421);
+    assert_eq!(event["error"], "misdirected_request");
+}
+
 /// A plaintext listener on an explicit loopback port.
 fn http_listener(id: &str, port: u16) -> Listener {
     Listener {

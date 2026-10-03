@@ -313,7 +313,7 @@ A **listener** binds an address and port and accepts client connections.
 A **route** maps an incoming request to an action.
 
 - **Match** on:
-  - `host`: exact (`api.example.org`) or single-label wildcard (`*.example.org`). For HTTPS the host is taken from the validated SNI and cross-checked against the `Host`/`:authority`; for HTTP from the `Host` header.
+  - `host`: exact (`api.example.org`) or single-label wildcard (`*.example.org`). The request's host is the authority of its target (`:authority` on HTTP/2, an absolute-form target on HTTP/1.1), else its `Host` header, else the SNI; it is checked as described under Normalization (Section 6.3).
   - `path`: prefix (`/api/`) or exact (`/healthz`). Most specific match wins (longest path prefix, exact host over wildcard).
   - optional `headers`: presence/exact-value matches (kept minimal).
 - **Action**: forward to a named **upstream pool**, or return a fixed redirect (e.g. HTTP→HTTPS) or a fixed status.
@@ -423,7 +423,10 @@ After the handshake, the connection is served by **hyper**:
 - **Downstream protocols:** HTTP/1.1 and HTTP/2. On HTTPS listeners the version is selected by ALPN; plaintext listeners detect HTTP/2 by its connection preface (prior knowledge), which is what cleartext gRPC clients use. HTTP/1.0 is accepted but kept alive only when the client opts in.
 - **Keep-alive / multiplexing:** h1 keep-alive and h2 multiplexing are honored; each request on the connection is routed independently.
 - **Limits:** max header size, max concurrent h2 streams, and request/idle timeouts are enforced per connection (Section 6.8).
-- **Normalization:** `Host` / `:authority` is validated and, for HTTPS, cross-checked against the negotiated SNI; conflicting or absent authority yields a 400.
+- **Normalization:** before routing, the request's host is checked (`service.rs`), and GFE answers itself when it fails:
+  - a request whose target authority (`:authority`, or an absolute-form target) and `Host` header name different hosts, or different ports when both carry one, gets a `400` (`host_conflict`);
+  - a request with no host at all (no target authority, no valid `Host` header, no SNI) gets a `400` (`host_missing`);
+  - on HTTPS, a request for another host than the SNI is served only if the certificate store resolves both names to the same certificate entry (the default one included), as a client coalescing HTTP/2 connections does; otherwise it gets a `421 Misdirected Request` (`misdirected_request`), which tells the client to retry on a new connection.
 
 ### 6.4 Routing
 
@@ -903,7 +906,7 @@ It prints which listener/route matched, which pool and which backend would be se
   | `status` | Response status; `499` when the client left before a response existed |
   | `grpc_status` | For gRPC calls (`content-type: application/grpc*`), the numeric status the call ended with, read from the response trailers (or headers, for calls that fail before any message). A gRPC call is HTTP `200` whatever its outcome, so this is the field that tells success from failure |
   | `route`, `pool`, `backend`, `attempts` | Routing decision, the backend of the last attempt, and how many attempts were made |
-  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_connection_limit`, `upstream_error`, `upstream_timeout`, `request_body_timeout` (a `408`: the client stalled while sending the body), `unknown_acme_challenge` |
+  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_connection_limit`, `upstream_error`, `upstream_timeout`, `request_body_timeout` (a `408`: the client stalled while sending the body), `unknown_acme_challenge`, `host_conflict` / `host_missing` (a `400`), `misdirected_request` (a `421`; see Section 6.3) |
   | `termination` | `complete`, `client_abort` (client left before or during the response) or `upstream_abort` (upstream failed mid-body) |
   | `request_bytes`, `response_bytes` | Body bytes actually read from / written to the client |
   | `duration_ms` | Request head to last response byte, microsecond resolution |

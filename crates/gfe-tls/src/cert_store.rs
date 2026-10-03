@@ -77,6 +77,17 @@ impl CertStore {
         self.default.clone()
     }
 
+    /// Whether `a` and `b` resolve, as SNI names, to the same certificate
+    /// entry (the default one included). A client may then reuse one TLS
+    /// connection for both names (HTTP/2 connection coalescing). Names that
+    /// resolve to nothing share no certificate.
+    pub fn same_certificate(&self, a: &str, b: &str) -> bool {
+        match (self.resolve(Some(a)), self.resolve(Some(b))) {
+            (Some(a), Some(b)) => Arc::ptr_eq(&a, &b),
+            _ => false,
+        }
+    }
+
     /// `(sni-name, not_after_unix)` pairs, for `gfe_cert_expiry_timestamp`.
     pub fn expiries(&self) -> &[(String, i64)] {
         &self.expiries
@@ -155,6 +166,31 @@ mod tests {
         let store = CertStore::build(&[entry(vec!["api.example.org"], false, "only")]).unwrap();
         assert!(store.resolve(Some("other.org")).is_none());
         assert!(store.resolve(None).is_none());
+    }
+
+    #[test]
+    fn names_resolved_to_one_entry_share_its_certificate() {
+        let store = CertStore::build(&[
+            entry(
+                vec!["api.example.org", "*.wild.example.org"],
+                false,
+                "shared",
+            ),
+            entry(vec!["other.example.org"], false, "other"),
+        ])
+        .unwrap();
+
+        assert!(store.same_certificate("api.example.org", "foo.wild.example.org"));
+        assert!(store.same_certificate("API.example.org", "api.example.org"));
+        assert!(!store.same_certificate("api.example.org", "other.example.org"));
+    }
+
+    #[test]
+    fn names_resolved_to_nothing_share_no_certificate() {
+        let store = CertStore::build(&[entry(vec!["api.example.org"], false, "lone")]).unwrap();
+
+        assert!(!store.same_certificate("x.org", "y.org"));
+        assert!(!store.same_certificate("api.example.org", "y.org"));
     }
 
     #[test]
