@@ -248,7 +248,17 @@ async fn run(
                 tracing::info!("upgrade requested, starting a successor");
                 systemd::upgrading();
                 let ops = ops_socket.as_deref().map(|socket| (ops_addr, socket));
-                match upgrade::hand_over(&listeners, ops).await {
+                // A stop is not kept waiting for the successor: the service
+                // manager kills a node that takes too long to stop, drained
+                // or not.
+                let handed_over = tokio::select! {
+                    handed_over = upgrade::hand_over(&listeners, ops) => handed_over,
+                    () = stop_requested(&mut signals) => {
+                        tracing::info!("shutdown signal received, abandoning the upgrade and draining");
+                        break;
+                    }
+                };
+                match handed_over {
                     Ok(successor) => {
                         tracing::info!(successor, "the successor has taken over, draining");
                         systemd::upgraded(successor);
@@ -284,6 +294,14 @@ async fn run(
     listeners.serve_until_drained().await;
     tracing::info!("gfe-node stopped");
     Ok(())
+}
+
+/// Wait for a request to stop, while an upgrade is under way: another
+/// request to upgrade is ignored.
+async fn stop_requested(signals: &mut Signals) {
+    while signals.next().await != Request::Stop {
+        tracing::warn!("upgrade requested while one is under way, ignored");
+    }
 }
 
 /// Build the upstream client from the node's `[upstream]` config (idle pool

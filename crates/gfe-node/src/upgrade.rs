@@ -21,6 +21,10 @@
 use anyhow::Result;
 use gfe_proxy::ListenerSet;
 use std::net::{SocketAddr, TcpListener};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
+use std::sync::Arc;
 use std::time::Duration;
 
 /// The flag that tells a node it is a successor.
@@ -29,8 +33,9 @@ pub const UPGRADE_FLAG: &str = "--upgrade";
 /// The flag that tells a successor it has been detached already.
 pub const DETACHED_FLAG: &str = "--detached";
 
-/// How long a successor may take to accept connections before the upgrade is
-/// given up. Generous, because the running node serves all the while.
+/// How long a successor may take, from when it is started, to accept
+/// connections before the upgrade is given up. Generous, because the running
+/// node serves all the while.
 const SUCCESSOR_START_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The listening sockets a node starts with. None, unless it takes over from
@@ -98,6 +103,10 @@ pub fn take_over() -> Result<(Predecessor, Inherited)> {
 /// sockets and accepts on them, and the successor is gone or, if it was
 /// started but never said which process it is, will find nobody to take
 /// over from and exit.
+///
+/// Dropping the returned future abandons the upgrade, with the same outcome
+/// as a failure: the wait for the successor ends at once, and a successor
+/// that has said which process it is is stopped.
 #[cfg(unix)]
 pub async fn hand_over(
     listeners: &ListenerSet,
@@ -105,6 +114,7 @@ pub async fn hand_over(
 ) -> Result<u32> {
     use anyhow::Context;
     use std::os::fd::AsFd;
+    use std::os::unix::net::UnixStream;
 
     let ops = ops
         .map(|(addr, socket)| {
@@ -119,8 +129,16 @@ pub async fn hand_over(
             .context("duplicating the listening sockets")?,
         ops,
     };
+    let (ours, theirs) = UnixStream::pair().context("opening a socket to the successor")?;
+    let abandon = Abandon {
+        channel: ours
+            .try_clone()
+            .context("duplicating the socket to the successor")?,
+        abandoned: Arc::new(AtomicBool::new(false)),
+    };
+    let abandoned = abandon.abandoned.clone();
     // Starting a process and waiting for it block.
-    tokio::task::spawn_blocking(move || start_successor(&sockets))
+    tokio::task::spawn_blocking(move || start_successor(&sockets, ours, theirs, &abandoned))
         .await
         .context("waiting for the successor")?
 }
@@ -133,15 +151,40 @@ pub async fn hand_over(
     anyhow::bail!("upgrading in place is not supported on this platform")
 }
 
-/// Start the successor and see it take `sockets` over.
+/// Ends the wait for the successor when [`hand_over`] is done with it, or
+/// is dropped before: the thread that waits must not outlive the upgrade,
+/// or it would keep the node from exiting.
 #[cfg(unix)]
-fn start_successor(sockets: &gfe_handover::Sockets) -> Result<u32> {
+struct Abandon {
+    /// The node's end of the exchange with the successor.
+    channel: std::os::unix::net::UnixStream,
+    /// Set before the wait is ended, so that the waiting thread can tell an
+    /// abandoned upgrade from a successor that went away.
+    abandoned: Arc<AtomicBool>,
+}
+
+#[cfg(unix)]
+impl Drop for Abandon {
+    fn drop(&mut self) {
+        self.abandoned.store(true, Ordering::SeqCst);
+        let _ = self.channel.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+/// Start the successor, with `theirs` as its end of `ours`, and see it take
+/// `sockets` over, unless `abandoned` is set first.
+#[cfg(unix)]
+fn start_successor(
+    sockets: &gfe_handover::Sockets,
+    ours: std::os::unix::net::UnixStream,
+    theirs: std::os::unix::net::UnixStream,
+    abandoned: &AtomicBool,
+) -> Result<u32> {
     use anyhow::Context;
     use std::os::fd::OwnedFd;
-    use std::os::unix::net::UnixStream;
     use std::process::{Command, Stdio};
+    use std::time::Instant;
 
-    let (ours, theirs) = UnixStream::pair().context("opening a socket to the successor")?;
     // The path this node was started with, not the file it runs from: after
     // a package update that file is gone, and the path names the new one.
     let mut args = std::env::args_os();
@@ -160,12 +203,11 @@ fn start_successor(sockets: &gfe_handover::Sockets) -> Result<u32> {
         "the successor could not be started ({launched})"
     );
 
+    let deadline = Instant::now() + SUCCESSOR_START_TIMEOUT;
     gfe_handover::send(&ours, sockets).map_err(not_taken_over)?;
-    ours.set_read_timeout(Some(SUCCESSOR_START_TIMEOUT))
-        .context("setting how long to wait for the successor")?;
-    let successor = gfe_handover::await_receipt(&ours).map_err(not_taken_over)?;
-    gfe_handover::await_confirmation(&ours).map_err(|e| {
-        if timed_out(&e) {
+    let successor = gfe_handover::await_receipt(&ours, deadline).map_err(not_taken_over)?;
+    gfe_handover::await_confirmation(&ours, deadline).map_err(|e| {
+        if timed_out(&e) || abandoned.load(Ordering::SeqCst) {
             // It says it accepts connections as soon as it does, so one that
             // has not said so holds none that killing it would break.
             kill(successor);

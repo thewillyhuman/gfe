@@ -123,10 +123,9 @@ impl Successor {
             .spawn()
             .unwrap();
         gfe_handover::send(&ours, &sockets).unwrap();
-        ours.set_read_timeout(Some(Duration::from_secs(20)))
-            .unwrap();
-        gfe_handover::await_receipt(&ours).expect("the node should take the sockets");
-        gfe_handover::await_confirmation(&ours).expect("the node should take over");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        gfe_handover::await_receipt(&ours, deadline).expect("the node should take the sockets");
+        gfe_handover::await_confirmation(&ours, deadline).expect("the node should take over");
 
         Successor {
             launcher,
@@ -592,6 +591,58 @@ fn keeps_serving_when_its_successor_cannot_start() {
     assert!(counted, "the failed upgrade was not counted");
     assert_eq!(node.process.try_wait().unwrap(), None);
     assert!(http_get(node.proxy, "/").starts_with("HTTP/1.1 200"));
+}
+
+/// Point the bootstrap config of `node`, which only a successor reads, at a
+/// dynamic config that is a named pipe: reading it blocks, as reading a
+/// file on a hung network file system does. Returns the pipe.
+fn hang_the_successor_loading_its_config(node: &Node) -> PathBuf {
+    let pipe = node.bootstrap.with_file_name("hung-dynamic.json");
+    let _ = std::fs::remove_file(&pipe);
+    let made = Command::new("mkfifo").arg(&pipe).status().unwrap();
+    assert!(made.success(), "mkfifo {}", pipe.display());
+    let bootstrap = std::fs::read_to_string(&node.bootstrap).unwrap();
+    let hung = bootstrap.replace("gfe-dynamic.json", "hung-dynamic.json");
+    std::fs::write(&node.bootstrap, hung).unwrap();
+    pipe
+}
+
+/// Wait until a process reads `pipe`, and keep it waiting for more: the
+/// pipe opened for writing, with nothing written to it. `None` if no
+/// process came to read within a while.
+fn keep_its_reader_waiting(pipe: PathBuf) -> Option<std::fs::File> {
+    let (opened, writer) = std::sync::mpsc::channel();
+    // Opening a pipe blocks until it has a reader.
+    std::thread::spawn(move || {
+        let _ = opened.send(std::fs::OpenOptions::new().write(true).open(pipe));
+    });
+    writer.recv_timeout(Duration::from_secs(20)).ok()?.ok()
+}
+
+#[test]
+fn stops_promptly_when_told_to_while_its_successor_is_starting() {
+    let mut node = Node::start("stop-while-upgrading");
+    let pipe = hang_the_successor_loading_its_config(&node);
+    node.signal("-USR2");
+    // The successor has taken the sockets and said which process it is.
+    let mut successor_config = keep_its_reader_waiting(pipe).expect("no successor started");
+
+    let told = Instant::now();
+    node.signal("-TERM");
+    let stopped = node.exit();
+
+    assert!(
+        stopped.is_some_and(|status| status.success()),
+        "the node did not stop cleanly: {stopped:?}"
+    );
+    assert!(
+        told.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        told.elapsed()
+    );
+    // Writing to a pipe nobody reads any more fails: the successor is gone.
+    let successor_gone = eventually(|| successor_config.write_all(b" ").is_err());
+    assert!(successor_gone, "the successor was not stopped");
 }
 
 #[test]

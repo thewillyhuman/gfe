@@ -33,6 +33,7 @@ use std::mem::MaybeUninit;
 use std::net::{Shutdown, SocketAddr, TcpListener};
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
+use std::time::Instant;
 
 /// The first line of a handover, naming the version of the exchange.
 const HEADER: &str = "gfe-handover 1";
@@ -164,10 +165,14 @@ pub fn receive(mut channel: &UnixStream) -> io::Result<Sockets> {
 
 /// Wait until the successor has the sockets; returns its process id.
 ///
-/// Fails if the successor goes away first or, when `channel` has a read
-/// timeout, does not answer in time.
-pub fn await_receipt(channel: &UnixStream) -> io::Result<u32> {
-    let answer = read_line(channel)?;
+/// Fails if the successor goes away first or does not answer by `deadline`
+/// (`TimedOut`). The same deadline is meant to be given to
+/// [`await_confirmation`] next, so that it bounds the whole exchange.
+///
+/// Changes the read timeout of `channel`. Shutting `channel` down from
+/// another thread ends the wait at once, with an error.
+pub fn await_receipt(channel: &UnixStream, deadline: Instant) -> io::Result<u32> {
+    let answer = read_line(channel, deadline)?;
     answer
         .strip_prefix(RECEIVED)
         .and_then(|pid| pid.trim().parse().ok())
@@ -182,23 +187,52 @@ pub fn confirm(mut channel: &UnixStream) -> io::Result<()> {
 
 /// Wait until the successor confirms that it accepts connections.
 ///
-/// Fails if the successor goes away without confirming or, when `channel`
-/// has a read timeout, does not confirm in time.
-pub fn await_confirmation(channel: &UnixStream) -> io::Result<()> {
-    if read_line(channel)? == READY {
+/// Fails if the successor goes away without confirming or does not confirm
+/// by `deadline` (`TimedOut`).
+///
+/// Changes the read timeout of `channel`. Shutting `channel` down from
+/// another thread ends the wait at once, with an error.
+pub fn await_confirmation(channel: &UnixStream, deadline: Instant) -> io::Result<()> {
+    if read_line(channel, deadline)? == READY {
         Ok(())
     } else {
         Err(invalid("not a confirmation"))
     }
 }
 
-/// The next line the successor sends, without its line break. Read a byte at
-/// a time, so that nothing of the line after it is consumed.
-fn read_line(mut channel: &UnixStream) -> io::Result<String> {
+/// The next line the successor sends, without its line break, if it is all
+/// there by `deadline`. Read a byte at a time, so that nothing of the line
+/// after it is consumed.
+fn read_line(mut channel: &UnixStream, deadline: Instant) -> io::Result<String> {
     let mut line = Vec::new();
     let mut byte = [0u8; 1];
     loop {
-        if channel.read(&mut byte)? == 0 {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the successor did not answer in time",
+            ));
+        }
+        channel.set_read_timeout(Some(left))?;
+        let read = match channel.read(&mut byte) {
+            Ok(read) => read,
+            // A signal handled by this thread interrupts a read that has a
+            // timeout, and std does not retry it. Nor does a timeout end the
+            // wait: only the deadline does, checked above.
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::Interrupted
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue
+            }
+            Err(e) => return Err(e),
+        };
+        if read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "the successor went away",
@@ -227,6 +261,11 @@ mod tests {
 
     fn listening() -> TcpListener {
         TcpListener::bind("127.0.0.1:0").unwrap()
+    }
+
+    /// A deadline far enough out that a test never reaches it.
+    fn soon() -> Instant {
+        Instant::now() + Duration::from_secs(10)
     }
 
     /// What a successor receives when it is sent `sockets`.
@@ -312,7 +351,10 @@ mod tests {
 
         receive(&successor).unwrap();
 
-        assert_eq!(await_receipt(&outgoing).unwrap(), std::process::id());
+        assert_eq!(
+            await_receipt(&outgoing, soon()).unwrap(),
+            std::process::id()
+        );
     }
 
     #[test]
@@ -322,9 +364,9 @@ mod tests {
         receive(&successor).unwrap();
         confirm(&successor).unwrap();
 
-        await_receipt(&outgoing).unwrap();
+        await_receipt(&outgoing, soon()).unwrap();
 
-        assert!(await_confirmation(&outgoing).is_ok());
+        assert!(await_confirmation(&outgoing, soon()).is_ok());
     }
 
     #[test]
@@ -333,7 +375,7 @@ mod tests {
 
         confirm(&successor).unwrap();
 
-        assert!(await_confirmation(&outgoing).is_ok());
+        assert!(await_confirmation(&outgoing, soon()).is_ok());
     }
 
     #[test]
@@ -342,16 +384,66 @@ mod tests {
 
         drop(successor);
 
-        assert!(await_confirmation(&outgoing).is_err());
+        assert!(await_confirmation(&outgoing, soon()).is_err());
     }
 
     #[test]
-    fn outgoing_node_stops_waiting_at_the_read_timeout() {
+    fn outgoing_node_stops_waiting_at_the_deadline() {
         let (outgoing, _successor) = UnixStream::pair().unwrap();
-        outgoing
-            .set_read_timeout(Some(Duration::from_millis(50)))
-            .unwrap();
+        let deadline = Instant::now() + Duration::from_millis(50);
 
-        assert!(await_confirmation(&outgoing).is_err());
+        let confirmed = await_confirmation(&outgoing, deadline);
+
+        assert_eq!(confirmed.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(Instant::now() >= deadline);
+    }
+
+    #[test]
+    fn outgoing_node_does_not_wait_once_the_deadline_has_passed() {
+        let (outgoing, mut successor) = UnixStream::pair().unwrap();
+        successor.write_all(b"ready\n").unwrap();
+
+        let confirmed = await_confirmation(&outgoing, Instant::now());
+
+        assert_eq!(confirmed.unwrap_err().kind(), io::ErrorKind::TimedOut);
+    }
+
+    /// The receipt arriving late leaves the confirmation only what is left
+    /// of the time, not as much again.
+    #[test]
+    fn one_deadline_bounds_the_receipt_and_the_confirmation_together() {
+        let (outgoing, mut successor) = UnixStream::pair().unwrap();
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(500);
+        let late_receipt = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            successor.write_all(b"received 4242\n").unwrap();
+            successor
+        });
+
+        await_receipt(&outgoing, deadline).unwrap();
+        let confirmed = await_confirmation(&outgoing, deadline);
+
+        assert_eq!(confirmed.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_millis(800));
+        drop(late_receipt.join());
+    }
+
+    #[test]
+    fn outgoing_node_stops_waiting_when_it_shuts_the_channel_down() {
+        let (outgoing, _successor) = UnixStream::pair().unwrap();
+        let waiting = outgoing.try_clone().unwrap();
+        let wait = std::thread::spawn(move || {
+            let started = Instant::now();
+            let confirmed = await_confirmation(&waiting, started + Duration::from_secs(30));
+            (confirmed, started.elapsed())
+        });
+        std::thread::sleep(Duration::from_millis(100));
+
+        outgoing.shutdown(Shutdown::Both).unwrap();
+        let (confirmed, waited) = wait.join().unwrap();
+
+        assert!(confirmed.is_err());
+        assert!(waited < Duration::from_secs(5), "{waited:?}");
     }
 }

@@ -999,7 +999,7 @@ No connection is refused, because the sockets are never closed, and none waiting
 
 Under systemd this is `systemctl reload gfe-node`. The unit is of `Type=notify`: the node tells systemd when it serves and, once its successor has taken over, that the successor is the service's main process, so the node's own exit is not taken for the service stopping. By then the successor is systemd's own child, which matters: systemd does not wait for a main process that is some other process's child, and kills it outright when the service is next stopped.
 
-If the successor does not take over (the binary does not start, the config is rejected, it does not answer within 60 s), nothing has changed for the node: it goes on serving, logs why, and counts the attempt in `gfe_upgrade_failures_total`. This makes a bootstrap config change as safe to roll out as a dynamic one.
+If the successor does not take over (the binary does not start, the config is rejected, it does not answer within 60 s), nothing has changed for the node: it goes on serving, logs why, and counts the attempt in `gfe_upgrade_failures_total`. This makes a bootstrap config change as safe to roll out as a dynamic one. The 60 s count from when the successor is started, for the whole exchange. A node told to stop (`SIGTERM`, `systemctl stop`) while it waits for its successor does not wait any longer: it abandons the upgrade, stops the successor if it has said which process it is (one that has not finds nobody to take over from and exits), and drains as on any stop.
 
 What does not carry over: the successor starts with empty connection pools to the backends, every backend presumed healthy until probed, and its counters at zero.
 
