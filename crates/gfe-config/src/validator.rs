@@ -1,8 +1,20 @@
 //! Semantic validation of the dynamic config, run before any swap so a bad
 //! config is rejected wholesale and the running snapshot is kept.
 
-use gfe_types::{DynamicConfig, GfeError, ListenProtocol, RouteAction};
+use gfe_types::{DynamicConfig, GfeError, LbPolicy, ListenProtocol, RouteAction};
+use gfe_upstream::policy::RING_REPLICAS;
 use std::collections::HashSet;
+
+/// The largest `weight` an upstream may have. Weights are relative, so this
+/// leaves ample room for ratios while bounding what a weight costs: a
+/// `ring_hash` pool places `RING_REPLICAS` ring points per unit of weight.
+pub const MAX_UPSTREAM_WEIGHT: u32 = 1000;
+
+/// The most points a `ring_hash` pool's ring may hold (`RING_REPLICAS` times
+/// the sum of its weights), about 16 MB of ring. Every node builds the ring
+/// on every reload and at start, so an unbounded one exhausts memory on the
+/// whole fleet at once.
+pub const MAX_RING_POINTS: u64 = 1_000_000;
 
 /// Validate the dynamic config. Returns the first error found.
 pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
@@ -42,6 +54,25 @@ pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
                 return Err(GfeError::Validation(format!(
                     "pool {} has an invalid upstream {}:{}",
                     p.id, u.host, u.port
+                )));
+            }
+            if u.weight > MAX_UPSTREAM_WEIGHT {
+                return Err(GfeError::Validation(format!(
+                    "pool {}: upstream {}:{} has weight {}, above the maximum of \
+                     {MAX_UPSTREAM_WEIGHT}; weights are relative, scale them down",
+                    p.id, u.host, u.port, u.weight
+                )));
+            }
+        }
+        if p.lb_policy == LbPolicy::RingHash {
+            let weights: u64 = p.upstreams.iter().map(|u| u64::from(u.weight)).sum();
+            let points = RING_REPLICAS as u64 * weights;
+            if points > MAX_RING_POINTS {
+                return Err(GfeError::Validation(format!(
+                    "pool {}: its ring_hash ring would hold {points} points \
+                     ({RING_REPLICAS} per unit of weight), above the maximum of \
+                     {MAX_RING_POINTS}; lower the weights of its upstreams",
+                    p.id
                 )));
             }
         }
@@ -104,7 +135,8 @@ pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
 mod tests {
     use super::*;
     use gfe_types::{
-        CertEntry, Listener, ListenerId, PoolId, Route, RouteId, Scheme, Upstream, UpstreamPool,
+        CertEntry, LbPolicy, Listener, ListenerId, PoolId, Route, RouteId, Scheme, Upstream,
+        UpstreamPool,
     };
 
     fn listener() -> Listener {
@@ -200,5 +232,66 @@ mod tests {
             ..Default::default()
         };
         assert!(validate(&cfg).is_err());
+    }
+
+    /// A valid config whose only pool is `pool`.
+    fn config_with_pool(pool: UpstreamPool) -> DynamicConfig {
+        DynamicConfig {
+            listeners: vec![listener()],
+            pools: vec![pool],
+            ..Default::default()
+        }
+    }
+
+    fn backend(host: &str, weight: u32) -> Upstream {
+        Upstream {
+            host: host.into(),
+            port: 80,
+            weight,
+        }
+    }
+
+    #[test]
+    fn upstream_weight_at_the_limit_passes() {
+        let mut p = pool("p");
+        p.upstreams = vec![backend("10.0.0.1", MAX_UPSTREAM_WEIGHT)];
+
+        assert!(validate(&config_with_pool(p)).is_ok());
+    }
+
+    #[test]
+    fn upstream_weight_above_the_limit_fails() {
+        let mut p = pool("p");
+        p.upstreams = vec![backend("10.0.0.1", MAX_UPSTREAM_WEIGHT + 1)];
+
+        let err = validate(&config_with_pool(p)).unwrap_err().to_string();
+
+        assert!(err.contains("pool p"), "{err}");
+        assert!(err.contains("1000"), "{err}");
+    }
+
+    #[test]
+    fn ring_hash_pool_with_too_many_ring_points_fails() {
+        // 7 backends at the maximum weight: 160 x 7000 = 1,120,000 points.
+        let mut p = pool("p");
+        p.lb_policy = LbPolicy::RingHash;
+        p.upstreams = (1..=7)
+            .map(|i| backend(&format!("10.0.0.{i}"), MAX_UPSTREAM_WEIGHT))
+            .collect();
+
+        let err = validate(&config_with_pool(p)).unwrap_err().to_string();
+
+        assert!(err.contains("pool p"), "{err}");
+        assert!(err.contains("1000000"), "{err}");
+    }
+
+    #[test]
+    fn round_robin_pool_with_the_same_weights_passes() {
+        let mut p = pool("p");
+        p.upstreams = (1..=7)
+            .map(|i| backend(&format!("10.0.0.{i}"), MAX_UPSTREAM_WEIGHT))
+            .collect();
+
+        assert!(validate(&config_with_pool(p)).is_ok());
     }
 }
