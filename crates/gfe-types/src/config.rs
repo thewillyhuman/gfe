@@ -26,7 +26,24 @@ pub struct NodeConfig {
     pub upstream: UpstreamConfig,
     #[serde(default)]
     pub ebpf: EbpfConfig,
+    #[serde(default)]
+    pub log: LogConfig,
     pub health_check_defaults: HealthCheckConfig,
+}
+
+/// Where the node's log goes.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogConfig {
+    /// A file to append every log line to. The node then keeps the events
+    /// that describe traffic (one per request and per connection) off
+    /// standard output, which carries its own log only. Without a file,
+    /// everything goes to standard output.
+    ///
+    /// The file may be rotated under the node, by renaming or truncating it:
+    /// the node goes on at this path within a second.
+    #[serde(default)]
+    pub file: Option<PathBuf>,
 }
 
 /// The kernel-side view of the node's TCP connections (eBPF).

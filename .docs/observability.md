@@ -16,10 +16,21 @@ Metrics tell you *that* something is wrong and where; logs tell you *who* and
 *what*. Anything with client-controlled values (IPs, paths, user agents) is in
 the logs only, so a client cannot inflate the metric series.
 
-Both logs are JSON lines on stdout (journald under systemd), emitted when the
-request or connection is **over**, so sizes, durations and outcomes are final.
-Each target can be routed or silenced on its own, e.g.
-`RUST_LOG=info,gfe::conn=off`.
+Both logs are JSON lines, emitted when the request or connection is **over**,
+so sizes, durations and outcomes are final. Each target can be silenced on
+its own, e.g. `RUST_LOG=info,gfe::conn=off`.
+
+Where they go is set by `[log] file` in the bootstrap config:
+
+- **With a file** (`/var/log/gfe/gfe.log` in the example config) every line is
+  appended to it, and standard output keeps the node's own log only. This is
+  the setting for a node that carries traffic: point a log collector at the
+  file and let it, or logrotate, rotate it.
+- **Without one** everything goes to standard output, which under systemd is
+  the journal. journald discards what exceeds its rate limit (10,000 lines
+  per 30 seconds per service by default) and says so only in its own log, so
+  above a few hundred requests a second the access log has holes that nothing
+  in GFE can see.
 
 ## Where to look
 
@@ -68,7 +79,8 @@ backend, a `502` without `error` is the backend's own answer, and a `200` with
 
 ### Querying the logs
 
-With the JSON lines in a file or piped from `journalctl -u gfe-node -o cat`:
+With the JSON lines in the log file, or piped from
+`journalctl -u gfe-node -o cat` on a node without one:
 
 ```bash
 # Requests per client IP, busiest first
@@ -195,5 +207,6 @@ thread of their own; if the destination is slower than the node logs, the
 queue fills and further lines are dropped. That is deliberate: a front end
 that stalls because its log is slow fails everybody, while a log with a hole
 in it fails nobody, provided the hole is known. `gfe_log_lost_lines` counts
-the lines that were never written, per destination, and
-`GfeLogLinesLost` alerts on it.
+the lines that were never written, per destination (`file`, `stdout`), and
+`GfeLogLinesLost` alerts on it. It also counts lines the destination refused:
+a full disk, or a log file that was rotated away and cannot be created again.

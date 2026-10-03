@@ -88,7 +88,7 @@ fn main() -> Result<()> {
     // deployed file cannot be used.
     let node = node.context("--config is required to run a node")?;
     // Kept to the end: dropping it writes out the lines still queued.
-    let log = Arc::new(Log::start());
+    let log = Arc::new(Log::start(&node.log)?);
     let (predecessor, inherited) = if args.upgrade {
         let (predecessor, inherited) = upgrade::take_over()?;
         (Some(predecessor), inherited)

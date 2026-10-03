@@ -61,6 +61,17 @@ impl Node {
     /// Start a node whose bootstrap config ends with `extra`, and wait until
     /// it is ready.
     fn start(dir: &Path, extra: &str) -> Node {
+        let node = Node::spawn(dir, extra);
+        assert!(
+            eventually(|| http_get(node.ops, "/readyz").starts_with("HTTP/1.1 200")),
+            "the node did not become ready"
+        );
+        node
+    }
+
+    /// Start a node whose bootstrap config ends with `extra`, without
+    /// waiting for anything.
+    fn spawn(dir: &Path, extra: &str) -> Node {
         let (proxy, ops) = (free_addr(), free_addr());
         let dynamic = format!(
             r#"{{"listeners":[{{"id":"http","address":"{}","port":{},"protocol":"http"}}],
@@ -84,16 +95,11 @@ impl Node {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let node = Node {
+        Node {
             process,
             proxy,
             ops,
-        };
-        assert!(
-            eventually(|| http_get(node.ops, "/readyz").starts_with("HTTP/1.1 200")),
-            "the node did not become ready"
-        );
-        node
+        }
     }
 }
 
@@ -144,4 +150,59 @@ fn writes_out_its_last_lines_before_it_exits() {
 
     let last = output.lines().last().unwrap_or_default();
     assert!(last.contains("gfe-node stopped"), "{output}");
+}
+
+/// The `[log]` section that sends the log to `file`.
+fn log_to(file: &Path) -> String {
+    format!("[log]\nfile = \"{}\"\n", file.display())
+}
+
+#[test]
+fn writes_every_line_to_its_log_file() {
+    let dir = scratch("file");
+    let file = dir.join("gfe.log");
+    let node = Node::start(&dir, &log_to(&file));
+
+    http_get(node.proxy, "/");
+    let has_the_request = eventually(|| {
+        std::fs::read_to_string(&file)
+            .unwrap_or_default()
+            .contains(r#""target":"gfe::access""#)
+    });
+
+    assert!(has_the_request, "the request is not in the log file");
+    let log = std::fs::read_to_string(&file).unwrap();
+    assert!(log.contains("gfe-node ready"), "{log}");
+}
+
+#[cfg(unix)]
+#[test]
+fn keeps_requests_off_standard_output_when_it_has_a_log_file() {
+    let dir = scratch("stdout");
+    let node = Node::start(&dir, &log_to(&dir.join("gfe.log")));
+    http_get(node.proxy, "/");
+
+    let output = node.stop();
+
+    assert!(output.contains("gfe-node stopped"), "{output}");
+    assert!(!output.contains("gfe::access"), "{output}");
+    assert!(!output.contains("gfe::conn"), "{output}");
+}
+
+#[test]
+fn does_not_start_without_the_log_file_it_was_told_to_write() {
+    let dir = scratch("unwritable");
+    let nowhere = dir.join("no-such-directory").join("gfe.log");
+    let mut node = Node::spawn(&dir, &log_to(&nowhere));
+
+    let mut exit = None;
+    eventually(|| {
+        exit = node.process.try_wait().unwrap();
+        exit.is_some()
+    });
+
+    assert!(
+        exit.is_some_and(|status| !status.success()),
+        "the node should have refused to start: {exit:?}"
+    );
 }
