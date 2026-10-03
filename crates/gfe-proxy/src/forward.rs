@@ -143,6 +143,28 @@ pub async fn forward(
         );
     }
     record.forwarding_to(pool.id.to_string());
+    // The pool's place is shared by every attempt, so that a retry does not
+    // count, or get refused, as another request.
+    let admitted = match pool.admit() {
+        Some(admitted) => Arc::new(admitted),
+        None => {
+            let label = PoolLabel {
+                pool: pool.id.to_string(),
+            };
+            shared
+                .metrics
+                .proxy
+                .upstream_pool_full
+                .get_or_create(&label)
+                .inc();
+            record.failed("upstream_pool_full");
+            return synthetic(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "upstream pool full",
+                record.request_id(),
+            );
+        }
+    };
 
     let (mut parts, body) = req.into_parts();
     let asks_for_trailers = asks_for_trailers(&parts.headers);
@@ -226,6 +248,7 @@ pub async fn forward(
             authority.clone(),
             BackendBusy {
                 _least_request: selection.guard,
+                _pool: admitted.clone(),
                 in_flight,
             },
         );
@@ -359,10 +382,11 @@ pub async fn forward(
     )
 }
 
-/// Marks a backend as busy with one request, for least-request selection and
-/// for the in-flight gauge, until dropped.
+/// Marks a backend as busy with one request, for least-request selection,
+/// for its pool's `max_in_flight` and for the in-flight gauge, until dropped.
 struct BackendBusy {
     _least_request: InflightGuard,
+    _pool: Arc<InflightGuard>,
     in_flight: Gauge,
 }
 

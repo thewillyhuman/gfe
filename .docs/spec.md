@@ -327,6 +327,7 @@ An **upstream pool** is a named set of application backends serving the same rol
 - `scheme`: how GFE talks to the pool's backends, independent of the client-facing protocol: `http` (cleartext HTTP/1.1), `https` (TLS; HTTP/1.1, or HTTP/2 by ALPN for gRPC calls) or `h2c` (cleartext HTTP/2 with prior knowledge, for backends that speak only HTTP/2 without TLS, typically gRPC servers).
 - `lb_policy`: how requests are distributed across healthy upstreams (Section 6.5).
 - `health_check`: L7 probe config (Section 7.1).
+- `max_in_flight` (optional, at least 1): the most requests the node may have in flight to the pool at once, counted from backend selection until the response has been relayed to its end or abandoned (the span of `gfe_upstream_requests_in_flight`). A request beyond it is answered `503` (`error=upstream_pool_full`, `UNAVAILABLE` to a gRPC caller) without being retried, and counted in `gfe_upstream_pool_full_total{pool}`. It keeps one slow pool from holding every connection `max_upstream_connections` allows, at the expense of the other pools. Absent: no quota. A reload that changes the pool starts the count afresh.
 - Pools may be **referenced by multiple routes**. Health checks are deduplicated across pools by `(ip, port, probe)`.
 
 ### Certificates
@@ -830,6 +831,7 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_upstream_errors_total` | Counter | Upstream requests that failed before any response (labels: pool, backend, kind ∈ {connect_timeout, connect_refused, connect_error, tls, reset, connection_limit, timeout, other}) |
 | `gfe_upstream_connect_errors_total` | Counter | The same, all kinds together (kept for existing dashboards) |
 | `gfe_upstream_retries_total` | Counter | Requests retried against a new backend selection (label: pool) |
+| `gfe_upstream_pool_full_total` | Counter | Requests answered `503` because their pool had `max_in_flight` requests in flight (label: pool) |
 | `gfe_upstream_requests_in_flight` | Gauge | Requests a backend is working on, until the response has been relayed to its end (labels: pool, backend) |
 | `gfe_upstream_connections` / `gfe_upstream_connections_limit` | Gauge | Upstream connections open over all backends, and the configured `max_upstream_connections` |
 
@@ -912,7 +914,7 @@ It prints which listener/route matched, which pool and which backend would be se
   | `status` | Response status; `499` when the client left before a response existed |
   | `grpc_status` | For gRPC calls (`content-type: application/grpc*`), the numeric status the call ended with, read from the response trailers (or headers, for calls that fail before any message). A gRPC call is HTTP `200` whatever its outcome, so this is the field that tells success from failure |
   | `route`, `pool`, `backend`, `attempts` | Routing decision, the backend of the last attempt, and how many attempts were made |
-  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_connection_limit`, `upstream_error`, `upstream_timeout`, `request_body_timeout` (a `408`: the client stalled while sending the body), `unsupported_request_target` (a `400`: the target of a forwarded request is not a path, as in `OPTIONS *` or `CONNECT`), `unknown_acme_challenge`, `host_conflict` / `host_missing` (a `400`), `misdirected_request` (a `421`; see Section 6.3) |
+  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_connection_limit`, `upstream_pool_full` (a `503`: the pool has `max_in_flight` requests in flight), `upstream_error`, `upstream_timeout`, `request_body_timeout` (a `408`: the client stalled while sending the body), `unsupported_request_target` (a `400`: the target of a forwarded request is not a path, as in `OPTIONS *` or `CONNECT`), `unknown_acme_challenge`, `host_conflict` / `host_missing` (a `400`), `misdirected_request` (a `421`; see Section 6.3) |
   | `termination` | `complete`, `client_abort` (client left before or during the response) or `upstream_abort` (upstream failed mid-body) |
   | `request_bytes`, `response_bytes` | Body bytes actually read from / written to the client |
   | `duration_ms` | Request head to last response byte, microsecond resolution |

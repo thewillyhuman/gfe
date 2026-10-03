@@ -225,6 +225,7 @@ mod tests {
                 weight: 1,
             }],
             health_check: Some(fast_cfg()),
+            max_in_flight: None,
         }
     }
 

@@ -174,6 +174,7 @@ async fn proxies_http_request_to_upstream() {
                 weight: 1,
             }],
             health_check: None,
+            max_in_flight: None,
         }],
         ..Default::default()
     };
@@ -215,6 +216,7 @@ async fn unmatched_host_returns_404() {
                 weight: 1,
             }],
             health_check: None,
+            max_in_flight: None,
         }],
         ..Default::default()
     };
@@ -303,6 +305,7 @@ async fn terminates_tls_and_proxies() {
                 weight: 1,
             }],
             health_check: None,
+            max_in_flight: None,
         }],
     };
     let shared = build_shared();
@@ -457,6 +460,7 @@ async fn health_failover_excludes_dead_backend() {
                 },
             ],
             health_check: Some(fast_hc.clone()),
+            max_in_flight: None,
         }],
         ..Default::default()
     };
@@ -584,6 +588,7 @@ async fn serves_request_that_takes_longer_than_client_idle() {
                 weight: 1,
             }],
             health_check: None,
+            max_in_flight: None,
         }],
         ..Default::default()
     };
@@ -1169,6 +1174,7 @@ fn grpc_config(upstream: SocketAddr) -> DynamicConfig {
                 weight: 1,
             }],
             health_check: None,
+            max_in_flight: None,
         }],
         ..Default::default()
     }
@@ -1362,6 +1368,7 @@ fn forwarding_config(upstream: SocketAddr) -> DynamicConfig {
                 weight: 1,
             }],
             health_check: None,
+            max_in_flight: None,
         }],
         ..Default::default()
     }
@@ -2166,6 +2173,83 @@ async fn backend_that_stops_reading_an_upload_is_answered_with_504() {
         r#"gfe_upstream_errors_total{{pool="pool",backend="{upstream}",kind="timeout"}} 1"#
     );
     assert!(metrics.contains(&timed_out), "{metrics}");
+}
+
+/// [`forwarding_config`] plus `b.example.org` forwarded to a pool of its
+/// own, `other`, whose backend is `other`; the pool of `a.example.org` may
+/// have `max_in_flight` requests in flight at once.
+fn two_pool_config(upstream: SocketAddr, max_in_flight: u32, other: SocketAddr) -> DynamicConfig {
+    let mut cfg = forwarding_config(upstream);
+    cfg.pools[0].max_in_flight = std::num::NonZeroU32::new(max_in_flight);
+    let mut other_pool = forwarding_config(other).pools.remove(0);
+    other_pool.id = PoolId("other".into());
+    cfg.pools.push(other_pool);
+    cfg.routes.push(Route {
+        id: RouteId("other".into()),
+        listener: ListenerId("http".into()),
+        host: "b.example.org".into(),
+        path_prefix: "/".into(),
+        action: RouteAction::Forward("other".into()),
+    });
+    cfg
+}
+
+#[tokio::test]
+async fn answers_503_when_a_pool_has_max_in_flight_requests() {
+    let (logs, _guard) = CapturedLogs::start();
+    let slow = spawn_upstream_answering_after(Duration::from_millis(500)).await;
+    let other = spawn_upstream().await;
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&two_pool_config(slow, 1, other), shared.clone()).await;
+
+    let first = tokio::spawn(async move { http_get(proxy, "a.example.org", "/first").await });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let (refused_status, _) = http_get(proxy, "a.example.org", "/second").await;
+    let (other_status, _) = http_get(proxy, "b.example.org", "/").await;
+    let (first_status, _) = first.await.unwrap();
+    // The client may have the whole response a moment before GFE is done.
+    let idle = format!(r#"gfe_upstream_requests_in_flight{{pool="pool",backend="{slow}"}} 0"#);
+    for _ in 0..100 {
+        if shared.metrics.encode().contains(&idle) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (later_status, _) = http_get(proxy, "a.example.org", "/third").await;
+
+    assert_eq!(refused_status, 503);
+    assert_eq!(other_status, 200);
+    assert_eq!(first_status, 200);
+    assert_eq!(later_status, 200);
+    let refused = logs
+        .events_of("gfe::access")
+        .into_iter()
+        .find(|event| event["path"] == "/second")
+        .expect("the refused request is logged");
+    assert_eq!(refused["error"], "upstream_pool_full");
+    assert_eq!(refused["pool"], "pool");
+    assert_eq!(refused["attempts"], 0);
+    let metrics = shared.metrics.encode();
+    let counted = r#"gfe_upstream_pool_full_total{pool="pool"} 1"#;
+    assert!(metrics.contains(counted), "{metrics}");
+}
+
+#[tokio::test]
+async fn fails_grpc_call_to_a_pool_with_max_in_flight_calls_as_unavailable() {
+    let upstream = spawn_grpc_upstream().await;
+    let mut cfg = grpc_config(upstream);
+    cfg.pools[0].max_in_flight = std::num::NonZeroU32::new(1);
+    let (proxy, _tx) = start_proxy(&cfg, build_shared()).await;
+
+    // The first call stays open, and in flight, while the second is made.
+    let first = GrpcCall::open(proxy).await;
+    let second = GrpcCall::open(proxy).await;
+
+    assert_eq!(first.response.headers().get("grpc-status"), None);
+    let headers = second.response.headers();
+    assert_eq!(headers["grpc-status"], "14");
+    let message = headers["grpc-message"].to_str().unwrap();
+    assert!(message.contains("upstream_pool_full"), "{message}");
 }
 
 /// A streaming call may legitimately have nothing to send, not even headers,

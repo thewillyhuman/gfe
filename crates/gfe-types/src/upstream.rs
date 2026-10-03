@@ -1,5 +1,6 @@
 use crate::config::HealthCheckConfig;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU32;
 
 /// Unique identifier for an upstream pool, referenced by routes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -84,6 +85,11 @@ pub struct UpstreamPool {
     /// `health_check_defaults` apply.
     #[serde(default)]
     pub health_check: Option<HealthCheckConfig>,
+    /// The most requests the node may have in flight to the pool at once,
+    /// so that a slow pool cannot take every upstream connection the node
+    /// may open. A request beyond it is answered `503`. Absent: no quota.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_in_flight: Option<NonZeroU32>,
 }
 
 /// Health state of a single backend, tracked by the control plane and read by
@@ -142,6 +148,22 @@ mod tests {
     #[test]
     fn authority_of_an_ipv6_literal_is_bracketed() {
         assert_eq!(upstream("2001:db8::1").authority(), "[2001:db8::1]:8443");
+    }
+
+    #[test]
+    fn pool_has_no_in_flight_quota_by_default() {
+        let json = r#"{"id":"p","upstreams":[]}"#;
+        let p: UpstreamPool = serde_json::from_str(json).unwrap();
+        assert_eq!(p.max_in_flight, None);
+    }
+
+    #[test]
+    fn pool_in_flight_quota_cannot_be_zero() {
+        let json = r#"{"id":"p","max_in_flight":0,"upstreams":[]}"#;
+        assert!(serde_json::from_str::<UpstreamPool>(json).is_err());
+        let json = r#"{"id":"p","max_in_flight":100,"upstreams":[]}"#;
+        let p: UpstreamPool = serde_json::from_str(json).unwrap();
+        assert_eq!(p.max_in_flight, NonZeroU32::new(100));
     }
 
     #[test]

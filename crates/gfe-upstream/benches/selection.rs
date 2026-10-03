@@ -17,6 +17,7 @@ fn pool(policy: LbPolicy, n: usize, weighted: bool) -> UpstreamPool {
         lb_policy: policy,
         upstreams,
         health_check: None,
+        max_in_flight: None,
     }
 }
 

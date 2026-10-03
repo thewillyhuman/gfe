@@ -249,6 +249,7 @@ mod tests {
                 weight: 1,
             }],
             health_check: None,
+            max_in_flight: None,
         }
     }
 

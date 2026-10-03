@@ -146,6 +146,7 @@ pub struct ProxyMetrics {
     pub upstream_connect_errors: Counter,
     pub upstream_errors: Family<UpstreamErrorLabels, Counter>,
     pub upstream_retries: Family<PoolLabel, Counter>,
+    pub upstream_pool_full: Family<PoolLabel, Counter>,
     pub upstream_requests_in_flight: Family<UpstreamDurationLabels, Gauge>,
     pub upstream_connections: Gauge,
     pub upstream_connections_limit: Gauge,
@@ -212,6 +213,7 @@ impl ProxyMetrics {
             upstream_connect_errors: Counter::default(),
             upstream_errors: Family::default(),
             upstream_retries: Family::default(),
+            upstream_pool_full: Family::default(),
             upstream_requests_in_flight: Family::default(),
             upstream_connections: Gauge::default(),
             upstream_connections_limit: Gauge::default(),
@@ -358,6 +360,11 @@ impl ProxyMetrics {
             "gfe_upstream_retries",
             "Requests retried against another backend selection",
             m.upstream_retries.clone(),
+        );
+        registry.register(
+            "gfe_upstream_pool_full",
+            "Requests refused because their pool had max_in_flight requests in flight",
+            m.upstream_pool_full.clone(),
         );
         registry.register(
             "gfe_upstream_requests_in_flight",

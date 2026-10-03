@@ -5,10 +5,12 @@ use crate::health_map::HealthMap;
 use crate::policy::{build_ring, ring_pick, weighted_pick};
 use gfe_types::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// Decrements an in-flight counter when dropped (for `least_request`).
+/// Decrements an in-flight counter when dropped: a backend's (for
+/// `least_request`), or a pool's (for its `max_in_flight`).
 pub struct InflightGuard(Option<Arc<AtomicUsize>>);
 
 impl Drop for InflightGuard {
@@ -40,6 +42,12 @@ pub struct Pool {
     /// `true` when all upstream weights are equal — lets `round_robin` use the
     /// cheap lock-free atomic counter instead of weighted random.
     uniform_weights: bool,
+    /// Requests admitted to the pool and not yet finished. Kept per pool
+    /// snapshot: a config reload starts the count afresh, while requests
+    /// admitted before it finish against the old one.
+    in_flight: Arc<AtomicUsize>,
+    /// The most requests that may be in flight to the pool at once.
+    max_in_flight: Option<NonZeroU32>,
 }
 
 impl Pool {
@@ -67,7 +75,23 @@ impl Pool {
             inflight,
             ring,
             uniform_weights,
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            max_in_flight: p.max_in_flight,
         }
+    }
+
+    /// Admit one more request to the pool, unless it already has
+    /// `max_in_flight` requests in flight; `None` if it does. The request
+    /// counts as in flight until the returned guard is dropped. A pool
+    /// without `max_in_flight` admits every request.
+    pub fn admit(&self) -> Option<InflightGuard> {
+        let Some(max) = self.max_in_flight else {
+            return Some(InflightGuard(None));
+        };
+        let already_in_flight = self.in_flight.fetch_add(1, Ordering::Relaxed);
+        // Dropping the guard gives the place back.
+        let guard = InflightGuard(Some(self.in_flight.clone()));
+        (already_in_flight < max.get() as usize).then_some(guard)
     }
 
     /// Round-robin over the healthy set. Uniform weights → cheap lock-free
@@ -213,7 +237,48 @@ mod tests {
                 },
             ],
             health_check: None,
+            max_in_flight: None,
         }
+    }
+
+    fn pool_admitting(max_in_flight: Option<u32>) -> Arc<Pool> {
+        let mut config = pool_with(LbPolicy::RoundRobin);
+        config.max_in_flight = max_in_flight.and_then(std::num::NonZeroU32::new);
+        PoolSet::build(&[config])
+            .get(&PoolId("p".into()))
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn admits_up_to_max_in_flight_and_no_further() {
+        let pool = pool_admitting(Some(2));
+
+        let first = pool.admit();
+        let second = pool.admit();
+        let third = pool.admit();
+
+        assert!(first.is_some() && second.is_some());
+        assert!(third.is_none());
+    }
+
+    #[test]
+    fn a_finished_request_makes_room_again() {
+        let pool = pool_admitting(Some(1));
+        let only = pool.admit();
+
+        drop(only);
+
+        assert!(pool.admit().is_some());
+    }
+
+    #[test]
+    fn without_max_in_flight_admits_every_request() {
+        let pool = pool_admitting(None);
+
+        let admitted: Vec<_> = (0..1000).filter_map(|_| pool.admit()).collect();
+
+        assert_eq!(admitted.len(), 1000);
     }
 
     #[test]
@@ -260,6 +325,7 @@ mod tests {
                 },
             ],
             health_check: None,
+            max_in_flight: None,
         };
         let set = PoolSet::build(&[pool]);
         let p = set.get(&PoolId("p".into())).unwrap();
