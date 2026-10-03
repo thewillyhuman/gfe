@@ -163,6 +163,10 @@ cargo build --release
 # Validate config
 ./target/release/gfe-node --config config/gfe.example.toml --check-config
 
+# Validate a candidate dynamic config before it replaces the deployed one
+./target/release/gfe-node --config config/gfe.example.toml --check-config \
+    --dynamic-config /tmp/gfe-dynamic.candidate.json
+
 # Generate a dynamic config scaffold
 ./deploy/generate-config.sh --host app.example.org --backend 10.0.0.1:8443 -o /tmp/gfe-dynamic.json
 

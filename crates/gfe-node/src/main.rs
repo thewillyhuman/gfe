@@ -31,6 +31,11 @@ struct Args {
     /// Validate the bootstrap and dynamic config, then exit.
     #[arg(long)]
     check_config: bool,
+    /// With `--check-config`: validate this dynamic config instead of the one
+    /// named by the bootstrap config, so a candidate file can be checked
+    /// before it replaces the deployed one.
+    #[arg(long, requires = "check_config", value_name = "FILE")]
+    dynamic_config: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -39,13 +44,12 @@ fn main() -> Result<()> {
     // Load and validate config before doing anything else.
     let node = gfe_config::load_node_config(&args.config)
         .with_context(|| format!("loading node config {}", args.config.display()))?;
-    let dynamic =
-        gfe_config::load_dynamic_config(&node.control_plane.config_file).with_context(|| {
-            format!(
-                "loading dynamic config {}",
-                node.control_plane.config_file.display()
-            )
-        })?;
+    let dynamic_path = args
+        .dynamic_config
+        .as_ref()
+        .unwrap_or(&node.control_plane.config_file);
+    let dynamic = gfe_config::load_dynamic_config(dynamic_path)
+        .with_context(|| format!("loading dynamic config {}", dynamic_path.display()))?;
     gfe_config::validate(&dynamic).context("validating dynamic config")?;
 
     if args.check_config {
