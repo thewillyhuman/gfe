@@ -1466,3 +1466,39 @@ async fn grpc_call_outlives_upstream_first_byte() {
     assert_eq!(call.response.headers()["content-type"], "application/grpc");
     assert_eq!(call.next_frame().await.into_data().unwrap(), "late");
 }
+
+/// gRPC clients learn the outcome of a call from `grpc-status`, so when GFE
+/// itself fails a call it must say so in gRPC's terms.
+#[tokio::test]
+async fn fails_grpc_call_to_a_dead_backend_with_grpc_status_unavailable() {
+    let (logs, _guard) = CapturedLogs::start();
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead = closed.local_addr().unwrap();
+    drop(closed);
+    let (proxy, _tx) = start_proxy(&grpc_config(dead), build_shared()).await;
+
+    let call = GrpcCall::open(proxy).await;
+    let event = logs.access_event().await;
+
+    let headers = call.response.headers();
+    assert_eq!(call.response.status(), 200);
+    assert_eq!(headers["content-type"], "application/grpc");
+    assert_eq!(headers["grpc-status"], "14");
+    let message = headers["grpc-message"].to_str().unwrap();
+    assert!(message.contains("upstream_connect_refused"), "{message}");
+    assert_eq!(event["grpc_status"], 14);
+    assert_eq!(event["error"], "upstream_connect_refused");
+}
+
+#[tokio::test]
+async fn fails_grpc_call_without_a_route_with_grpc_status_unimplemented() {
+    let upstream = spawn_grpc_upstream().await;
+    let mut cfg = grpc_config(upstream);
+    cfg.routes[0].host = "elsewhere.example.org".into();
+    let (proxy, _tx) = start_proxy(&cfg, build_shared()).await;
+
+    let call = GrpcCall::open(proxy).await;
+
+    assert_eq!(call.response.status(), 200);
+    assert_eq!(call.response.headers()["grpc-status"], "12");
+}

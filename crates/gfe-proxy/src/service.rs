@@ -1,6 +1,6 @@
 //! Per-request handling: route match → action (forward / redirect / fixed).
 
-use crate::errors::{synthetic, RespBody};
+use crate::errors::{grpc_failure, synthetic, GrpcCode, RespBody};
 use crate::forward::{fixed_response, forward, redirect_response};
 use crate::record::RequestRecord;
 use crate::ConnCtx;
@@ -91,7 +91,22 @@ pub async fn handle_request(
         }
     };
 
+    let resp = in_callers_protocol(resp, &record);
     Ok(record.respond(resp))
+}
+
+/// A gRPC client reads a call's outcome from `grpc-status`, not from the HTTP
+/// status. A response GFE generated for a gRPC call because it could not
+/// serve it is therefore turned into a gRPC failure carrying the same reason.
+fn in_callers_protocol(resp: Response<RespBody>, record: &RequestRecord) -> Response<RespBody> {
+    match record.failure() {
+        Some(reason) if record.is_grpc() => grpc_failure(
+            GrpcCode::for_http_status(resp.status()),
+            &format!("gfe: {reason}"),
+            record.request_id(),
+        ),
+        _ => resp,
+    }
 }
 
 /// Extract the request host: prefer the URI authority (h2 / absolute-form),

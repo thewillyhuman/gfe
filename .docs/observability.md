@@ -54,6 +54,9 @@ Three fields of the access log together say how a request ended:
   (`complete`), the client left (`client_abort`), or the backend broke off in
   the middle of the body (`upstream_abort`).
 
+For gRPC calls `status` is `200` whatever happened, including when GFE fails
+the call itself: read `grpc_status` instead, with `error` saying why.
+
 So a `502` with `error=upstream_connect_refused` is GFE reporting a dead
 backend, a `502` without `error` is the backend's own answer, and a `200` with
 `termination=client_abort` is a download the client never finished.

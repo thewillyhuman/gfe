@@ -143,6 +143,11 @@ impl RequestRecord {
         &self.request_id
     }
 
+    /// Why GFE is answering the request itself, if it is.
+    pub fn failure(&self) -> Option<&'static str> {
+        self.error
+    }
+
     /// Whether the request is a gRPC call.
     pub fn is_grpc(&self) -> bool {
         self.is_grpc
