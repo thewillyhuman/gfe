@@ -14,11 +14,17 @@ use tokio::task::JoinHandle;
 
 type Key = (String, u16);
 
+/// A running probe loop and the check it was started with.
+struct Running {
+    check: HealthCheckConfig,
+    task: JoinHandle<()>,
+}
+
 /// Runs and supervises per-backend probe loops.
 pub struct HealthChecker {
     health: Arc<HealthMap>,
     metrics: Arc<GfeMetrics>,
-    tasks: Mutex<HashMap<Key, JoinHandle<()>>>,
+    tasks: Mutex<HashMap<Key, Running>>,
 }
 
 impl HealthChecker {
@@ -31,8 +37,12 @@ impl HealthChecker {
     }
 
     /// Start probes for backends in `pools`, stop probes for backends no
-    /// longer present. Deduplicates by `(host, port)`; the first pool's
-    /// health-check config wins for a shared backend.
+    /// longer present, and restart those whose check changed. Deduplicates
+    /// by `(host, port)`; the first pool's health-check config wins for a
+    /// shared backend.
+    ///
+    /// A restarted probe keeps the backend's current status until its own
+    /// thresholds say otherwise, so changing a check does not flap traffic.
     pub fn reconcile(self: &Arc<Self>, pools: &[UpstreamPool], defaults: &HealthCheckConfig) {
         let mut desired: HashMap<Key, (HealthCheckConfig, Vec<String>)> = HashMap::new();
         for p in pools {
@@ -48,35 +58,37 @@ impl HealthChecker {
 
         let mut tasks = self.tasks.lock().expect("health tasks poisoned");
 
-        // Stop probes for removed backends.
-        tasks.retain(|key, handle| {
-            if desired.contains_key(key) {
-                true
-            } else {
-                handle.abort();
-                false
+        // Stop probes for removed backends and for changed checks.
+        tasks.retain(|key, running| {
+            let unchanged = desired
+                .get(key)
+                .is_some_and(|(check, _)| *check == running.check);
+            if !unchanged {
+                running.task.abort();
             }
+            unchanged
         });
 
-        // Start probes for new backends.
-        for (key, (cfg, pool_ids)) in desired {
+        // Start probes for new backends and for changed checks.
+        for (key, (check, pool_ids)) in desired {
             if tasks.contains_key(&key) {
                 continue;
             }
             let this = self.clone();
             let (host, port) = key.clone();
-            let handle = tokio::spawn(async move {
-                this.run_probe(host, port, cfg, pool_ids).await;
+            let task = tokio::spawn({
+                let check = check.clone();
+                async move { this.run_probe(host, port, check, pool_ids).await }
             });
-            tasks.insert(key, handle);
+            tasks.insert(key, Running { check, task });
         }
     }
 
     /// Abort all probe loops.
     pub fn stop_all(&self) {
         let mut tasks = self.tasks.lock().expect("health tasks poisoned");
-        for (_, handle) in tasks.drain() {
-            handle.abort();
+        for (_, running) in tasks.drain() {
+            running.task.abort();
         }
     }
 
@@ -239,6 +251,43 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert!(down, "backend should be marked unhealthy");
+        checker.stop_all();
+    }
+
+    /// A health check changed in the dynamic config must take effect on
+    /// reload, not only for backends added afterwards.
+    #[tokio::test]
+    async fn restarts_the_probe_of_a_backend_whose_check_changed() {
+        let port = spawn_healthz(200).await;
+        let health = Arc::new(HealthMap::new(false));
+        let checker = HealthChecker::new(health.clone(), Arc::new(GfeMetrics::new()));
+        let mut pool = pool("127.0.0.1", port);
+        checker.reconcile(std::slice::from_ref(&pool), &HealthCheckConfig::default());
+        for _ in 0..50 {
+            if health.is_selectable("127.0.0.1", port) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(health.is_selectable("127.0.0.1", port));
+
+        // The backend answers 200; a check expecting 204 must now fail it.
+        pool.health_check = Some(HealthCheckConfig {
+            expected_status: 204,
+            ..fast_cfg()
+        });
+        checker.reconcile(std::slice::from_ref(&pool), &HealthCheckConfig::default());
+
+        let mut failed = false;
+        for _ in 0..50 {
+            if !health.is_selectable("127.0.0.1", port) {
+                failed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(failed, "the changed check was never applied");
+        assert_eq!(checker.active_probes(), 1);
         checker.stop_all();
     }
 }
