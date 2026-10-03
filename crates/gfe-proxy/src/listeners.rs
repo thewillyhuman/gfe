@@ -1,8 +1,9 @@
 //! The set of listening sockets, reconciled against the dynamic config.
 //!
 //! A socket is identified by the address it is bound to. Everything else
-//! about a listener (its id, whether it terminates TLS) is read per accepted
-//! connection, so it can change without rebinding. Reconciling a new config
+//! about a listener is read while serving: whether it terminates TLS per
+//! accepted connection, its id per request. So it can change without
+//! rebinding. Reconciling a new config
 //! therefore never disturbs a socket whose address is unchanged.
 //!
 //! Reconciliation is two-phase so a reload stays all-or-nothing: [`stage`]

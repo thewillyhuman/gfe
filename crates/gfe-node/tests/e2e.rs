@@ -783,6 +783,42 @@ async fn answers_421_to_a_host_covered_by_another_certificate_than_the_sni() {
     assert_eq!(event["error"], "misdirected_request");
 }
 
+#[tokio::test]
+async fn open_connection_follows_a_renamed_listener() {
+    let shared = build_shared();
+    let mut cfg = fixed_response_config();
+    let (listeners, _tx) = start_listeners(&cfg, shared.clone());
+    let proxy = listeners.local_addr(&cfg.listeners[0].id).unwrap();
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream.write_all(KEEP_ALIVE_GET).await.unwrap();
+    read_fixed_response(&mut stream).await;
+
+    // Same address, new id, and the route follows the new id.
+    cfg.listeners[0].id = ListenerId("renamed".into());
+    cfg.routes[0].listener = ListenerId("renamed".into());
+    gfe_config::apply(&shared, &cfg).expect("apply config");
+    reconcile(&listeners, &cfg.listeners);
+    stream.write_all(KEEP_ALIVE_GET).await.unwrap();
+    let status_line = read_status_line(&mut stream).await;
+
+    assert_eq!(status_line, "HTTP/1.1 200 OK");
+}
+
+/// Read the status line of the next response on a connection.
+async fn read_status_line(stream: &mut TcpStream) -> String {
+    let mut received = Vec::new();
+    let mut byte = [0u8; 1];
+    while !received.ends_with(b"\r\n") {
+        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut byte))
+            .await
+            .expect("a response should arrive")
+            .unwrap();
+        assert!(read > 0, "the connection was closed before a response");
+        received.push(byte[0]);
+    }
+    String::from_utf8_lossy(&received).trim_end().to_string()
+}
+
 /// A plaintext listener on an explicit loopback port.
 fn http_listener(id: &str, port: u16) -> Listener {
     Listener {

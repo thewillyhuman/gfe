@@ -111,9 +111,13 @@ impl ProxyShared {
     }
 }
 
-/// Per-connection context passed to request handling.
+/// What request handling knows about the connection a request arrived on.
+#[derive(Clone)]
 pub struct ConnCtx {
     pub shared: Arc<ProxyShared>,
+    /// The id of the listener the request arrived on, as configured when it
+    /// arrived: a reload may rename a listener while its connections stay
+    /// open.
     pub listener_id: ListenerId,
     pub is_tls: bool,
     pub client_ip: IpAddr,

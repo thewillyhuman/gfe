@@ -392,7 +392,7 @@ One accept loop runs per configured listener. Each loop:
 3. Spawns one Tokio task per accepted connection (`connection.rs`). The accept loop never blocks on per-connection work.
 4. Applies an **accept-to-first-byte / handshake timeout** so slow-loris-style connections that never make progress are reaped early.
 
-The set of active listeners is part of the config snapshot and is reconciled on every reload (`listeners.rs`). A listening socket is identified by its **address and port**; a listener's id and protocol are read per accepted connection, so they can change without rebinding. On reload:
+The set of active listeners is part of the config snapshot and is reconciled on every reload (`listeners.rs`). A listening socket is identified by its **address and port**; a listener's protocol is read per accepted connection and its id per request, so they can change without rebinding (a renamed listener's open connections are routed by the new id). On reload:
 
 - sockets for addresses the new config adds are bound **first** — if any cannot be bound the whole reload is rejected and nothing changes;
 - sockets the new config no longer names stop accepting (connections already accepted on them run to completion);

@@ -15,8 +15,8 @@ use tokio::sync::{watch, Semaphore};
 /// orderly way.
 ///
 /// `config` is the listener as currently configured; it is read for every
-/// accepted connection, so its id and protocol can change while the socket
-/// stays bound.
+/// accepted connection, and its id for every request, so its id and
+/// protocol can change while the socket stays bound.
 ///
 /// `global_sem` bounds total concurrent connections across all listeners; a
 /// per-listener semaphore bounds this listener. When either is exhausted the
@@ -67,10 +67,11 @@ pub async fn run_listener(
                 let shared = shared.clone();
                 let tls = listener.is_tls().then(|| server_config.clone());
                 let drain = shutdown.clone();
+                let config = config.clone();
                 tokio::spawn(async move {
                     let _g = global_permit;
                     let _l = listener_permit;
-                    connection::serve(stream, peer, listener, shared, tls, drain).await;
+                    connection::serve(stream, peer, config, shared, tls, drain).await;
                 });
             }
         }

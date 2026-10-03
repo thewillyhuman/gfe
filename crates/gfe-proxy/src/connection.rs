@@ -7,6 +7,7 @@ use crate::activity::{ConnActivity, InFlightBody, Verdict};
 use crate::conn_record::{ConnRecord, TlsInfo};
 use crate::service::handle_request;
 use crate::{ConnCtx, ProxyShared};
+use arc_swap::ArcSwap;
 use gfe_metrics::RejectLabel;
 use gfe_types::{Listener, TimeoutsConfig};
 use hyper::header::{HeaderValue, CONNECTION};
@@ -40,20 +41,29 @@ fn idle_grace(timeouts: &TimeoutsConfig) -> Duration {
 /// flips to `true`, until the client has been asked to leave. The connection
 /// is accounted for by a [`ConnRecord`], which reports it when this function
 /// returns.
+///
+/// `listener` is the accepting socket's listener as currently configured:
+/// each request is routed by the listener's id at the time it arrives, so a
+/// reload that renames the listener does not strand open connections.
 pub async fn serve(
     stream: TcpStream,
     peer: SocketAddr,
-    listener: Arc<Listener>,
+    listener: Arc<ArcSwap<Listener>>,
     shared: Arc<ProxyShared>,
     tls: Option<Arc<ServerConfig>>,
     drain: watch::Receiver<bool>,
 ) {
     let _ = stream.set_nodelay(true);
-    let mut record = ConnRecord::open(shared.clone(), &listener, stream.local_addr().ok(), peer);
+    let mut record = ConnRecord::open(
+        shared.clone(),
+        &listener.load(),
+        stream.local_addr().ok(),
+        peer,
+    );
     let stream = record.count_traffic(stream);
     let mut ctx = ConnCtx {
         shared: shared.clone(),
-        listener_id: listener.id.clone(),
+        listener_id: listener.load().id.clone(),
         is_tls: tls.is_some(),
         client_ip: peer.ip(),
         client_port: peer.port(),
@@ -75,7 +85,7 @@ pub async fn serve(
                         ctx.sni.clone(),
                         handshake_started.elapsed(),
                     );
-                    serve_io(tls_stream, Arc::new(ctx), drain).await
+                    serve_io(tls_stream, ctx, listener, drain).await
                 }
                 Ok(Err(e)) => {
                     tracing::debug!(error = %e, "tls handshake failed");
@@ -96,7 +106,7 @@ pub async fn serve(
                 }
             }
         }
-        None => serve_io(stream, Arc::new(ctx), drain).await,
+        None => serve_io(stream, ctx, listener, drain).await,
     };
     record.closed(closed.reason, closed.requests, closed.error);
 }
@@ -121,7 +131,15 @@ struct Closed {
 ///   a `GOAWAY`. A connection with none is given [`idle_grace`] to send one
 ///   more, because closing it right away would race with a request already
 ///   on its way; an HTTP/1 request is then answered with `Connection: close`.
-async fn serve_io<S>(stream: S, ctx: Arc<ConnCtx>, mut drain: watch::Receiver<bool>) -> Closed
+///
+/// Each request is handled with a copy of `ctx` naming `listener`'s id as
+/// it is when the request arrives.
+async fn serve_io<S>(
+    stream: S,
+    ctx: ConnCtx,
+    listener: Arc<ArcSwap<Listener>>,
+    mut drain: watch::Receiver<bool>,
+) -> Closed
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -136,7 +154,10 @@ where
         let shared = shared.clone();
         let told_to_close = told_to_close.clone();
         move |req| {
-            let ctx = ctx.clone();
+            let ctx = Arc::new(ConnCtx {
+                listener_id: listener.load().id.clone(),
+                ..ctx.clone()
+            });
             let in_flight = activity.begin_request();
             let shared = shared.clone();
             let told_to_close = told_to_close.clone();
