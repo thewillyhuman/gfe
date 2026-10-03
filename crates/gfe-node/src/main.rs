@@ -53,6 +53,9 @@ fn main() -> Result<()> {
     gfe_config::validate(&dynamic).context("validating dynamic config")?;
 
     if args.check_config {
+        // Loading the certificates is part of applying a config, so a config
+        // whose certificates cannot be loaded is not "OK".
+        CertStore::build(&dynamic.certificates).context("loading certificates")?;
         println!(
             "config OK: {} listeners, {} routes, {} pools, {} certificates",
             dynamic.listeners.len(),

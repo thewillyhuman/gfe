@@ -16,6 +16,12 @@ const INVALID_DYNAMIC: &str = r#"{
     "routes": [{"id":"r","listener":"http","host":"a.example.org","action":{"forward":"missing"}}]
 }"#;
 
+/// An HTTPS listener whose certificate files do not exist.
+const MISSING_CERT_DYNAMIC: &str = r#"{
+    "certificates": [{"default":true,"cert_file":"/nonexistent/gfe.crt","key_file":"/nonexistent/gfe.key"}],
+    "listeners": [{"id":"https","address":"127.0.0.1","port":8443,"protocol":"https"}]
+}"#;
+
 /// A scratch directory unique to one test.
 fn scratch(test: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("gfe-check-{}-{test}", std::process::id()));
@@ -84,4 +90,18 @@ fn checks_deployed_file_when_no_candidate_is_given() {
     let out = check_config(&bootstrap, None);
 
     assert!(!out.status.success(), "{out:?}");
+}
+
+#[test]
+fn rejects_certificates_that_cannot_be_loaded() {
+    let dir = scratch("missing-cert");
+    let deployed = dir.join("deployed.json");
+    std::fs::write(&deployed, MISSING_CERT_DYNAMIC).unwrap();
+    let bootstrap = write_bootstrap(&dir, &deployed);
+
+    let out = check_config(&bootstrap, None);
+
+    assert!(!out.status.success(), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("/nonexistent/gfe.crt"), "{stderr}");
 }
