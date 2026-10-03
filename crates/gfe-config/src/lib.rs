@@ -11,7 +11,7 @@ pub mod loader;
 pub mod validator;
 pub mod watcher;
 
-pub use applier::apply;
+pub use applier::{apply, install, prepare, Prepared};
 pub use cert_files::CertFiles;
 pub use loader::{load_dynamic_config, load_node_config};
 pub use validator::validate;

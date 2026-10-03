@@ -13,7 +13,6 @@ use clap::Parser;
 use gfe_controller::Controller;
 use gfe_metrics::GfeMetrics;
 use gfe_proxy::{DrainController, ListenerSet, ProxyShared};
-use gfe_tls::CertStore;
 use gfe_upstream::{KeepAlive, UpstreamClient, UpstreamClientOptions};
 use logging::Log;
 use ops::OpsState;
@@ -105,13 +104,13 @@ fn main() -> Result<()> {
     rt.block_on(run(node, predecessor, inherited, log.clone()))
 }
 
-/// Check a dynamic config the way a node would before applying it: parse,
-/// validate, and load the certificates it names.
+/// Check a dynamic config the way a node would before applying it: parse it,
+/// then everything a reload does short of swapping it in (validate, load the
+/// certificates, compile the routes, build the pools).
 fn check_dynamic_config(path: &Path) -> Result<()> {
     let dynamic = gfe_config::load_dynamic_config(path)
         .with_context(|| format!("loading dynamic config {}", path.display()))?;
-    gfe_config::validate(&dynamic).context("validating dynamic config")?;
-    CertStore::build(&dynamic.certificates).context("loading certificates")?;
+    gfe_config::prepare(&dynamic).context("checking dynamic config")?;
     println!(
         "config OK: {} listeners, {} routes, {} pools, {} certificates",
         dynamic.listeners.len(),

@@ -1011,7 +1011,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 
 ### Adding / Changing a Route, Pool, or Certificate
 
-1. Deployment tooling writes the updated dynamic-config JSON (and any cert files) to each GFE node. It should gate the write on `gfe-node --check-config --dynamic-config <candidate>`, which validates the candidate file exactly as the node would before it replaces the deployed one (e.g. as a Puppet `validate_cmd`); adding `--config <toml>` checks the bootstrap config in the same run.
+1. Deployment tooling writes the updated dynamic-config JSON (and any cert files) to each GFE node. It should gate the write on `gfe-node --check-config --dynamic-config <candidate>`, which runs on the candidate file everything a reload runs short of swapping it in (validation, certificate loading, route compilation, pool building) before it replaces the deployed one (e.g. as a Puppet `validate_cmd`); adding `--config <toml>` checks the bootstrap config in the same run.
 2. The inotify watcher fires; the config manager validates and atomically swaps the snapshot within the debounce window.
 3. New requests use the new routing/certs immediately; in-flight requests finish on the old snapshot. No restart, no dropped connections.
 

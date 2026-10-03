@@ -11,18 +11,48 @@ use gfe_upstream::PoolSet;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// A dynamic config validated and compiled into the snapshots the data plane
+/// serves from, but not serving yet: everything that can make a config
+/// unusable has been checked, nothing has been swapped in.
+pub struct Prepared {
+    cert_store: CertStore,
+    route_table: RouteTable,
+    pool_set: PoolSet,
+}
+
+/// Do everything [`apply`] does short of swapping anything in: validate the
+/// config, load its certificates, compile its routes and build its pools.
+///
+/// A config this accepts is one `apply` accepts, so it is what
+/// `gfe-node --check-config` runs, and what a node runs before it touches
+/// any listening socket.
+pub fn prepare(cfg: &DynamicConfig) -> Result<Prepared, GfeError> {
+    validate(cfg)?;
+    Ok(Prepared {
+        cert_store: CertStore::build(&cfg.certificates)?,
+        route_table: RouteTable::compile(cfg),
+        pool_set: PoolSet::build(&cfg.pools),
+    })
+}
+
 /// Validate and apply a dynamic config to the running shared state.
 ///
 /// Order is: build everything off the hot path (cert store, route table, pool
 /// set), then swap each in. If any build step fails, nothing is swapped and
 /// the old snapshots remain live.
 pub fn apply(shared: &ProxyShared, cfg: &DynamicConfig) -> Result<(), GfeError> {
-    validate(cfg)?;
+    install(shared, prepare(cfg)?);
+    Ok(())
+}
 
-    // Build new snapshots (may fail on cert load → keep old state).
-    let cert_store = CertStore::build(&cfg.certificates)?;
-    let route_table = RouteTable::compile(cfg);
-    let pool_set = PoolSet::build(&cfg.pools);
+/// Swap a prepared config in; it cannot fail. In-flight requests finish on
+/// the old snapshots.
+pub fn install(shared: &ProxyShared, prepared: Prepared) {
+    let Prepared {
+        cert_store,
+        route_table,
+        pool_set,
+    } = prepared;
 
     let backends = pool_set.all_backends();
     let expiries: Vec<(String, i64)> = cert_store.expiries().to_vec();
@@ -58,7 +88,6 @@ pub fn apply(shared: &ProxyShared, cfg: &DynamicConfig) -> Result<(), GfeError> 
         certs = shared.resolver.current().len(),
         "applied dynamic config"
     );
-    Ok(())
 }
 
 #[cfg(test)]
@@ -141,5 +170,40 @@ mod tests {
         assert_eq!(s.routes.load().route_count(), 1);
         assert_eq!(s.pools.load().len(), 1);
         assert!(s.resolver.current().resolve(None).is_some());
+    }
+
+    #[test]
+    fn prepare_rejects_a_certificate_that_cannot_be_loaded() {
+        let cfg = DynamicConfig {
+            certificates: vec![CertEntry {
+                sni: vec![],
+                default: true,
+                cert_file: "/nonexistent/gfe.crt".into(),
+                key_file: "/nonexistent/gfe.key".into(),
+            }],
+            ..Default::default()
+        };
+
+        let err = prepare(&cfg)
+            .err()
+            .expect("the certificate cannot be loaded");
+
+        assert!(err.to_string().contains("/nonexistent/gfe.crt"), "{err}");
+    }
+
+    #[test]
+    fn prepare_rejects_an_invalid_config() {
+        let cfg = DynamicConfig {
+            routes: vec![Route {
+                id: RouteId("r".into()),
+                listener: ListenerId("missing".into()),
+                host: "example.org".into(),
+                path_prefix: "/".into(),
+                action: RouteAction::Forward("p".into()),
+            }],
+            ..Default::default()
+        };
+
+        assert!(prepare(&cfg).is_err());
     }
 }
