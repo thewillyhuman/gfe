@@ -92,7 +92,7 @@ pub enum Unavailable {
     NotBuilt,
     #[error("cannot tell which cgroup the node runs in: {0}")]
     Cgroup(String),
-    #[error("not permitted to load eBPF, which needs CAP_BPF and CAP_NET_ADMIN: {0}")]
+    #[error("not permitted to load eBPF (it needs CAP_BPF and CAP_NET_ADMIN): {0}")]
     NotPermitted(String),
     #[error("the kernel rejected the eBPF program: {0}")]
     Kernel(String),

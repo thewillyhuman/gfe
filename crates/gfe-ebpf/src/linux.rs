@@ -32,6 +32,35 @@ fn own_cgroup(proc_self_cgroup: &str) -> Option<PathBuf> {
     Some(Path::new(CGROUP_ROOT).join(path.trim_start_matches('/')))
 }
 
+// Capability numbers, as in <linux/capability.h>.
+const CAP_NET_ADMIN: u32 = 12;
+const CAP_SYS_ADMIN: u32 = 21;
+const CAP_BPF: u32 = 39;
+
+/// Which of the capabilities the kernel program needs this process lacks,
+/// given the content of `/proc/self/status`. `None` if it has them all, or
+/// if the status cannot be read (then the kernel has the last word).
+///
+/// Checked up front because the kernel's own refusal is not always a clear
+/// "not permitted": where unprivileged eBPF is partly allowed, the first
+/// thing to fail is an unrelated-looking "invalid argument".
+fn missing_capabilities(proc_self_status: &str) -> Option<&'static str> {
+    let effective = proc_self_status
+        .lines()
+        .find_map(|line| line.strip_prefix("CapEff:"))?;
+    let effective = u64::from_str_radix(effective.trim(), 16).ok()?;
+    let has = |capability: u32| effective & (1 << capability) != 0;
+    // CAP_SYS_ADMIN covers both, as it did before CAP_BPF existed.
+    let bpf = has(CAP_BPF) || has(CAP_SYS_ADMIN);
+    let net_admin = has(CAP_NET_ADMIN) || has(CAP_SYS_ADMIN);
+    match (bpf, net_admin) {
+        (true, true) => None,
+        (false, true) => Some("the process lacks CAP_BPF"),
+        (true, false) => Some("the process lacks CAP_NET_ADMIN"),
+        (false, false) => Some("the process lacks CAP_BPF and CAP_NET_ADMIN"),
+    }
+}
+
 /// Whether `error` comes down to the process lacking the privilege to use
 /// eBPF, as opposed to the kernel rejecting the program. Both surface as
 /// "permission denied": lacking privilege is `EPERM`, a verifier rejection
@@ -99,6 +128,11 @@ impl TcpProbe {
             }
         };
         let missing = |what: String| Unavailable::Kernel(what);
+
+        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+        if let Some(missing) = missing_capabilities(&status) {
+            return Err(Unavailable::NotPermitted(missing.to_string()));
+        }
 
         let membership = std::fs::read_to_string("/proc/self/cgroup")
             .map_err(|e| Unavailable::Cgroup(e.to_string()))?;
@@ -191,6 +225,38 @@ impl ClosedConnections {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_service_with_both_capabilities_lacks_nothing() {
+        // CAP_NET_BIND_SERVICE (10), CAP_NET_ADMIN (12) and CAP_BPF (39).
+        let status = "Name:\tgfe-node\nCapEff:\t0000008000001400\n";
+        assert_eq!(missing_capabilities(status), None);
+    }
+
+    #[test]
+    fn root_with_cap_sys_admin_lacks_nothing() {
+        let status = "CapEff:\t000001ffffffffff\n";
+        assert_eq!(missing_capabilities(status), None);
+    }
+
+    #[test]
+    fn names_the_capabilities_an_unprivileged_process_lacks() {
+        // Only CAP_NET_BIND_SERVICE: the node's default.
+        let status = "CapEff:\t0000000000000400\n";
+        assert_eq!(
+            missing_capabilities(status),
+            Some("the process lacks CAP_BPF and CAP_NET_ADMIN")
+        );
+    }
+
+    #[test]
+    fn names_the_one_capability_that_is_missing() {
+        let only_bpf = "CapEff:\t0000008000000000\n";
+        assert_eq!(
+            missing_capabilities(only_bpf),
+            Some("the process lacks CAP_NET_ADMIN")
+        );
+    }
 
     #[test]
     fn finds_the_cgroup_of_a_systemd_service() {
