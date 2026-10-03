@@ -831,6 +831,7 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_config_last_reload_timestamp` | Gauge | Unix time of last successful dynamic-config reload |
 | `gfe_config_reload_errors_total` | Counter | Failed reloads (kept old snapshot) |
 | `gfe_config_from_cache` | Gauge | 1 while the node serves its last-known-good cache because the deployed dynamic config was unusable at startup |
+| `gfe_upgrade_failures_total` | Counter | In-place upgrades that failed: the successor did not take over and the node went on serving as it was |
 | `gfe_cert_expiry_timestamp` | Gauge | not-after Unix time (label: sni) — alert before expiry |
 | `gfe_active_routes` / `gfe_active_pools` | Gauge | Sizes of the current snapshot |
 
@@ -961,11 +962,32 @@ GET /metrics   → Prometheus exposition
 
 ## 14. Operational Considerations
 
-### Rolling Restarts and Upgrades
+### Upgrading a Node in Place
+
+> **Code location:** `crates/gfe-node/src/upgrade.rs`, `crates/gfe-handover`
+
+A new binary, or a change to the bootstrap config (which is read once, at startup), needs a new process. It does not need the listening sockets to be closed. On `SIGUSR2` a node replaces itself (Unix only):
+
+1. It starts the binary it was started from, as that binary is on disk now, with the same arguments and `--upgrade`.
+2. It gives that successor its listening sockets, the proxy's and the ops server's, over a Unix socket (`SCM_RIGHTS`). Both processes now hold the same sockets, and each socket has a single queue of waiting connections, which either process accepts from.
+3. The successor loads its config as any node does, listens on the sockets it was given instead of binding, and tells the node once it accepts connections.
+4. Only then does the node stop accepting, leave the ops endpoints to the successor, and drain as on `SIGTERM` (Section 7.4): requests in flight are answered, clients are asked to reconnect, and they reach the successor when they do.
+
+No connection is refused, because the sockets are never closed, and none waiting to be accepted is lost, because the queue it waits in outlives the node. What an upgrade can still cut is what a drain cuts: a request or stream still running when the drain deadline elapses.
+
+If the successor does not take over (the binary does not start, the config is rejected, it does not answer within 60 s), nothing has changed for the node: it goes on serving, logs why, and counts the attempt in `gfe_upgrade_failures_total`. This makes a bootstrap config change as safe to roll out as a dynamic one.
+
+What does not carry over: the successor starts with empty connection pools to the backends, every backend presumed healthy until probed, and its counters at zero.
+
+### Rolling Restarts
+
+Where a node cannot be upgraded in place, it is restarted behind the L4 LB:
 
 1. Drain the node (`SIGTERM` or operator command): `/readyz` flips to 503, the L4 LB withdraws it from the Maglev set within its probe window.
-2. The node stops accepting new connections and serves in-flight requests until they finish or the drain deadline elapses.
+2. The node stops accepting new connections, asks its clients to leave, and serves in-flight requests until they finish or the drain deadline elapses.
 3. Restart the `gfe-node` binary; it loads config (or cache), binds listeners, passes `/readyz`, and the L4 LB re-adds it.
+
+Between the first and the last step the node's sockets are closed: a client that reaches the node directly, rather than through the L4 LB, is refused.
 
 Statelessness means a restarted node is immediately a full peer — no warmup state to rebuild beyond connection pools, which refill on demand.
 

@@ -3,6 +3,7 @@
 
 mod kernel;
 mod ops;
+mod signals;
 mod upgrade;
 
 use anyhow::{Context, Result};
@@ -13,10 +14,12 @@ use gfe_proxy::{DrainController, ListenerSet, ProxyShared};
 use gfe_tls::CertStore;
 use gfe_upstream::{KeepAlive, UpstreamClient, UpstreamClientOptions};
 use ops::OpsState;
+use signals::{Request, Signals};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::watch;
 use upgrade::{Inherited, Predecessor};
 
 #[derive(Parser, Debug)]
@@ -125,6 +128,9 @@ async fn run(
 ) -> Result<()> {
     tracing::info!(node = %node.node.id, vip = %node.node.loopback_vip, "starting gfe-node");
 
+    // Before anything is served: a signal must find the node listening for
+    // it, or it kills the process.
+    let mut signals = Signals::install().context("installing signal handlers")?;
     let metrics = Arc::new(GfeMetrics::new());
 
     // The kernel's view of the node's connections, if enabled and available.
@@ -178,15 +184,19 @@ async fn run(
     if let Some((_, closed)) = kernel {
         tokio::spawn(kernel::report(closed, listeners.clone(), metrics.clone()));
     }
-    {
-        let addr = node.node.metrics_addr;
-        let st = ops_state.clone();
-        let inherited = inherited.ops;
-        tokio::spawn(async move {
-            if let Err(e) = ops::run(addr, inherited, st).await {
-                tracing::error!(error = %e, "ops server failed");
-            }
-        });
+    // A node without its ops endpoints still serves traffic, so not being
+    // able to listen for them is reported and lived with.
+    let ops_addr = node.node.metrics_addr;
+    let ops_socket = match ops::listen(ops_addr, inherited.ops).await {
+        Ok(socket) => Some(Arc::new(socket)),
+        Err(e) => {
+            tracing::error!(error = %e, "ops server failed");
+            None
+        }
+    };
+    let (stop_ops, ops_stopped) = watch::channel(false);
+    if let Some(socket) = &ops_socket {
+        tokio::spawn(ops::serve(socket.clone(), ops_state.clone(), ops_stopped));
     }
 
     // Start the control plane: initial config load/apply (with cache
@@ -196,16 +206,6 @@ async fn run(
     controller
         .start()
         .map_err(|e| anyhow::anyhow!("starting controller: {e}"))?;
-
-    // Signal handling → drain.
-    {
-        let drain_shared = shared.clone();
-        tokio::spawn(async move {
-            wait_for_shutdown().await;
-            tracing::info!("shutdown signal received, draining");
-            drain.trigger(&drain_shared);
-        });
-    }
 
     ready.store(true, Ordering::SeqCst);
     tracing::info!("gfe-node ready");
@@ -217,9 +217,42 @@ async fn run(
             .context("telling the running node that this one has taken over")?;
     }
 
-    listeners.serve_until_drained().await;
+    // Serve until told to stop, or until a successor has taken over.
+    loop {
+        match signals.next().await {
+            Request::Stop => {
+                tracing::info!("shutdown signal received, draining");
+                break;
+            }
+            Request::Upgrade => {
+                tracing::info!("upgrade requested, starting a successor");
+                let ops = ops_socket.as_deref().map(|socket| (ops_addr, socket));
+                match upgrade::hand_over(&listeners, ops).await {
+                    Ok(successor) => {
+                        tracing::info!(successor, "the successor has taken over, draining");
+                        // The ops endpoints are the successor's from now on:
+                        // answering next to it would mix two nodes' metrics.
+                        let _ = stop_ops.send(true);
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = format!("{e:#}"),
+                            "upgrade failed, this node goes on serving"
+                        );
+                        metrics.control.upgrade_failures.inc();
+                    }
+                }
+            }
+        }
+    }
 
+    // A node that is leaving no longer follows config changes: applying one
+    // would make it listen again.
     controller.shutdown();
+    drop(controller);
+    drain.trigger(&shared);
+    listeners.serve_until_drained().await;
     tracing::info!("gfe-node stopped");
     Ok(())
 }
@@ -251,21 +284,4 @@ fn build_upstream_client(
         }),
     };
     UpstreamClient::with_options(opts).map_err(|e| anyhow::anyhow!("building upstream client: {e}"))
-}
-
-async fn wait_for_shutdown() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
-        let mut int = signal(SignalKind::interrupt()).expect("install SIGINT handler");
-        tokio::select! {
-            _ = term.recv() => {}
-            _ = int.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
 }

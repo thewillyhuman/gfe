@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::watch;
 
 /// Shared readiness state for the ops server.
 pub struct OpsState {
@@ -24,16 +25,15 @@ pub struct OpsState {
     pub kernel: Option<Arc<KernelView>>,
 }
 
-/// Run the ops server on `addr` until the process exits.
+/// The socket the ops server listens on.
 ///
 /// `inherited` is a socket that already listens, with the address it is
 /// configured on: it is used instead of binding one if that address is
 /// `addr`, and closed otherwise.
-pub async fn run(
+pub async fn listen(
     addr: SocketAddr,
     inherited: Option<(SocketAddr, std::net::TcpListener)>,
-    state: Arc<OpsState>,
-) -> std::io::Result<()> {
+) -> std::io::Result<TcpListener> {
     let listener = match inherited {
         Some((configured_on, socket)) if configured_on == addr => {
             socket.set_nonblocking(true)?;
@@ -42,8 +42,28 @@ pub async fn run(
         _ => TcpListener::bind(addr).await?,
     };
     tracing::info!(%addr, "ops server listening (/healthz /readyz /metrics)");
+    Ok(listener)
+}
+
+/// Serve the ops endpoints on `listener` until `stop` flips to `true`, which
+/// is when another process has taken the socket over. Requests already
+/// accepted are still answered.
+pub async fn serve(
+    listener: Arc<TcpListener>,
+    state: Arc<OpsState>,
+    mut stop: watch::Receiver<bool>,
+) {
     loop {
-        let (stream, _peer) = match listener.accept().await {
+        let accepted = tokio::select! {
+            changed = stop.changed() => {
+                if changed.is_err() || *stop.borrow() {
+                    break;
+                }
+                continue;
+            }
+            accepted = listener.accept() => accepted,
+        };
+        let (stream, _peer) = match accepted {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(error = %e, "ops accept error");
