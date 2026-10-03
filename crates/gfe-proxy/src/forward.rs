@@ -48,9 +48,14 @@ fn strip_hop_by_hop(headers: &mut HeaderMap) {
     }
 }
 
-/// Whether the request asks to switch protocols (RFC 9110 §7.8), as a
-/// WebSocket handshake does: it names `upgrade` among its `Connection`
-/// options and says to what in an `Upgrade` header.
+/// Whether the request asks to switch to a protocol it cannot do without
+/// (RFC 9110 §7.8), as a WebSocket handshake does: it names `upgrade` among
+/// its `Connection` options and says to what in an `Upgrade` header.
+///
+/// An offer to switch to HTTP/2 (`Upgrade: h2c`, which `curl --http2` sends
+/// to a cleartext URL) is not one: the client expects a server that does not
+/// take it up to answer over HTTP/1.1, which is what happens once the
+/// hop-by-hop headers are stripped.
 fn asks_for_upgrade(headers: &HeaderMap) -> bool {
     let names_upgrade = headers
         .get_all(http::header::CONNECTION)
@@ -58,7 +63,13 @@ fn asks_for_upgrade(headers: &HeaderMap) -> bool {
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(','))
         .any(|option| option.trim().eq_ignore_ascii_case("upgrade"));
-    names_upgrade && headers.contains_key(http::header::UPGRADE)
+    let to_another_protocol = headers
+        .get_all(http::header::UPGRADE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|protocol| !protocol.trim().eq_ignore_ascii_case("h2c"));
+    names_upgrade && to_another_protocol
 }
 
 /// Whether the request carries `te: trailers`, and nothing else in `te`.
@@ -552,6 +563,18 @@ mod tests {
         assert!(!asks_for_upgrade(&headers(&[
             ("connection", "upgrades"),
             ("upgrade", "websocket"),
+        ])));
+    }
+
+    #[test]
+    fn offer_to_switch_to_http2_does_not_ask_for_upgrade() {
+        assert!(!asks_for_upgrade(&headers(&[
+            ("connection", "Upgrade, HTTP2-Settings"),
+            ("upgrade", "h2c"),
+        ])));
+        assert!(asks_for_upgrade(&headers(&[
+            ("connection", "Upgrade"),
+            ("upgrade", "h2c, websocket"),
         ])));
     }
 

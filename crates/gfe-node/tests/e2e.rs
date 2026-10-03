@@ -2390,6 +2390,27 @@ async fn forwards_a_keep_alive_request() {
     assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
+#[tokio::test]
+async fn serves_a_request_that_offers_to_switch_to_http2() {
+    let (upstream, requests) = spawn_counting_upstream().await;
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), build_shared()).await;
+
+    // What `curl --http2` sends to a cleartext URL: an offer, which a server
+    // that does not take it up answers over HTTP/1.1.
+    let status = http_get_with(
+        proxy,
+        &[
+            ("connection", "Upgrade, HTTP2-Settings"),
+            ("upgrade", "h2c"),
+            ("http2-settings", "AAMAAABkAAQCAAAAAAIAAAAA"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, 200);
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
 /// A streaming call may legitimately have nothing to send, not even headers,
 /// for a long time. It is bounded by the deadline its client sets, not by the
 /// timeouts meant for request/response exchanges.
