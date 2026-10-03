@@ -12,6 +12,8 @@ members = [
     "crates/gfe-controller",
     "crates/gfe-trace",
     "crates/gfe-loadtest",
+    # Kernel-side view of the node's TCP connections (eBPF, Linux only).
+    "crates/gfe-ebpf",
     # Control plane (see .docs/gfe-cp-spec.md): desired-state config management,
     # rendering, revisions, rollout, and the pull agent + CLI.
     "crates/gfe-cp-types",
@@ -47,6 +49,7 @@ gfe-config = { path = "crates/gfe-config" }
 gfe-controller = { path = "crates/gfe-controller" }
 gfe-cp-types = { path = "crates/gfe-cp-types" }
 gfe-cp = { path = "crates/gfe-cp" }
+gfe-ebpf = { path = "crates/gfe-ebpf" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -102,6 +105,12 @@ dashmap = "6"
 
 # File watching (hot reload)
 notify = "7"
+
+# eBPF, user-space side: loads the kernel programs and reads their maps. Pure
+# Rust (no libbpf, no libelf), so static musl builds keep working. Linux only.
+aya = "0.14"
+# The monotonic clock the kernel stamps its events with (safe wrapper).
+rustix = { version = "1", features = ["time"] }
 
 # Async traits
 async-trait = "0.1"
