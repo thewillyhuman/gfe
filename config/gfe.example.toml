@@ -59,7 +59,7 @@ enabled = false
 file = "/var/log/gfe/gfe.log"
 
 [health_check_defaults]
-type                = "http"       # http | https | tcp | grpc (grpc.health.v1, for gRPC pools)
+type                = "http"       # http (TLS for https pools) | https | tcp | grpc (grpc.health.v1, for gRPC pools)
 interval            = "5s"
 timeout             = "2s"
 healthy_threshold   = 2

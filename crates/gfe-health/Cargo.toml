@@ -19,3 +19,6 @@ rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+rcgen = { workspace = true }

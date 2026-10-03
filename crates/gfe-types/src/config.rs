@@ -268,10 +268,11 @@ impl Default for HealthCheckConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeType {
-    /// `GET` the configured path over cleartext HTTP/1.1.
+    /// `GET` the configured path over HTTP/1.1: over TLS for `https` pools
+    /// and cleartext otherwise, the way the pool's traffic reaches it.
     #[default]
     Http,
-    /// The same over TLS.
+    /// The same, always over TLS, whatever the pool's scheme.
     Https,
     /// A TCP connection can be established.
     Tcp,

@@ -640,6 +640,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "rcgen",
  "rustls",
  "tokio",
  "tokio-rustls",

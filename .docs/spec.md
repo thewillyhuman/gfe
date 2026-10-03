@@ -523,8 +523,8 @@ pub trait Probe: Send + Sync {
 
 | Type | Implementation | Success criterion |
 |---|---|---|
-| `http`  | `HttpProbe`  | GET a configurable path; 2xx (configurable expected status / body substring). |
-| `https` | `HttpsProbe` | Same over TLS; certificate validation configurable. |
+| `http`  | `HttpProbe`  | GET a configurable path; 2xx (configurable expected status / body substring). Uses TLS for `https` pools and cleartext otherwise, so an `https` pool inheriting the node default (`http`) is probed on its TLS port the way its traffic reaches it. |
+| `https` | `HttpsProbe` | Same, always over TLS whatever the pool's scheme; certificate validation configurable. |
 | `tcp`   | `TcpProbe`   | TCP connect succeeds. Fallback for non-HTTP upstreams. |
 | `grpc`  | `GrpcProbe`  | The gRPC health-checking protocol: `grpc.health.v1.Health/Check` for the server as a whole reports `SERVING`. `NOT_SERVING`, which a gRPC server reports while shutting down, moves the backend to `DRAINING` at once (Section 7.4). Uses TLS for `https` pools and cleartext HTTP/2 otherwise; `path`, `expected_status` and `drain_status` do not apply. |
 

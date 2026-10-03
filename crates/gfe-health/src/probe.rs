@@ -36,11 +36,14 @@ pub fn make_probe(cfg: &HealthCheckConfig, scheme: Scheme) -> Box<dyn Probe> {
         ProbeType::Grpc => Box::new(GrpcProbe {
             tls: scheme == Scheme::Https,
         }),
+        // `http` is the node default, so it is what an `https` pool without
+        // its own check gets: probing its TLS port in cleartext would fail
+        // every backend.
         ProbeType::Http => Box::new(HttpProbe {
             path: cfg.path.clone(),
             expected: cfg.expected_status,
             drain: cfg.drain_status,
-            tls: false,
+            tls: scheme == Scheme::Https,
         }),
         ProbeType::Https => Box::new(HttpProbe {
             path: cfg.path.clone(),
@@ -435,5 +438,67 @@ mod tests {
     #[tokio::test]
     async fn grpc_probe_fails_a_backend_that_is_down() {
         assert_eq!(grpc_check(1).await, ProbeResult::Fail);
+    }
+
+    /// Spawn an HTTP/1.1 server over TLS (self-signed) answering 200 to
+    /// everything, and return its port.
+    async fn spawn_tls_healthz() -> u16 {
+        use hyper::service::service_fn;
+        use std::convert::Infallible;
+
+        let generated = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let key =
+            rustls::pki_types::PrivateKeyDer::Pkcs8(generated.key_pair.serialize_der().into());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![generated.cert.der().clone()], key)
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let Ok(tls) = acceptor.accept(stream).await else {
+                        return;
+                    };
+                    let svc = service_fn(|_req| async {
+                        Ok::<_, Infallible>(hyper::Response::new(Full::new(Bytes::from("ok"))))
+                    });
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(tls), svc)
+                        .await;
+                });
+            }
+        });
+        port
+    }
+
+    /// The node default probe type is `http`: a pool of scheme `https`
+    /// inheriting it must be probed the way its traffic reaches it.
+    #[tokio::test]
+    async fn http_probe_uses_tls_for_an_https_pool() {
+        let port = spawn_tls_healthz().await;
+        let probe = make_probe(&HealthCheckConfig::default(), Scheme::Https);
+
+        let result = probe.check("127.0.0.1", port, Duration::from_secs(2)).await;
+
+        assert_eq!(result, ProbeResult::Pass);
+    }
+
+    #[tokio::test]
+    async fn http_probe_stays_cleartext_for_an_http_pool() {
+        let port = spawn_tls_healthz().await;
+        let probe = make_probe(&HealthCheckConfig::default(), Scheme::Http);
+
+        let result = probe.check("127.0.0.1", port, Duration::from_secs(2)).await;
+
+        assert_eq!(result, ProbeResult::Fail);
     }
 }
