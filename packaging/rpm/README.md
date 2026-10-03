@@ -113,7 +113,8 @@ Notes:
   capabilities than the unit grants. `/usr/share/gfe/gfe-node-ebpf.conf` is a
   drop-in for `/etc/systemd/system/gfe-node.service.d/` that grants them. The
   RPM must also have been built with clang available, or the binary has no
-  eBPF program in it and says so when asked to attach.
+  eBPF program in it and says so when asked to attach. The RPMs attached to
+  a release are built with it.
 - Listeners, routes, pools and certificates are all in the dynamic config
   and are reconciled when the file changes, including binding and releasing
   listening sockets. Only the binary and the bootstrap TOML need a new

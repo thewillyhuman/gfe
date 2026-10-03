@@ -46,11 +46,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Each target is built on a runner of its own architecture: the
+        # tools the build needs are the distribution's own, and the result
+        # can be run before it is published.
         include:
           - target: x86_64-unknown-linux-musl
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04
           - target: aarch64-unknown-linux-musl
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
@@ -61,18 +64,19 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
-      - name: Install cross
-        # `cross` handles the musl + aarch64 linker setup so the workflow
-        # doesn't have to install qemu/gcc-aarch64 by hand.
-        run: cargo install cross --locked --version ^0.2
-      - name: Build gfe-node
-        run: cross build --release --locked --target ${{ matrix.target }} --bin gfe-node
-      - name: Build gfe-trace
-        run: cross build --release --locked --target ${{ matrix.target }} --bin gfe-trace
+      - name: Install the C toolchains
+        # musl-gcc compiles the C and assembly of the TLS library for the
+        # musl target. clang compiles the kernel program of `gfe-ebpf`:
+        # without it the build succeeds, and the binary has no kernel TCP
+        # statistics in it. It needs kernel headers that know the ring
+        # buffer (5.8), which this distribution has.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools clang
+      - name: Build gfe-node and gfe-trace
+        run: cargo build --release --locked --target ${{ matrix.target }} --bin gfe-node --bin gfe-trace
       - name: Run the built binaries
-        # The runner is x86_64: only that build can be executed here. It
-        # catches a binary that links but does not start.
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        # Catches a binary that links but does not start.
         run: |
           target/${{ matrix.target }}/release/gfe-node --version
           target/${{ matrix.target }}/release/gfe-trace --help > /dev/null
