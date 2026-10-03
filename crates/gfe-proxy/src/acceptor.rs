@@ -23,7 +23,7 @@ use tokio::sync::{watch, Semaphore};
 /// connection is dropped and counted as rejected.
 pub async fn run_listener(
     config: Arc<ArcSwap<Listener>>,
-    tcp: TcpListener,
+    tcp: Arc<TcpListener>,
     shared: Arc<ProxyShared>,
     server_config: Arc<ServerConfig>,
     global_sem: Arc<Semaphore>,

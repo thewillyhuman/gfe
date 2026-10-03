@@ -94,14 +94,23 @@ fn start_listeners(
     cfg: &DynamicConfig,
     shared: Arc<ProxyShared>,
 ) -> (ListenerSet, watch::Sender<bool>) {
+    let (listeners, tx) = listener_set(cfg, shared);
+    reconcile(&listeners, &cfg.listeners);
+    (listeners, tx)
+}
+
+/// Apply `cfg`, but leave its listeners to be started by the caller; returns
+/// an empty listener set and the shutdown sender.
+fn listener_set(
+    cfg: &DynamicConfig,
+    shared: Arc<ProxyShared>,
+) -> (ListenerSet, watch::Sender<bool>) {
     gfe_config::apply(&shared, cfg).expect("apply config");
     let server_config = Arc::new(
         gfe_tls::server_config(shared.resolver.clone(), gfe_types::MinVersion::Tls12).unwrap(),
     );
     let (tx, rx) = watch::channel(false);
-    let listeners = ListenerSet::new(shared, server_config, rx);
-    reconcile(&listeners, &cfg.listeners);
-    (listeners, tx)
+    (ListenerSet::new(shared, server_config, rx), tx)
 }
 
 /// Make `desired` the running listeners, as a config reload would.
@@ -698,6 +707,70 @@ async fn stage_fails_without_side_effects_when_address_is_taken() {
     assert_eq!(listeners.local_addr(&unbindable.id), None);
     let addr = listeners.local_addr(&cfg.listeners[0].id).unwrap();
     assert!(accepts_connections(addr, true).await);
+}
+
+/// [`fixed_response_config`] with its listener on `addr` instead of a port
+/// picked by the kernel.
+fn fixed_response_config_on(addr: SocketAddr) -> DynamicConfig {
+    let mut cfg = fixed_response_config();
+    cfg.listeners[0].address = addr.ip();
+    cfg.listeners[0].port = addr.port();
+    cfg
+}
+
+#[tokio::test]
+async fn listens_on_an_adopted_socket_instead_of_binding_its_address() {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = socket.local_addr().unwrap();
+    // Made before the proxy exists, this connection waits in the socket's
+    // queue: it is served only if the proxy accepts on that very socket.
+    let mut queued = TcpStream::connect(addr).await.unwrap();
+    let cfg = fixed_response_config_on(addr);
+    let (listeners, _tx) = listener_set(&cfg, build_shared());
+
+    listeners.adopt([(addr, socket)]);
+    reconcile(&listeners, &cfg.listeners);
+    queued
+        .write_all(b"GET / HTTP/1.1\r\nhost: a.example.org\r\nconnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let response = read_until_closed(&mut queued).await;
+
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+}
+
+#[tokio::test]
+async fn closes_an_adopted_socket_that_no_listener_is_configured_on() {
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = socket.local_addr().unwrap();
+    let cfg = fixed_response_config();
+    let (listeners, _tx) = listener_set(&cfg, build_shared());
+
+    listeners.adopt([(addr, socket)]);
+    reconcile(&listeners, &cfg.listeners);
+
+    assert!(!accepts_connections(addr, false).await);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn lends_its_sockets_which_outlive_it() {
+    let cfg = fixed_response_config();
+    let shared = build_shared();
+    let (listeners, shutdown) = start_listeners(&cfg, shared.clone());
+    let addr = listeners.local_addr(&cfg.listeners[0].id).unwrap();
+
+    let mut lent = listeners.sockets().unwrap();
+    drain(&shared, &shutdown);
+    listeners.serve_until_drained().await;
+    let (configured_on, socket) = lent.pop().unwrap();
+    let client = TcpStream::connect(addr).await.unwrap();
+    let (_, peer) = socket.accept().unwrap();
+
+    // Lent under the address its listener is configured on (port 0 here),
+    // which is what a successor looks it up by.
+    assert_eq!(configured_on, "127.0.0.1:0".parse().unwrap());
+    assert_eq!(peer, client.local_addr().unwrap());
 }
 
 /// A body fed frame by frame through a channel, so a test controls exactly

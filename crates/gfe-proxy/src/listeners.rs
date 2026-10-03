@@ -9,8 +9,14 @@
 //! binds the sockets a config adds (the only step that can fail), and
 //! [`commit`] makes the config's listeners the running set.
 //!
+//! A socket does not have to be bound here. A node that replaces a running
+//! one is handed that node's sockets, [adopts] them, and so serves the
+//! connections waiting on them; the running node [lends] them for that.
+//!
 //! [`stage`]: ListenerSet::stage
 //! [`commit`]: ListenerSet::commit
+//! [adopts]: ListenerSet::adopt
+//! [lends]: ListenerSet::sockets
 
 use crate::acceptor;
 use crate::ProxyShared;
@@ -42,6 +48,9 @@ fn socket_addr(listener: &Listener) -> SocketAddr {
 struct Running {
     /// The listener as currently configured, read for each new connection.
     config: Arc<ArcSwap<Listener>>,
+    /// Shared with the accept loop, so the socket can be lent while it
+    /// accepts.
+    socket: Arc<TcpListener>,
     /// The address actually bound (differs from the configured one only for
     /// port 0).
     local_addr: SocketAddr,
@@ -63,6 +72,8 @@ pub struct ListenerSet {
     connections: Arc<Semaphore>,
     shutdown: watch::Receiver<bool>,
     running: Mutex<HashMap<SocketAddr, Running>>,
+    /// Listening sockets handed to the set, until the next commit.
+    adopted: Mutex<HashMap<SocketAddr, std::net::TcpListener>>,
 }
 
 impl ListenerSet {
@@ -79,6 +90,7 @@ impl ListenerSet {
             connections,
             shutdown,
             running: Mutex::new(HashMap::new()),
+            adopted: Mutex::new(HashMap::new()),
         }
     }
 
@@ -88,9 +100,40 @@ impl ListenerSet {
         self.running.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Bind the sockets `desired` needs that are not already listening.
+    fn adopted(&self) -> MutexGuard<'_, HashMap<SocketAddr, std::net::TcpListener>> {
+        self.adopted.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Hand the set sockets that are already bound and listening, each with
+    /// the address a listener is configured on to use it.
     ///
-    /// Fails without side effects if any of them cannot be bound. Must be
+    /// The next config to be staged listens on them instead of binding those
+    /// addresses, so the connections waiting on them are served. The sockets
+    /// that config has no listener for are closed when it is committed.
+    pub fn adopt(&self, sockets: impl IntoIterator<Item = (SocketAddr, std::net::TcpListener)>) {
+        self.adopted().extend(sockets);
+    }
+
+    /// A duplicate of every listening socket, with the address its listener
+    /// is configured on. A duplicate stays open, and keeps queueing
+    /// connections, after the set stops accepting on its own copy.
+    #[cfg(unix)]
+    pub fn sockets(&self) -> io::Result<Vec<(SocketAddr, std::net::TcpListener)>> {
+        use std::os::fd::AsFd;
+        self.running()
+            .iter()
+            .map(|(addr, listener)| {
+                let duplicate = listener.socket.as_fd().try_clone_to_owned()?;
+                Ok((*addr, std::net::TcpListener::from(duplicate)))
+            })
+            .collect()
+    }
+
+    /// Get the sockets `desired` needs that are not already listening: the
+    /// adopted one for an address that has one, a newly bound one otherwise.
+    ///
+    /// Fails if any of them cannot be had. The running set is then left as
+    /// it is; adopted sockets taken before the failure are closed. Must be
     /// called from within a Tokio runtime.
     pub fn stage(&self, desired: &[Listener]) -> io::Result<Staged> {
         let running = self.running();
@@ -98,7 +141,12 @@ impl ListenerSet {
         for listener in desired {
             let addr = socket_addr(listener);
             if !running.contains_key(&addr) {
-                let socket = bind(addr).map_err(|e| {
+                let adopted = self.adopted().remove(&addr);
+                let socket = match adopted {
+                    Some(socket) => listen_on(socket),
+                    None => bind(addr),
+                }
+                .map_err(|e| {
                     io::Error::new(
                         e.kind(),
                         format!("binding listener {} on {addr}: {e}", listener.id),
@@ -116,7 +164,8 @@ impl ListenerSet {
     /// Make the staged config's listeners the running set: stop accepting on
     /// sockets it no longer names, update the ones it keeps, and start
     /// accepting on the ones it adds. Connections already accepted on a
-    /// stopped socket are not interrupted.
+    /// stopped socket are not interrupted. Adopted sockets it did not use
+    /// are closed.
     pub fn commit(&self, staged: Staged) {
         let mut running = self.running();
 
@@ -143,9 +192,10 @@ impl ListenerSet {
             let local_addr = socket.local_addr().unwrap_or(addr);
             tracing::info!(addr = %local_addr, id = %listener.id, "listener bound");
             let config = Arc::new(ArcSwap::from_pointee(listener));
+            let socket = Arc::new(socket);
             let accept_loop = tokio::spawn(acceptor::run_listener(
                 config.clone(),
-                socket,
+                socket.clone(),
                 self.shared.clone(),
                 self.server_config.clone(),
                 self.connections.clone(),
@@ -155,10 +205,15 @@ impl ListenerSet {
                 addr,
                 Running {
                     config,
+                    socket,
                     local_addr,
                     accept_loop,
                 },
             );
+        }
+
+        for (addr, _) in self.adopted().drain() {
+            tracing::info!(%addr, "adopted socket has no listener, closed");
         }
     }
 
@@ -216,6 +271,12 @@ impl ListenerSet {
             tokio::time::sleep(DRAIN_POLL_INTERVAL).await;
         }
     }
+}
+
+/// Accept on a socket that is already bound and listening.
+fn listen_on(socket: std::net::TcpListener) -> io::Result<TcpListener> {
+    socket.set_nonblocking(true)?;
+    TcpListener::from_std(socket)
 }
 
 fn bind(addr: SocketAddr) -> io::Result<TcpListener> {
