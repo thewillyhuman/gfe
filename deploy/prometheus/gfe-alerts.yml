@@ -163,15 +163,20 @@ groups:
 
   - name: gfe-config
     rules:
+      # Fires until a reload succeeds: the node serves the previous config
+      # for as long as the last attempt failed, however long ago that was.
       - alert: GfeConfigReloadFailing
-        expr: increase(gfe_config_reload_errors_total[15m]) > 0
+        expr: gfe_config_reload_failed == 1
+        for: 1m
         labels: { severity: warning }
         annotations:
           summary: "{{ $labels.instance }} rejected a config reload and keeps serving the previous config"
-          description: "The node log has the reason. The fleet is now inconsistent if other nodes accepted the same config."
+          description: "The node log has the reason. The fleet is now inconsistent if other nodes accepted the same config. Clears with the next successful reload."
 
+      # A counter of this process: it clears exactly when the process is
+      # replaced, by a successful upgrade or a restart.
       - alert: GfeUpgradeFailed
-        expr: increase(gfe_upgrade_failures_total[15m]) > 0
+        expr: gfe_upgrade_failures_total > 0
         labels: { severity: warning }
         annotations:
           summary: "{{ $labels.instance }} could not be upgraded in place"

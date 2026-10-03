@@ -138,6 +138,7 @@ impl Reloader {
         let unusable = match deployed {
             Ok(cfg) => {
                 self.write_cache(&cfg);
+                self.shared.metrics.control.config_reload_failed.set(0);
                 return Ok(cfg);
             }
             Err(e) => e,
@@ -159,6 +160,7 @@ impl Reloader {
                 ))
             })?;
         self.shared.metrics.control.config_reload_errors.inc();
+        self.shared.metrics.control.config_reload_failed.set(1);
         self.shared.metrics.control.config_from_cache.set(1);
         Ok(cached)
     }
@@ -229,6 +231,7 @@ impl Reloader {
             Ok(c) => c,
             Err(e) => {
                 self.shared.metrics.control.config_reload_errors.inc();
+                self.shared.metrics.control.config_reload_failed.set(1);
                 tracing::warn!(error = %e, "config reload failed to load; keeping current");
                 return;
             }
@@ -237,11 +240,13 @@ impl Reloader {
             Ok(()) => {
                 self.checker.reconcile(&cfg.pools, &self.defaults);
                 self.write_cache(&cfg);
+                self.shared.metrics.control.config_reload_failed.set(0);
                 self.shared.metrics.control.config_from_cache.set(0);
                 tracing::info!("hot-reloaded dynamic config");
             }
             Err(e) => {
                 self.shared.metrics.control.config_reload_errors.inc();
+                self.shared.metrics.control.config_reload_failed.set(1);
                 tracing::warn!(error = %e, "config reload rejected; keeping current");
             }
         }

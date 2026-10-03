@@ -98,6 +98,15 @@ impl Node {
             .any(|line| line == "gfe_config_from_cache 1")
     }
 
+    /// Whether the node reports that its last reload attempt failed.
+    fn last_reload_failed(&self) -> bool {
+        self.shared
+            .metrics
+            .encode()
+            .lines()
+            .any(|line| line == "gfe_config_reload_failed 1")
+    }
+
     /// Replace the dynamic config the way deploy tooling does: write a
     /// sibling file, then rename it into place.
     fn deploy_dynamic(&self, json: &str) {
@@ -297,4 +306,40 @@ async fn http_get(addr: SocketAddr) -> String {
         .expect("the node did not answer")
         .unwrap();
     response
+}
+
+#[tokio::test]
+async fn reports_a_rejected_reload_until_a_good_one() {
+    let first = free_addr();
+    let node = Node::start("reload-failed", |_| config_listening_on(first));
+    let clean_start = node.shared.metrics.encode();
+    assert!(
+        clean_start.contains("gfe_config_reload_failed 0"),
+        "{clean_start}"
+    );
+
+    node.deploy_dynamic(r#"{"listeners":[]}"#);
+    let rejected = eventually(async || node.last_reload_failed()).await;
+    assert!(rejected, "the rejected reload was never reported");
+
+    let second = free_addr();
+    node.deploy_dynamic(&config_listening_on(second));
+    let recovered = eventually(async || !node.last_reload_failed()).await;
+    assert!(recovered, "the good reload never cleared the failure");
+    node.controller.shutdown();
+}
+
+#[tokio::test]
+async fn reports_a_failed_reload_when_starting_from_the_cache() {
+    let dir = Node::scratch("reload-failed-cache");
+    std::fs::write(
+        dir.join("config-cache.json"),
+        config_listening_on(free_addr()),
+    )
+    .unwrap();
+
+    let node = Node::boot(dir).unwrap();
+
+    assert!(node.last_reload_failed());
+    node.controller.shutdown();
 }

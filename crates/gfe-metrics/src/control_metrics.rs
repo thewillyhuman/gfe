@@ -26,6 +26,11 @@ pub struct ControlMetrics {
     pub health_check_duration_seconds: Histogram,
     pub config_last_reload_timestamp: Gauge,
     pub config_reload_errors: Counter,
+    /// 1 while the last attempt to load the dynamic config failed (a
+    /// rejected reload, or a start from the cache), 0 once one succeeded.
+    /// Unlike the error counter, it stays up for as long as the node runs a
+    /// config other than the deployed one.
+    pub config_reload_failed: Gauge,
     pub config_from_cache: Gauge,
     pub upgrade_failures: Counter,
     pub cert_expiry_timestamp: Family<SniLabel, Gauge>,
@@ -43,6 +48,7 @@ impl ControlMetrics {
             ]),
             config_last_reload_timestamp: Gauge::default(),
             config_reload_errors: Counter::default(),
+            config_reload_failed: Gauge::default(),
             config_from_cache: Gauge::default(),
             upgrade_failures: Counter::default(),
             cert_expiry_timestamp: Family::default(),
@@ -74,6 +80,11 @@ impl ControlMetrics {
             "gfe_config_reload_errors",
             "Failed reloads (old snapshot kept)",
             m.config_reload_errors.clone(),
+        );
+        registry.register(
+            "gfe_config_reload_failed",
+            "Whether the last attempt to load the dynamic config failed (1) or succeeded (0)",
+            m.config_reload_failed.clone(),
         );
         registry.register(
             "gfe_config_from_cache",

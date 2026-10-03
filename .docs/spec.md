@@ -833,6 +833,7 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_health_check_duration_seconds` | Histogram | Probe round-trip time |
 | `gfe_config_last_reload_timestamp` | Gauge | Unix time of last successful dynamic-config reload |
 | `gfe_config_reload_errors_total` | Counter | Failed reloads (kept old snapshot) |
+| `gfe_config_reload_failed` | Gauge | 1 while the last attempt to load the dynamic config failed (a rejected reload, or a start from the cache), 0 once one succeeds; what `GfeConfigReloadFailing` alerts on |
 | `gfe_config_from_cache` | Gauge | 1 while the node serves its last-known-good cache because the deployed dynamic config was unusable at startup |
 | `gfe_upgrade_failures_total` | Counter | In-place upgrades that failed: the successor did not take over and the node went on serving as it was |
 | `gfe_cert_expiry_timestamp` | Gauge | not-after Unix time (label: sni) — alert before expiry |
@@ -948,7 +949,7 @@ GET /metrics   → Prometheus exposition
 ### Config / Cert Source Unreachable
 
 - The dynamic config and certs are local files; GFE never makes a runtime call to fetch them. If the deployment tooling cannot push an update, GFE keeps serving the last-loaded (and locally cached) config indefinitely.
-- A malformed reload is rejected wholesale; the running snapshot is retained and `gfe_config_reload_errors_total` increments.
+- A malformed reload is rejected wholesale; the running snapshot is retained, `gfe_config_reload_errors_total` increments and `gfe_config_reload_failed` stays 1 until a reload succeeds.
 - A node restarted while its dynamic config is missing or broken starts from the last-known-good cache (Section 7.2) and sets `gfe_config_from_cache`.
 
 ### Certificate Expiry
