@@ -2,7 +2,7 @@
 //! reconciliation, the health checker, the last-known-good cache, the
 //! hot-reload watcher, and the certificate file poller.
 
-use gfe_config::{apply, cache, load_dynamic_config, spawn_watcher, CertFiles};
+use gfe_config::{cache, install, load_dynamic_config, prepare, spawn_watcher, CertFiles};
 use gfe_health::HealthChecker;
 use gfe_proxy::{ListenerSet, ProxyShared};
 use gfe_types::{DynamicConfig, GfeError, HealthCheckConfig, NodeConfig};
@@ -175,15 +175,20 @@ impl Reloader {
         self.apply_with_listeners(cfg)
     }
 
-    /// Apply `cfg` and make its listeners the running set, all or nothing:
-    /// the sockets it adds are bound first, so a config whose listeners
-    /// cannot be bound is rejected before anything is swapped.
+    /// Apply `cfg` and make its listeners the running set, all or nothing.
+    ///
+    /// The config is validated and built before any socket is touched, so a
+    /// config that is invalid leaves the sockets inherited from a replaced
+    /// node for the next config to use (typically the last-known-good
+    /// cache). Only then are the sockets it adds bound, so a config whose
+    /// listeners cannot be bound is rejected before anything is swapped.
     fn apply_with_listeners(&self, cfg: &DynamicConfig) -> Result<(), GfeError> {
+        let prepared = prepare(cfg)?;
         let staged = self
             .listeners
             .stage(&cfg.listeners)
             .map_err(|e| GfeError::Config(e.to_string()))?;
-        apply(&self.shared, cfg)?;
+        install(&self.shared, prepared);
         self.listeners.commit(staged);
         Ok(())
     }

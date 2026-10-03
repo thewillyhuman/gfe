@@ -42,6 +42,15 @@ impl Node {
     /// deployed dynamic config and `config-cache.json` the last-known-good
     /// cache. Either may be absent.
     fn boot(dir: PathBuf) -> Result<Node, GfeError> {
+        Node::boot_adopting(dir, Vec::new())
+    }
+
+    /// [`Node::boot`] for a node that has taken over `sockets` from the node
+    /// it replaces, as an in-place upgrade does.
+    fn boot_adopting(
+        dir: PathBuf,
+        sockets: Vec<(SocketAddr, std::net::TcpListener)>,
+    ) -> Result<Node, GfeError> {
         let bootstrap = dir.join("gfe.toml");
         std::fs::write(
             &bootstrap,
@@ -67,6 +76,7 @@ impl Node {
             Arc::new(gfe_tls::server_config(shared.resolver.clone(), MinVersion::Tls12).unwrap());
         let (shutdown, shutdown_rx) = watch::channel(false);
         let listeners = Arc::new(ListenerSet::new(shared.clone(), server_config, shutdown_rx));
+        listeners.adopt(sockets);
 
         let mut controller = Controller::new(shared.clone(), listeners, &node)
             .cert_poll_interval(Duration::from_millis(50));
@@ -236,4 +246,55 @@ async fn leaves_the_cache_once_a_usable_dynamic_config_is_deployed() {
     assert!(serving, "the deployed config was never applied");
     assert!(!node.runs_from_cache());
     node.controller.shutdown();
+}
+
+/// An in-place upgrade whose deployed config is invalid: the new node must
+/// start from its cache on the sockets it inherited, because the node it
+/// replaces still listens on those addresses and they cannot be bound.
+#[tokio::test]
+async fn starts_from_the_cache_on_inherited_sockets_when_the_dynamic_config_is_invalid() {
+    let dir = Node::scratch("cache-inherited");
+    let inherited = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = inherited.local_addr().unwrap();
+    // The predecessor's copy of the socket: it keeps listening until the
+    // new node has started.
+    let _predecessor = inherited.try_clone().unwrap();
+    let listener = listener_json("only", addr);
+    std::fs::write(
+        dir.join("config-cache.json"),
+        format!(
+            r#"{{"listeners":[{listener}],"routes":[{{"id":"r","listener":"only","host":"*","action":{{"fixed":{{"status":200,"body":"cached"}}}}}}]}}"#
+        ),
+    )
+    .unwrap();
+    // The same listener, and a route forwarding to a pool that does not exist.
+    std::fs::write(
+        dir.join("gfe-dynamic.json"),
+        format!(
+            r#"{{"listeners":[{listener}],"routes":[{{"id":"r","listener":"only","host":"*","action":{{"forward":"missing"}}}}]}}"#
+        ),
+    )
+    .unwrap();
+
+    let node = Node::boot_adopting(dir, vec![(addr, inherited)]).unwrap();
+
+    assert!(node.runs_from_cache());
+    assert!(http_get(addr).await.ends_with("cached"));
+    node.controller.shutdown();
+}
+
+/// The full response to a plain `GET /` sent to `addr`.
+async fn http_get(addr: SocketAddr) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nhost: a.example.org\r\nconnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = String::new();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_string(&mut response))
+        .await
+        .expect("the node did not answer")
+        .unwrap();
+    response
 }
