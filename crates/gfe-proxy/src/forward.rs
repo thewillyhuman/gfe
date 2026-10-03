@@ -10,7 +10,7 @@ use gfe_metrics::{Gauge, PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels,
 use gfe_upstream::{BoxError, FailureKind, InflightGuard, Pool};
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use http_body_util::BodyExt;
-use hyper::body::Incoming;
+use hyper::body::{Body, Incoming};
 use hyper::{Request, Response, StatusCode};
 use std::sync::Arc;
 use std::time::Instant;
@@ -87,18 +87,6 @@ fn is_idempotent(method: &http::Method) -> bool {
     )
 }
 
-/// Whether the request carries no body (so it is trivially safe to retry).
-fn body_is_empty(headers: &HeaderMap) -> bool {
-    let cl_zero = headers
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-        == Some(0);
-    let no_cl = !headers.contains_key(http::header::CONTENT_LENGTH);
-    let no_te = !headers.contains_key(http::header::TRANSFER_ENCODING);
-    cl_zero || (no_cl && no_te)
-}
-
 fn empty_body() -> gfe_upstream::ReqBody {
     http_body_util::Empty::<bytes::Bytes>::new()
         .map_err(|e| Box::new(e) as BoxError)
@@ -147,7 +135,10 @@ pub async fn forward(
         set_header(&mut parts.headers, "x-request-id", record.request_id());
     }
 
-    let retryable = is_idempotent(&parts.method) && body_is_empty(&parts.headers);
+    // Whether there is a body is decided by the body itself, not by headers:
+    // an HTTP/1.1 body may be chunked (and `Transfer-Encoding` is stripped
+    // above), and an HTTP/2 body need not announce a `content-length`.
+    let retryable = is_idempotent(&parts.method) && body.is_end_stream();
     let max_attempts = if retryable { 2 } else { 1 };
     let path_and_query = parts
         .uri

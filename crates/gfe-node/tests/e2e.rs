@@ -1822,6 +1822,79 @@ async fn answers_503_at_the_upstream_connection_limit() {
     assert_eq!(shared.upstream.open_connections(), 1);
 }
 
+/// Send a `method` request with `body` to `proxy` over cleartext HTTP/2. The
+/// body is streamed, so the request carries no `content-length`.
+async fn h2_request(proxy: SocketAddr, method: &str, body: &'static str) -> (u16, String) {
+    let stream = TcpStream::connect(proxy).await.unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .unwrap();
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    let req = Request::builder()
+        .method(method)
+        .uri("http://a.example.org/resource")
+        .body(ChannelBody(rx))
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = tx.send(hyper::body::Frame::data(Bytes::from(body))).await;
+    });
+    let resp = sender.send_request(req).await.unwrap();
+    let status = resp.status().as_u16();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8_lossy(&body).to_string())
+}
+
+#[tokio::test]
+async fn forwards_the_body_of_a_chunked_delete() {
+    let upstream = spawn_upload_upstream().await;
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), build_shared()).await;
+
+    let response = raw_exchange(
+        proxy,
+        "DELETE /resource HTTP/1.1\r\nhost: a.example.org\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    )
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with("received 5"), "{response}");
+}
+
+#[tokio::test]
+async fn forwards_the_body_of_an_http2_request_without_content_length() {
+    let upstream = spawn_upload_upstream().await;
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), build_shared()).await;
+
+    let (status, body) = h2_request(proxy, "DELETE", "hello").await;
+
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body, "received 5");
+}
+
+/// A request with a body cannot be replayed once it has been streamed, so it
+/// is attempted once whatever its method.
+#[tokio::test]
+async fn does_not_retry_a_delete_with_a_body() {
+    let (logs, _guard) = CapturedLogs::start();
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead = closed.local_addr().unwrap();
+    drop(closed);
+    let (proxy, _tx) = start_proxy(&forwarding_config(dead), build_shared()).await;
+
+    let response = raw_exchange(
+        proxy,
+        "DELETE /resource HTTP/1.1\r\nhost: a.example.org\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+    )
+    .await;
+    let event = logs.access_event().await;
+
+    assert!(response.starts_with("HTTP/1.1 502"), "{response}");
+    assert_eq!(event["attempts"], 1);
+}
+
 /// A streaming call may legitimately have nothing to send, not even headers,
 /// for a long time. It is bounded by the deadline its client sets, not by the
 /// timeouts meant for request/response exchanges.
