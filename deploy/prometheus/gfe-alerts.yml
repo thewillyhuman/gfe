@@ -222,12 +222,15 @@ groups:
           summary: "Interface {{ $labels.device }} on {{ $labels.instance }} drops {{ $value | humanize }} packets/s"
 
       - alert: GfeHostInterfaceDown
-        expr: node_network_up{device!~"lo|docker.*|veth.*"} == 0
+        # Only interfaces that are meant to be up. The kernel creates fallback
+        # tunnel devices (gre0, tunl0, sit0, ...) that are always down, on a
+        # node with GRE tunnels in particular.
+        expr: node_network_info{adminstate="up", operstate=~"down|lowerlayerdown", device!~"docker.*|veth.*"} == 1
         for: 2m
         labels: { severity: critical }
         annotations:
-          summary: "Interface {{ $labels.device }} on {{ $labels.instance }} is down"
-          description: "Includes the GRE tunnel the L4 LB delivers traffic through."
+          summary: "Interface {{ $labels.device }} on {{ $labels.instance }} has no link"
+          description: "The interface is administratively up but not operational. Includes the GRE tunnel the L4 LB delivers traffic through."
 
       - alert: GfeHostTcpRetransmissions
         expr: |

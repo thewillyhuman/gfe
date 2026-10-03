@@ -105,7 +105,7 @@ collectors needed are enabled by default:
 |---|---|---|
 | Packets and bytes per interface | `netdev` | `node_network_{receive,transmit}_{packets,bytes}_total` |
 | Interface errors and drops | `netdev` | `node_network_{receive,transmit}_{errs,drop}_total` |
-| Link state (including the GRE tunnel from the L4 LB) | `netclass` | `node_network_up`, `node_network_carrier_changes_total` |
+| Link state (including the GRE tunnel from the L4 LB) | `netclass` | `node_network_info{adminstate,operstate}`, `node_network_carrier_changes_total` |
 | TCP retransmissions and resets | `netstat` | `node_netstat_Tcp_RetransSegs`, `node_netstat_Tcp_OutSegs`, `node_netstat_Tcp_OutRsts` |
 | Listen queue overflows (lost connections) | `netstat` | `node_netstat_TcpExt_ListenOverflows`, `node_netstat_TcpExt_ListenDrops` |
 | UDP errors (name resolution) | `netstat` | `node_netstat_Udp_InErrors`, `node_netstat_Udp_RcvbufErrors` |
