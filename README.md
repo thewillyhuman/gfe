@@ -201,6 +201,8 @@ crates/
 config/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
+packaging/
+  rpm/                        RPM scriptlets, build notes, Puppet usage
 deploy/
   gfe-node.service            systemd unit (hardened, CAP_NET_BIND_SERVICE only)
   backend-onboard.sh          GRE tunnel + loopback VIP (DSR) for L4 integration

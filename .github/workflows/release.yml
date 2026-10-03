@@ -3,6 +3,7 @@ name: release
 # Triggered by pushing a `v*` tag (e.g. `v0.1.0`). Produces:
 #   * GitHub Release with auto-generated release notes
 #   * x86_64 + aarch64 Linux binaries (statically linked against musl)
+#   * x86_64 + aarch64 RPMs built from those binaries (see packaging/rpm/)
 #   * `gfe-node` container image pushed to `ghcr.io/${owner}/gfe-node`
 #
 # To cut a release:
@@ -65,6 +66,20 @@ jobs:
           tar -czf "$tarball" -C "$stage" .
           sha256sum "$tarball" > "$tarball.sha256"
           echo "ARTIFACT=$tarball" >> "$GITHUB_ENV"
+      - name: Install cargo-generate-rpm
+        run: cargo install cargo-generate-rpm --locked
+      - name: Build RPM
+        # Packages the binaries built above; no rpmbuild involved. The RPM
+        # version is the tag, with a pre-release dash turned into RPM's `~`.
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          version="${version//-/\~}"
+          cargo generate-rpm -p crates/gfe-node --target ${{ matrix.target }} \
+            -s "version = '${version}'"
+          rpm=$(ls target/${{ matrix.target }}/generate-rpm/gfe-*.rpm)
+          sha256sum "$rpm" > "$rpm.sha256"
+          echo "RPM=$rpm" >> "$GITHUB_ENV"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -72,6 +87,8 @@ jobs:
           path: |
             ${{ env.ARTIFACT }}
             ${{ env.ARTIFACT }}.sha256
+            ${{ env.RPM }}
+            ${{ env.RPM }}.sha256
           retention-days: 7
 
   build-image:
@@ -130,7 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          find dist -type f \( -name '*.tar.gz' -o -name '*.sha256' \) -exec mv {} out/ \;
+          find dist -type f \( -name '*.tar.gz' -o -name '*.rpm' -o -name '*.sha256' \) -exec mv {} out/ \;
           ls -la out/
       - name: Create release
         uses: softprops/action-gh-release@v2

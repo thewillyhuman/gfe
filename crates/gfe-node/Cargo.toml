@@ -38,3 +38,33 @@ rustls-pemfile = { workspace = true }
 tokio-rustls = { workspace = true }
 http = { workspace = true }
 webpki-roots = { workspace = true }
+
+# RPM packaging, built by `cargo generate-rpm -p crates/gfe-node` from the
+# release binaries (see packaging/rpm/README.md). The package is named `gfe`
+# and carries the node, the offline tracer, the systemd unit and the deploy
+# helpers. Configuration under /etc/gfe is left to config management.
+[package.metadata.generate-rpm]
+name = "gfe"
+summary = "General Front End - L7 TLS-terminating HTTP reverse proxy"
+url = "https://github.com/thewillyhuman/gfe"
+assets = [
+    { source = "target/release/gfe-node", dest = "/usr/bin/gfe-node", mode = "755" },
+    { source = "target/release/gfe-trace", dest = "/usr/bin/gfe-trace", mode = "755" },
+    { source = "../../deploy/gfe-node.service", dest = "/usr/lib/systemd/system/gfe-node.service", mode = "644" },
+    { source = "../../deploy/backend-onboard.sh", dest = "/usr/share/gfe/backend-onboard.sh", mode = "755" },
+    { source = "../../deploy/generate-config.sh", dest = "/usr/share/gfe/generate-config.sh", mode = "755" },
+    { source = "../../deploy/validate-config.sh", dest = "/usr/share/gfe/validate-config.sh", mode = "755" },
+    { source = "../../deploy/grafana/gfe-dashboard.json", dest = "/usr/share/gfe/grafana/gfe-dashboard.json", mode = "644" },
+    { source = "../../config/gfe.example.toml", dest = "/usr/share/doc/gfe/gfe.example.toml", mode = "644", doc = true },
+    { source = "../../config/gfe-dynamic.example.json", dest = "/usr/share/doc/gfe/gfe-dynamic.example.json", mode = "644", doc = true },
+    { source = "../../README.md", dest = "/usr/share/doc/gfe/README.md", mode = "644", doc = true },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/gfe/LICENSE", mode = "644" },
+]
+pre_install_script = "../../packaging/rpm/pre-install.sh"
+post_install_script = "../../packaging/rpm/post-install.sh"
+pre_uninstall_script = "../../packaging/rpm/pre-uninstall.sh"
+post_uninstall_script = "../../packaging/rpm/post-uninstall.sh"
+
+[package.metadata.generate-rpm.requires]
+systemd = "*"
+shadow-utils = "*"
