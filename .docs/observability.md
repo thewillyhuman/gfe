@@ -43,6 +43,7 @@ Each target can be routed or silenced on its own, e.g.
 | Is the node saturated? | `gfe_connections_active / gfe_connections_limit`, `process_open_fds / process_max_fds`, `rate(process_cpu_seconds_total[5m])`, `gfe_runtime_global_queue_depth` | — |
 | Is it refusing work? | `gfe_connections_rejected_total{reason="limit"}` | — |
 | Did a config or certificate change land? | `gfe_config_last_reload_timestamp`, `gfe_config_reload_errors_total`, `gfe_cert_expiry_timestamp` | node log |
+| Did an upgrade in place land? | `gfe_upgrade_failures_total`; `process_start_time_seconds` moves when it did | node log, from both processes; `systemctl status` |
 
 ### Reading an outcome
 

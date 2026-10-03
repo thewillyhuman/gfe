@@ -40,7 +40,8 @@ any RPM-based distribution.
 
 A node needs the package, two files and the service. The dynamic config is
 hot-reloaded when the file is replaced, so it must **not** notify the
-service; the bootstrap TOML is read once at startup, so it must.
+service. The package and the bootstrap TOML are read once, by a new process,
+so they must; and what they trigger is an upgrade in place, not a restart.
 
 ```puppet
 package { 'gfe': ensure => installed }
@@ -56,8 +57,8 @@ file { '/etc/gfe/gfe-dynamic.json':
   require      => Package['gfe'],
 }
 
-# Read once at startup: a change restarts the node (it drains first). The
-# check also loads the dynamic config the TOML names, hence the ordering.
+# Read once at startup: a change replaces the node in place. The check also
+# loads the dynamic config the TOML names, hence the ordering.
 file { '/etc/gfe/gfe.toml':
   content      => template('gfe/gfe.toml.erb'),
   validate_cmd => '/usr/bin/gfe-node --config % --check-config',
@@ -65,9 +66,14 @@ file { '/etc/gfe/gfe.toml':
   notify       => Service['gfe-node'],
 }
 
+# "Restarting" the service is `systemctl reload`: the node starts the binary
+# now on disk, hands it its listening sockets and drains. No connection is
+# refused, and a new node that does not start leaves the old one serving.
 service { 'gfe-node':
-  ensure => running,
-  enable => true,
+  ensure    => running,
+  enable    => true,
+  restart   => '/usr/bin/systemctl reload gfe-node',
+  subscribe => Package['gfe'],
 }
 ```
 
@@ -89,5 +95,18 @@ Notes:
   RPM must also have been built with clang available, or the binary has no
   eBPF program in it and says so when asked to attach.
 - Listeners, routes, pools and certificates are all in the dynamic config
-  and are reconciled on reload, including binding and releasing listening
-  sockets. Only the bootstrap TOML requires a restart.
+  and are reconciled when the file changes, including binding and releasing
+  listening sockets. Only the binary and the bootstrap TOML need a new
+  process.
+- `systemctl reload` does not wait for the upgrade and does not fail when it
+  does: Puppet reports the refresh as done either way. A node that could not
+  be replaced keeps serving as it was, says why in `systemctl status
+  gfe-node`, and raises `GfeUpgradeFailed` through `gfe_upgrade_failures_total`.
+- A reload does not apply a change to the unit itself: the new process is
+  started by the old one and keeps its capabilities, limits and environment.
+  After changing the unit or a drop-in (the eBPF one included), use
+  `systemctl restart gfe-node`, which closes the listening sockets while the
+  node drains and starts again.
+- The first update from a version without upgrades in place must be a
+  restart too: that version does not handle the signal a reload sends and is
+  killed by it.

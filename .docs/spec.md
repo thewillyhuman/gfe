@@ -981,6 +981,13 @@ If the successor does not take over (the binary does not start, the config is re
 
 What does not carry over: the successor starts with empty connection pools to the backends, every backend presumed healthy until probed, and its counters at zero.
 
+What an upgrade in place does not do:
+
+- **Apply a change to the unit.** The successor is started by the running node, not by systemd, so it runs with the capabilities, limits, environment and sandbox the service was started with. A changed unit or drop-in (the eBPF capabilities, say) needs `systemctl restart`.
+- **Tell the caller how it went.** `systemctl reload` returns once the node has been signalled. The outcome is in `systemctl status` (`Serving (upgraded in place)`, or `Upgrade failed, still serving: ...`), in the journal, and in `gfe_upgrade_failures_total`, which the shipped rules alert on.
+- **Work from a version that does not know `SIGUSR2`.** Such a node is killed by the signal. The first update to a version with this feature is a restart.
+- **Make sense in a container.** There the node is the container's first process and the container ends with it: replace the container instead.
+
 ### Rolling Restarts
 
 Where a node cannot be upgraded in place, it is restarted behind the L4 LB:
