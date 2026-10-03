@@ -43,6 +43,9 @@ pub type ReqBody = BoxBody<Bytes, BoxError>;
 pub struct UpstreamClientOptions {
     /// Idle pooled connections per backend authority.
     pub idle_per_host: usize,
+    /// How long a pooled connection may stay idle before it is closed.
+    /// `None`: idle connections are kept until the backend closes them.
+    pub idle_timeout: Option<Duration>,
     /// Client certificate chain (PEM) for mTLS to upstreams.
     pub client_cert_pem: Option<Vec<u8>>,
     /// Client private key (PEM) for mTLS to upstreams.
@@ -152,6 +155,11 @@ impl UpstreamClient {
         let mut builder = Client::builder(TokioExecutor::new());
         builder
             .pool_max_idle_per_host(idle)
+            .pool_idle_timeout(opts.idle_timeout)
+            // The pool's own timer, which closes idle connections as they
+            // expire; without it they are only noticed when the backend is
+            // used again. `timer` is HTTP/2's.
+            .pool_timer(TokioTimer::new())
             .timer(TokioTimer::new());
         if let Some(keep_alive) = opts.http2_keep_alive {
             builder
@@ -413,6 +421,34 @@ mod tests {
         let failure = refused.expect_err("a second connection exceeds the limit");
         assert_eq!(failure.kind, FailureKind::ConnectionLimit, "{failure}");
         assert!(busy.await.unwrap().is_ok());
+    }
+
+    /// A connection left idle is closed once `idle_timeout` has passed, even
+    /// if nothing is ever sent to its backend again.
+    #[tokio::test]
+    async fn closes_a_connection_idle_for_idle_timeout() {
+        use http_body_util::BodyExt;
+
+        let backend = spawn_slow_server(Duration::ZERO).await;
+        let client = UpstreamClient::with_options(UpstreamClientOptions {
+            idle_timeout: Some(Duration::from_millis(200)),
+            ..Default::default()
+        })
+        .unwrap();
+        let response = client.send(Scheme::Http, &backend, get()).await.unwrap();
+        response.into_body().collect().await.unwrap();
+        assert_eq!(client.open_connections(), 1);
+
+        let mut open = client.open_connections();
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            open = client.open_connections();
+            if open == 0 {
+                break;
+            }
+        }
+
+        assert_eq!(open, 0);
     }
 
     #[tokio::test]

@@ -461,7 +461,7 @@ Weights are honored by `round_robin` and `ring_hash`. If a pool has **no healthy
 
 Long-lived pooled upstream connections are a primary reason to run a shared edge: they amortize TCP + TLS handshake cost across all client requests to a backend.
 
-- **Per-backend idle pools.** Keyed by `(scheme, host, port)`. Idle connections are reused; the pool caps idle count and idle age per backend. HTTP/2 upstream connections (gRPC calls to `https` pools via ALPN, or `h2c`) are multiplexed: many concurrent requests share one connection per backend.
+- **Per-backend idle pools.** Keyed by `(scheme, host, port)`. Idle connections are reused; the pool caps idle count (`[upstream] idle_per_host`) per backend, and closes a connection idle for `[upstream] idle_timeout` (default `60s`), so connections to a backend that is no longer used (removed, or dead) do not linger and count against `max_upstream_connections`. HTTP/2 upstream connections (gRPC calls to `https` pools via ALPN, or `h2c`) are multiplexed: many concurrent requests share one connection per backend.
 - **HTTP/1.1 and HTTP/2 upstreams.** For h2 upstreams, a single connection multiplexes many concurrent requests (subject to the upstream's `SETTINGS_MAX_CONCURRENT_STREAMS`); for h1, one request per connection at a time.
 - **Upstream TLS (`client.rs`).** When `scheme=https`, GFE validates the upstream certificate against a configured trust store (system roots or a pinned CA). Optional mTLS (client cert to upstream) is supported for zero-trust backends.
 - **Health-aware eviction.** When a backend transitions to UNHEALTHY or DRAINING, its idle connections are dropped and no new ones are opened.
@@ -653,6 +653,9 @@ upstream_first_byte = "30s"
 request_total     = "60s"
 client_idle       = "75s"
 drain_deadline    = "30s"
+
+[upstream]
+idle_timeout      = "60s"               # close a pooled upstream connection idle for this long
 
 [health_check_defaults]
 interval             = "5s"

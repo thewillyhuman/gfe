@@ -58,12 +58,18 @@ pub struct EbpfConfig {
 }
 
 /// Upstream-leg (GFE → backend) connection settings.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpstreamConfig {
     /// Idle pooled connections kept per backend authority. `None` → 32.
     #[serde(default)]
     pub idle_per_host: Option<usize>,
+    /// How long a pooled connection may stay idle before it is closed.
+    /// Bounds how long connections to a backend that is no longer used
+    /// (removed, or dead) stay open and count against
+    /// `max_upstream_connections`.
+    #[serde(default = "d60s", deserialize_with = "deserialize_duration")]
+    pub idle_timeout: Duration,
     /// Client certificate (PEM) presented to upstreams for mTLS.
     #[serde(default)]
     pub client_cert_file: Option<PathBuf>,
@@ -74,6 +80,18 @@ pub struct UpstreamConfig {
     /// system/webpki roots.
     #[serde(default)]
     pub extra_ca_file: Option<PathBuf>,
+}
+
+impl Default for UpstreamConfig {
+    fn default() -> Self {
+        UpstreamConfig {
+            idle_per_host: None,
+            idle_timeout: d60s(),
+            client_cert_file: None,
+            client_key_file: None,
+            extra_ca_file: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -386,5 +404,21 @@ enabled = true
         assert_eq!(cfg.listeners.len(), 1);
         assert_eq!(cfg.routes.len(), 1);
         assert_eq!(cfg.pools.len(), 1);
+    }
+
+    #[test]
+    fn upstream_idle_timeout_defaults_to_a_minute() {
+        assert_eq!(
+            UpstreamConfig::default().idle_timeout,
+            Duration::from_secs(60)
+        );
+        let cfg: UpstreamConfig = toml::from_str("").unwrap();
+        assert_eq!(cfg.idle_timeout, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn upstream_idle_timeout_is_a_duration() {
+        let cfg: UpstreamConfig = toml::from_str(r#"idle_timeout = "15s""#).unwrap();
+        assert_eq!(cfg.idle_timeout, Duration::from_secs(15));
     }
 }

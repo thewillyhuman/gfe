@@ -285,6 +285,7 @@ fn build_upstream_client(
     }
     let opts = UpstreamClientOptions {
         idle_per_host: cfg.idle_per_host.unwrap_or(32),
+        idle_timeout: Some(cfg.idle_timeout),
         client_cert_pem: cfg.client_cert_file.as_deref().map(read).transpose()?,
         client_key_pem: cfg.client_key_file.as_deref().map(read).transpose()?,
         extra_ca_pem: cfg.extra_ca_file.as_deref().map(read).transpose()?,
