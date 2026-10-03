@@ -1069,6 +1069,10 @@ async fn lends_its_sockets_which_outlive_it() {
     listeners.serve_until_drained().await;
     let (configured_on, socket) = lent.pop().unwrap();
     let client = TcpStream::connect(addr).await.unwrap();
+    // The lent socket shares its non-blocking mode with the one the set
+    // accepted on, and a client's connect can return a moment before the
+    // connection is in the queue: wait for it rather than race it.
+    socket.set_nonblocking(false).unwrap();
     let (_, peer) = socket.accept().unwrap();
 
     // Lent under the address its listener is configured on (port 0 here),
