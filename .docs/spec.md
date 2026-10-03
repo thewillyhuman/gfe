@@ -539,6 +539,8 @@ path                = "/healthz"   # http/https
 expected_status     = 200
 ```
 
+A check, a pool's own or the node's `[health_check_defaults]`, is rejected when its `timeout` is zero, its `interval` is below 100 ms, its `path` does not start with `/`, or its `expected_status` or `drain_status` is outside 100-599.
+
 **Deduplication (`checker.rs`).** A backend appearing in multiple pools is probed once per `(ip, port, probe)`; the result is shared across all referencing pools. A check changed by a reload restarts the probe of every backend it applies to; the backend keeps its current status until the new probe's thresholds say otherwise.
 
 **State machine (`state_machine.rs`):**

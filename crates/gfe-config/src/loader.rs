@@ -1,5 +1,6 @@
 //! Read and deserialize the bootstrap (TOML) and dynamic (JSON) configs.
 
+use crate::validator::validate_health_check;
 use gfe_types::{DynamicConfig, GfeError, NodeConfig};
 use std::path::Path;
 
@@ -20,6 +21,8 @@ pub fn load_node_config(path: &Path) -> Result<NodeConfig, GfeError> {
             config.limits.max_header_bytes
         )));
     }
+    validate_health_check(&config.health_check_defaults)
+        .map_err(|e| GfeError::Config(format!("{}: health_check_defaults.{e}", path.display())))?;
     Ok(config)
 }
 
@@ -62,6 +65,66 @@ mod tests {
         let err = load_node_config(&path).unwrap_err();
 
         assert!(err.to_string().contains("max_header_bytes"), "{err}");
+    }
+
+    /// Write a bootstrap config with `extra` appended to the
+    /// `[health_check_defaults]` section, and load it.
+    fn load_with_check_defaults(test: &str, extra: &str) -> Result<NodeConfig, GfeError> {
+        let toml = format!(
+            "[node]\nid = \"t\"\nloopback_vip = \"127.0.0.1\"\n\n\
+             [control_plane]\nconfig_file = \"/etc/gfe/gfe-dynamic.json\"\n\n\
+             [health_check_defaults]\n{extra}\n"
+        );
+        let path =
+            std::env::temp_dir().join(format!("gfe-node-{}-{test}.toml", std::process::id()));
+        std::fs::write(&path, toml).unwrap();
+        load_node_config(&path)
+    }
+
+    #[test]
+    fn accepts_default_health_check_defaults() {
+        assert!(load_with_check_defaults("check-ok", "").is_ok());
+    }
+
+    #[test]
+    fn rejects_health_check_defaults_with_a_zero_timeout() {
+        let err = load_with_check_defaults("check-timeout", "timeout = \"0s\"").unwrap_err();
+
+        assert!(
+            err.to_string().contains("health_check_defaults.timeout"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_health_check_defaults_with_an_interval_below_100ms() {
+        let err = load_with_check_defaults("check-interval", "interval = \"10ms\"").unwrap_err();
+
+        assert!(
+            err.to_string().contains("health_check_defaults.interval"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_health_check_defaults_with_a_relative_path() {
+        let err = load_with_check_defaults("check-path", "path = \"healthz\"").unwrap_err();
+
+        assert!(
+            err.to_string().contains("health_check_defaults.path"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_health_check_defaults_with_an_impossible_status() {
+        let err = load_with_check_defaults("check-status", "expected_status = 1000").unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("health_check_defaults.expected_status"),
+            "{err}"
+        );
     }
 
     #[test]

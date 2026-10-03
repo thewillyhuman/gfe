@@ -417,7 +417,8 @@ async fn health_failover_excludes_dead_backend() {
 
     let fast_hc = HealthCheckConfig {
         probe_type: ProbeType::Http,
-        interval: Duration::from_millis(30),
+        // The shortest interval validation accepts.
+        interval: Duration::from_millis(100),
         timeout: Duration::from_millis(300),
         healthy_threshold: 1,
         unhealthy_threshold: 2,

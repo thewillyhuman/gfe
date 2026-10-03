@@ -1,9 +1,13 @@
 //! Semantic validation of the dynamic config, run before any swap so a bad
 //! config is rejected wholesale and the running snapshot is kept.
 
-use gfe_types::{DynamicConfig, GfeError, LbPolicy, ListenProtocol, RouteAction};
+use gfe_types::{
+    DynamicConfig, GfeError, HealthCheckConfig, LbPolicy, ListenProtocol, RouteAction,
+};
 use gfe_upstream::policy::RING_REPLICAS;
 use std::collections::HashSet;
+use std::ops::RangeInclusive;
+use std::time::Duration;
 
 /// The largest `weight` an upstream may have. Weights are relative, so this
 /// leaves ample room for ratios while bounding what a weight costs: a
@@ -87,6 +91,10 @@ pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
                 )));
             }
         }
+        if let Some(check) = &p.health_check {
+            validate_health_check(check)
+                .map_err(|e| GfeError::Validation(format!("pool {}: health_check.{e}", p.id)))?;
+        }
     }
 
     // Unique route ids; references resolve.
@@ -142,13 +150,52 @@ pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
     Ok(())
 }
 
+/// The shortest health-check `interval`: one probe per backend every 100 ms
+/// is already a lot of connections; shorter is a connect storm.
+pub const MIN_HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Validate one health check, a pool's own or the node's defaults. The error
+/// starts with the name of the offending field, for the caller to prefix
+/// with where the check comes from.
+pub fn validate_health_check(check: &HealthCheckConfig) -> Result<(), String> {
+    if check.timeout.is_zero() {
+        return Err("timeout must be greater than 0s: a zero timeout fails every probe".into());
+    }
+    if check.interval < MIN_HEALTH_CHECK_INTERVAL {
+        return Err(format!(
+            "interval must be at least {}ms, got {}ms",
+            MIN_HEALTH_CHECK_INTERVAL.as_millis(),
+            check.interval.as_millis()
+        ));
+    }
+    if !check.path.starts_with('/') {
+        return Err(format!("path must start with '/', got {:?}", check.path));
+    }
+    if !HTTP_STATUS.contains(&check.expected_status) {
+        return Err(format!(
+            "expected_status must be an HTTP status (100-599), got {}",
+            check.expected_status
+        ));
+    }
+    if let Some(status) = check.drain_status.filter(|s| !HTTP_STATUS.contains(s)) {
+        return Err(format!(
+            "drain_status must be an HTTP status (100-599), got {status}"
+        ));
+    }
+    Ok(())
+}
+
+/// The status codes a backend can answer with.
+const HTTP_STATUS: RangeInclusive<u16> = 100..=599;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gfe_types::{
-        CertEntry, LbPolicy, Listener, ListenerId, PoolId, Route, RouteId, Scheme, Upstream,
-        UpstreamPool,
+        CertEntry, HealthCheckConfig, LbPolicy, Listener, ListenerId, PoolId, Route, RouteId,
+        Scheme, Upstream, UpstreamPool,
     };
+    use std::time::Duration;
 
     fn listener() -> Listener {
         Listener {
@@ -318,5 +365,77 @@ mod tests {
             .collect();
 
         assert!(validate(&config_with_pool(p)).is_ok());
+    }
+
+    /// The error `validate` gives for a pool `p` with the check `check`.
+    fn pool_check_error(check: HealthCheckConfig) -> String {
+        let mut p = pool("p");
+        p.health_check = Some(check);
+        validate(&config_with_pool(p)).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn pool_with_a_valid_health_check_passes() {
+        let mut p = pool("p");
+        p.health_check = Some(HealthCheckConfig {
+            interval: Duration::from_millis(100),
+            drain_status: Some(503),
+            ..Default::default()
+        });
+
+        assert!(validate(&config_with_pool(p)).is_ok());
+    }
+
+    #[test]
+    fn health_check_with_a_zero_timeout_fails() {
+        let err = pool_check_error(HealthCheckConfig {
+            timeout: Duration::ZERO,
+            ..Default::default()
+        });
+
+        assert!(err.contains("pool p: health_check.timeout"), "{err}");
+    }
+
+    #[test]
+    fn health_check_with_an_interval_below_100ms_fails() {
+        let err = pool_check_error(HealthCheckConfig {
+            interval: Duration::from_millis(99),
+            ..Default::default()
+        });
+
+        assert!(err.contains("pool p: health_check.interval"), "{err}");
+    }
+
+    #[test]
+    fn health_check_with_a_relative_path_fails() {
+        let err = pool_check_error(HealthCheckConfig {
+            path: "healthz".into(),
+            ..Default::default()
+        });
+
+        assert!(err.contains("pool p: health_check.path"), "{err}");
+    }
+
+    #[test]
+    fn health_check_with_an_impossible_expected_status_fails() {
+        let err = pool_check_error(HealthCheckConfig {
+            expected_status: 600,
+            ..Default::default()
+        });
+
+        assert!(
+            err.contains("pool p: health_check.expected_status"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn health_check_with_an_impossible_drain_status_fails() {
+        let err = pool_check_error(HealthCheckConfig {
+            drain_status: Some(99),
+            ..Default::default()
+        });
+
+        assert!(err.contains("pool p: health_check.drain_status"), "{err}");
     }
 }
