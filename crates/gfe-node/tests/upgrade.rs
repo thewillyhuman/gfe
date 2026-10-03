@@ -142,6 +142,22 @@ impl Drop for Successor {
     }
 }
 
+/// Send `signal` to the process `pid`.
+fn send_signal(signal: &str, pid: &str) {
+    let sent = Command::new("kill").args([signal, pid]).status().unwrap();
+    assert!(sent.success(), "kill {signal} {pid}");
+}
+
+/// Whether the process `pid` exists.
+fn is_running(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
 /// Kill every process of the group `leader` leads, and collect `leader`.
 fn kill_group(leader: &mut Child) {
     let group = format!("-{}", leader.id());
@@ -233,9 +249,19 @@ impl Node {
 
     /// Send `signal` to the process the test started.
     fn signal(&self, signal: &str) {
-        let pid = self.process.id().to_string();
-        let sent = Command::new("kill").args([signal, &pid]).status().unwrap();
-        assert!(sent.success(), "kill {signal} {pid}");
+        send_signal(signal, &self.process.id().to_string());
+    }
+
+    /// The process id the node announces as the service's main process
+    /// once its successor has taken over, after it has said it upgrades.
+    fn announced_successor(&self) -> String {
+        assert_eq!(self.tells_service_manager(), ["RELOADING=1"]);
+        let announced = self.tells_service_manager();
+        announced
+            .iter()
+            .find_map(|line| line.strip_prefix("MAINPID="))
+            .unwrap_or_else(|| panic!("no MAINPID in {announced:?}"))
+            .to_string()
     }
 
     /// The next thing the node tells the service manager, as `KEY=value`
@@ -591,6 +617,64 @@ fn keeps_serving_when_its_successor_cannot_start() {
     assert!(counted, "the failed upgrade was not counted");
     assert_eq!(node.process.try_wait().unwrap(), None);
     assert!(http_get(node.proxy, "/").starts_with("HTTP/1.1 200"));
+}
+
+/// A successor started by a node that was a successor itself is started
+/// without the flags its predecessor gave that node.
+#[test]
+fn a_successor_upgrades_in_place_in_turn_without_failing_a_request() {
+    let mut node = Node::start("twice");
+    node.tells_service_manager();
+    let load = Load::start(node.proxy);
+    std::thread::sleep(Duration::from_millis(300));
+    node.signal("-USR2");
+    let first = node.announced_successor();
+    let replaced = node.exit();
+    std::thread::sleep(Duration::from_millis(300));
+
+    send_signal("-USR2", &first);
+    let second = node.announced_successor();
+    let first_stopped = eventually(|| !is_running(&first));
+    std::thread::sleep(Duration::from_millis(300));
+    let outcome = load.finish();
+
+    assert!(
+        replaced.is_some_and(|status| status.success()),
+        "{replaced:?}"
+    );
+    assert_ne!(second, first);
+    assert!(first_stopped, "the first successor did not stop");
+    assert!(
+        outcome.failures.is_empty(),
+        "{} requests failed, {} were answered: {:?}",
+        outcome.failures.len(),
+        outcome.answered,
+        outcome.failures
+    );
+    assert!(node.ops_get("/readyz").starts_with("HTTP/1.1 200"));
+}
+
+/// The successor parses its bootstrap config and takes the sockets, then
+/// cannot start: its dynamic config is missing and there is no cache.
+#[test]
+fn keeps_serving_when_its_successor_fails_after_taking_the_sockets() {
+    let mut node = Node::start("fails-after-receipt");
+    let bootstrap = std::fs::read_to_string(&node.bootstrap).unwrap();
+    let unusable = bootstrap
+        .replace("gfe-dynamic.json", "missing-dynamic.json")
+        .replace("config-cache.json", "missing-cache.json");
+    std::fs::write(&node.bootstrap, unusable).unwrap();
+
+    node.signal("-USR2");
+    let counted = eventually(|| {
+        node.ops_get("/metrics")
+            .contains("gfe_upgrade_failures_total 1")
+    });
+
+    assert!(counted, "the failed upgrade was not counted");
+    assert_eq!(node.process.try_wait().unwrap(), None);
+    assert!(http_get(node.proxy, "/").starts_with("HTTP/1.1 200"));
+    assert!(node.ops_get("/readyz").starts_with("HTTP/1.1 200"));
 }
 
 /// Point the bootstrap config of `node`, which only a successor reads, at a
