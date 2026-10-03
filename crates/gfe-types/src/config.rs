@@ -187,7 +187,7 @@ fn d75s() -> Duration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HealthCheckConfig {
-    /// Probe type: `http`, `https`, or `tcp`.
+    /// Probe type: `http`, `https`, `tcp`, or `grpc`.
     #[serde(default = "default_probe_type", rename = "type")]
     pub probe_type: ProbeType,
     #[serde(
@@ -238,10 +238,16 @@ impl Default for HealthCheckConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeType {
+    /// `GET` the configured path over cleartext HTTP/1.1.
     #[default]
     Http,
+    /// The same over TLS.
     Https,
+    /// A TCP connection can be established.
     Tcp,
+    /// The gRPC health-checking protocol (`grpc.health.v1.Health/Check`),
+    /// over TLS for `https` pools and cleartext HTTP/2 otherwise.
+    Grpc,
 }
 
 fn default_probe_type() -> ProbeType {
@@ -308,6 +314,12 @@ config_file = "/etc/gfe/gfe-dynamic.json"
         assert_eq!(cfg.limits.max_connections, 100_000);
         assert_eq!(cfg.timeouts.upstream_connect, Duration::from_secs(3));
         assert_eq!(cfg.health_check_defaults.interval, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn grpc_probe_type_is_spelled_grpc() {
+        let check: HealthCheckConfig = serde_json::from_str(r#"{"type":"grpc"}"#).unwrap();
+        assert_eq!(check.probe_type, ProbeType::Grpc);
     }
 
     #[test]

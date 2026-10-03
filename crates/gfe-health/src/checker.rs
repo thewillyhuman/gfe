@@ -5,7 +5,7 @@
 use crate::probe::make_probe;
 use crate::state_machine::BackendHealth;
 use gfe_metrics::{BackendLabels, GfeMetrics};
-use gfe_types::{HealthCheckConfig, HealthStatus, UpstreamPool};
+use gfe_types::{HealthCheckConfig, HealthStatus, Scheme, UpstreamPool};
 use gfe_upstream::HealthMap;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -14,9 +14,13 @@ use tokio::task::JoinHandle;
 
 type Key = (String, u16);
 
+/// What decides how a backend is probed: the check, and the scheme of the
+/// pool it belongs to (a gRPC probe uses TLS for `https` pools).
+type Check = (HealthCheckConfig, Scheme);
+
 /// A running probe loop and the check it was started with.
 struct Running {
-    check: HealthCheckConfig,
+    check: Check,
     task: JoinHandle<()>,
 }
 
@@ -44,14 +48,14 @@ impl HealthChecker {
     /// A restarted probe keeps the backend's current status until its own
     /// thresholds say otherwise, so changing a check does not flap traffic.
     pub fn reconcile(self: &Arc<Self>, pools: &[UpstreamPool], defaults: &HealthCheckConfig) {
-        let mut desired: HashMap<Key, (HealthCheckConfig, Vec<String>)> = HashMap::new();
+        let mut desired: HashMap<Key, (Check, Vec<String>)> = HashMap::new();
         for p in pools {
             let cfg = p.health_check.clone().unwrap_or_else(|| defaults.clone());
             for u in &p.upstreams {
                 let key = (u.host.clone(), u.port);
                 let entry = desired
                     .entry(key)
-                    .or_insert_with(|| (cfg.clone(), Vec::new()));
+                    .or_insert_with(|| ((cfg.clone(), p.scheme), Vec::new()));
                 entry.1.push(p.id.to_string());
             }
         }
@@ -101,10 +105,10 @@ impl HealthChecker {
         self: Arc<Self>,
         host: String,
         port: u16,
-        cfg: HealthCheckConfig,
+        (cfg, scheme): Check,
         pools: Vec<String>,
     ) {
-        let probe = make_probe(&cfg);
+        let probe = make_probe(&cfg, scheme);
         let mut bh = BackendHealth::default();
         let backend = format!("{host}:{port}");
         loop {

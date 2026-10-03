@@ -22,14 +22,17 @@ spread connections across a fleet with no coordination.
   (longest-prefix / exact); forward / redirect / fixed-response actions.
 - **gRPC** — unary and streaming calls are proxied end to end over HTTP/2,
   message by message, with trailers; backends are reached over TLS (`https`,
-  HTTP/2 by ALPN) or cleartext HTTP/2 (`h2c`).
+  HTTP/2 by ALPN) or cleartext HTTP/2 (`h2c`) and health-checked with the gRPC
+  health protocol. Calls are bounded by their client's deadline rather than by
+  proxy timeouts, and a call GFE cannot serve fails with a proper `grpc-status`.
 - **Upstream load balancing** — `round_robin`, `least_request` (fewest in-flight),
   and `ring_hash` (consistent-hash session affinity), over the healthy set only.
 - **Connection pooling** — long-lived pooled h1/h2 upstream connections via
   `hyper-util`, keyed per backend; TLS to upstreams validated against webpki
   roots (+ optional extra CA), with optional **mTLS** client certificates.
-- **L7 health checking** — TCP / HTTP / HTTPS probes with thresholds and a
-  per-backend state machine; deduplicated across pools; drives selection live.
+- **L7 health checking** — TCP / HTTP / HTTPS / gRPC (`grpc.health.v1`) probes
+  with thresholds and a per-backend state machine; deduplicated across pools;
+  drives selection live.
 - **Lame-duck draining** — a backend signalling a configured drain status moves
   to `DRAINING` (no new requests, in-flight complete) for zero-downtime deploys.
 - **Stateless + file config** — bootstrap TOML + hot-reloadable dynamic JSON

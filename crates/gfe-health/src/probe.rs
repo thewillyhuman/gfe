@@ -1,11 +1,11 @@
-//! Health probes: TCP connect, HTTP GET, HTTPS GET.
+//! Health probes: TCP connect, HTTP GET, HTTPS GET, gRPC health check.
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use gfe_types::{HealthCheckConfig, ProbeType};
-use http_body_util::Empty;
+use gfe_types::{HealthCheckConfig, ProbeType, Scheme};
+use http_body_util::{BodyExt, Empty, Full};
 use hyper::Request;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -27,10 +27,15 @@ pub trait Probe: Send + Sync {
     async fn check(&self, host: &str, port: u16, timeout: Duration) -> ProbeResult;
 }
 
-/// Build a probe from a health-check config.
-pub fn make_probe(cfg: &HealthCheckConfig) -> Box<dyn Probe> {
+/// Build a probe from a health-check config, for a backend of a pool with
+/// the given `scheme`.
+pub fn make_probe(cfg: &HealthCheckConfig, scheme: Scheme) -> Box<dyn Probe> {
     match cfg.probe_type {
         ProbeType::Tcp => Box::new(TcpProbe),
+        // A gRPC server is reached the way the pool's traffic reaches it.
+        ProbeType::Grpc => Box::new(GrpcProbe {
+            tls: scheme == Scheme::Https,
+        }),
         ProbeType::Http => Box::new(HttpProbe {
             path: cfg.path.clone(),
             expected: cfg.expected_status,
@@ -126,6 +131,126 @@ impl HttpProbe {
     }
 }
 
+/// What a gRPC server reports about itself (`grpc.health.v1.ServingStatus`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServingStatus {
+    Serving,
+    /// The server asks not to be sent traffic, typically while shutting down.
+    NotServing,
+    /// `UNKNOWN`, `SERVICE_UNKNOWN`, or a value this probe does not know.
+    Other,
+}
+
+/// Read the serving status out of the body of a `Check` response: one gRPC
+/// frame (a 1-byte compression flag and a 4-byte length) holding a
+/// `HealthCheckResponse`, whose only field is the status.
+fn serving_status(body: &[u8]) -> Option<ServingStatus> {
+    let (header, rest) = body.split_at_checked(5)?;
+    if header[0] != 0 {
+        // Compressed; the probe did not offer any compression.
+        return None;
+    }
+    let length = u32::from_be_bytes([header[1], header[2], header[3], header[4]]) as usize;
+    match rest.get(..length)? {
+        // Field 1, varint.
+        [0x08, 1, ..] => Some(ServingStatus::Serving),
+        [0x08, 2, ..] => Some(ServingStatus::NotServing),
+        // An empty message is the default value, UNKNOWN.
+        _ => Some(ServingStatus::Other),
+    }
+}
+
+/// The request of a `Check` call: one gRPC frame holding an empty
+/// `HealthCheckRequest`, which asks about the server as a whole.
+const CHECK_REQUEST: &[u8] = &[0, 0, 0, 0, 0];
+
+/// gRPC health probe: calls `grpc.health.v1.Health/Check`. `Pass` when the
+/// server reports `SERVING`; `Drain` when it reports `NOT_SERVING`, which is
+/// how a gRPC server announces it is going away; `Fail` otherwise, including
+/// when it does not implement the health service.
+pub struct GrpcProbe {
+    tls: bool,
+}
+
+#[async_trait]
+impl Probe for GrpcProbe {
+    async fn check(&self, host: &str, port: u16, timeout: Duration) -> ProbeResult {
+        match tokio::time::timeout(timeout, self.call(host, port)).await {
+            Ok(Some(ServingStatus::Serving)) => ProbeResult::Pass,
+            Ok(Some(ServingStatus::NotServing)) => ProbeResult::Drain,
+            _ => ProbeResult::Fail,
+        }
+    }
+}
+
+impl GrpcProbe {
+    async fn call(&self, host: &str, port: u16) -> Option<ServingStatus> {
+        let stream = TcpStream::connect((host, port)).await.ok()?;
+        let authority = format!("{host}:{port}");
+        if self.tls {
+            let connector = tokio_rustls::TlsConnector::from(health_tls_config_http2());
+            let server_name = rustls::pki_types::ServerName::try_from(host.to_string()).ok()?;
+            let tls = connector.connect(server_name, stream).await.ok()?;
+            Self::check_over(TokioIo::new(tls), "https", &authority).await
+        } else {
+            Self::check_over(TokioIo::new(stream), "http", &authority).await
+        }
+    }
+
+    /// Run the `Check` call over an established connection (HTTP/2 with
+    /// prior knowledge, as gRPC requires).
+    async fn check_over<I>(io: I, scheme: &str, authority: &str) -> Option<ServingStatus>
+    where
+        I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
+    {
+        let (mut sender, conn) = hyper::client::conn::http2::handshake(TokioExecutor::new(), io)
+            .await
+            .ok()?;
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!(
+                "{scheme}://{authority}/grpc.health.v1.Health/Check"
+            ))
+            .header("content-type", "application/grpc")
+            .header("te", "trailers")
+            .header("user-agent", "gfe-health/0.1")
+            .body(Full::new(Bytes::from_static(CHECK_REQUEST)))
+            .ok()?;
+        let resp = sender.send_request(req).await.ok()?;
+        if resp.status() != hyper::StatusCode::OK {
+            return None;
+        }
+        // The call's own status is in the trailers, or in the headers when
+        // the server fails it without sending a message.
+        let failed_early = resp.headers().contains_key("grpc-status");
+        let response = resp.into_body().collect().await.ok()?;
+        let call_ok = response
+            .trailers()
+            .and_then(|trailers| trailers.get("grpc-status"))
+            .is_some_and(|status| status == "0");
+        if failed_early || !call_ok {
+            return None;
+        }
+        serving_status(&response.to_bytes())
+    }
+}
+
+/// [`health_tls_config`] offering HTTP/2, which a gRPC server requires.
+fn health_tls_config_http2() -> Arc<rustls::ClientConfig> {
+    use std::sync::OnceLock;
+    static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            let mut cfg = (*health_tls_config()).clone();
+            cfg.alpn_protocols = vec![b"h2".to_vec()];
+            Arc::new(cfg)
+        })
+        .clone()
+}
+
 /// A rustls client config for HTTPS health probes that does **not** verify the
 /// server certificate. Health checks are a liveness signal, not a security
 /// boundary, and backends commonly present internal/self-signed certs. This is
@@ -219,5 +344,96 @@ mod tests {
                 .await,
             ProbeResult::Pass
         );
+    }
+
+    #[test]
+    fn reads_the_serving_status_from_a_check_response() {
+        assert_eq!(
+            serving_status(&[0, 0, 0, 0, 2, 0x08, 1]),
+            Some(ServingStatus::Serving)
+        );
+        assert_eq!(
+            serving_status(&[0, 0, 0, 0, 2, 0x08, 2]),
+            Some(ServingStatus::NotServing)
+        );
+    }
+
+    #[test]
+    fn an_empty_check_response_is_not_serving_status() {
+        // An empty message is the protobuf default: UNKNOWN.
+        assert_eq!(serving_status(&[0, 0, 0, 0, 0]), Some(ServingStatus::Other));
+    }
+
+    #[test]
+    fn a_truncated_check_response_has_no_status() {
+        assert_eq!(serving_status(&[]), None);
+        assert_eq!(serving_status(&[0, 0, 0, 0, 2, 0x08]), None);
+    }
+
+    /// A cleartext HTTP/2 server speaking the gRPC health-checking protocol.
+    /// It reports `status` (a `ServingStatus` value), or, given `None`,
+    /// fails the call as a server without a health service does.
+    async fn spawn_grpc_health(status: Option<u8>) -> u16 {
+        use hyper::service::service_fn;
+        use std::convert::Infallible;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let svc = service_fn(move |req: Request<hyper::body::Incoming>| async move {
+                        assert_eq!(req.uri().path(), "/grpc.health.v1.Health/Check");
+                        let (message, call_status) = match status {
+                            Some(status) => (vec![0, 0, 0, 0, 2, 0x08, status], "0"),
+                            None => (Vec::new(), "12"),
+                        };
+                        let mut trailers = hyper::HeaderMap::new();
+                        trailers.insert("grpc-status", call_status.parse().unwrap());
+                        let body = Full::new(Bytes::from(message))
+                            .with_trailers(async move { Some(Ok::<_, Infallible>(trailers)) });
+                        let resp = hyper::Response::builder()
+                            .header("content-type", "application/grpc")
+                            .body(body)
+                            .unwrap();
+                        Ok::<_, Infallible>(resp)
+                    });
+                    let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                        .serve_connection(TokioIo::new(stream), svc)
+                        .await;
+                });
+            }
+        });
+        port
+    }
+
+    async fn grpc_check(port: u16) -> ProbeResult {
+        GrpcProbe { tls: false }
+            .check("127.0.0.1", port, Duration::from_secs(2))
+            .await
+    }
+
+    #[tokio::test]
+    async fn grpc_probe_passes_a_serving_backend() {
+        let port = spawn_grpc_health(Some(1)).await;
+        assert_eq!(grpc_check(port).await, ProbeResult::Pass);
+    }
+
+    #[tokio::test]
+    async fn grpc_probe_drains_a_backend_that_is_not_serving() {
+        let port = spawn_grpc_health(Some(2)).await;
+        assert_eq!(grpc_check(port).await, ProbeResult::Drain);
+    }
+
+    #[tokio::test]
+    async fn grpc_probe_fails_a_backend_without_a_health_service() {
+        let port = spawn_grpc_health(None).await;
+        assert_eq!(grpc_check(port).await, ProbeResult::Fail);
+    }
+
+    #[tokio::test]
+    async fn grpc_probe_fails_a_backend_that_is_down() {
+        assert_eq!(grpc_check(1).await, ProbeResult::Fail);
     }
 }

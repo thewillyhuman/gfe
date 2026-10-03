@@ -511,6 +511,7 @@ pub trait Probe: Send + Sync {
 | `http`  | `HttpProbe`  | GET a configurable path; 2xx (configurable expected status / body substring). |
 | `https` | `HttpsProbe` | Same over TLS; certificate validation configurable. |
 | `tcp`   | `TcpProbe`   | TCP connect succeeds. Fallback for non-HTTP upstreams. |
+| `grpc`  | `GrpcProbe`  | The gRPC health-checking protocol: `grpc.health.v1.Health/Check` for the server as a whole reports `SERVING`. `NOT_SERVING`, which a gRPC server reports while shutting down, moves the backend to `DRAINING` at once (Section 7.4). Uses TLS for `https` pools and cleartext HTTP/2 otherwise; `path`, `expected_status` and `drain_status` do not apply. |
 
 **Parameters (per pool):**
 
@@ -523,7 +524,7 @@ path                = "/healthz"   # http/https
 expected_status     = 200
 ```
 
-**Deduplication (`checker.rs`).** A backend appearing in multiple pools is probed once per `(ip, port, probe)`; the result is shared across all referencing pools.
+**Deduplication (`checker.rs`).** A backend appearing in multiple pools is probed once per `(ip, port, probe)`; the result is shared across all referencing pools. A check changed by a reload restarts the probe of every backend it applies to; the backend keeps its current status until the new probe's thresholds say otherwise.
 
 **State machine (`state_machine.rs`):**
 
