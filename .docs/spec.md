@@ -872,6 +872,7 @@ Some facts about a connection exist only in the kernel. With the eBPF program at
 
 | Metric | Type | Description |
 |---|---|---|
+| `gfe_ebpf_enabled` | Gauge | 1 when the config asks for the kernel program, attached or not. With `gfe_ebpf_attached` at 0 the node runs without the view it was meant to have (alert `GfeKernelViewNotAttached`) |
 | `gfe_ebpf_attached` | Gauge | 1 while the kernel program is attached |
 | `gfe_ebpf_lost_events` | Gauge | Closed connections the kernel could not report because the reader fell behind |
 | `gfe_accept_queue_wait_seconds` | Histogram | Time a connection spent established but not yet accepted (label: listener). The earliest sign of a node falling behind |

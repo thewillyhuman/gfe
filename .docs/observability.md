@@ -138,6 +138,10 @@ no `gfe::tcp` event.
 It needs Linux, `CAP_BPF` and `CAP_NET_ADMIN` (the drop-in
 `deploy/gfe-node-ebpf.conf` grants them under systemd). If it cannot be
 attached, the node logs why, sets `gfe_ebpf_attached` to 0 and runs without it.
+`gfe_ebpf_enabled` is 1 whenever the config asks for it, attached or not, so
+`gfe_ebpf_enabled == 1 and gfe_ebpf_attached == 0` is a node that should have
+the kernel view and does not; the shipped rules alert on it
+(`GfeKernelViewNotAttached`).
 
 ## Below the proxy: packets, drops, interfaces
 

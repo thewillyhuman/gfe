@@ -37,7 +37,9 @@ impl AcceptQueue for KernelView {
 
 /// Attach the kernel program if the config asks for it. `None` if it is not
 /// enabled or cannot be attached, which is logged and never fatal:
-/// observability must not be what keeps a node from serving.
+/// observability must not be what keeps a node from serving. That it was
+/// asked for is exported either way, so that a failure to attach can be
+/// alerted on.
 pub fn attach(
     node: &NodeConfig,
     metrics: &GfeMetrics,
@@ -45,6 +47,7 @@ pub fn attach(
     if !node.ebpf.enabled {
         return None;
     }
+    metrics.kernel.ebpf_enabled.set(1);
     // The program keeps a record per open connection, client and upstream.
     let connections = node
         .limits
@@ -253,6 +256,51 @@ mod tests {
                 "missing {expected} in:\n{exposed}"
             );
         }
+    }
+
+    /// A node config whose `[ebpf]` section says `enabled = {enabled}`.
+    fn node_config(enabled: bool) -> NodeConfig {
+        let path =
+            std::env::temp_dir().join(format!("gfe-kernel-{}-{enabled}.toml", std::process::id()));
+        std::fs::write(
+            &path,
+            format!(
+                "[node]\nid = \"t\"\nloopback_vip = \"127.0.0.1\"\n\
+                 metrics_addr = \"127.0.0.1:9101\"\n\n\
+                 [control_plane]\nconfig_file = \"gfe-dynamic.json\"\n\
+                 local_cache = \"config-cache.json\"\n\n\
+                 [ebpf]\nenabled = {enabled}\n\n[health_check_defaults]\n"
+            ),
+        )
+        .unwrap();
+        gfe_config::load_node_config(&path).unwrap()
+    }
+
+    /// Asked for and not attached (on this host: no Linux, or not the
+    /// capabilities) is what an alert must be able to tell from "not asked
+    /// for". Where it does attach, it needs the runtime to read the kernel's
+    /// reports.
+    #[tokio::test]
+    async fn exports_that_the_kernel_view_is_asked_for_whether_or_not_it_attaches() {
+        let metrics = GfeMetrics::new();
+
+        let attached = attach(&node_config(true), &metrics).is_some();
+
+        let exposed = metrics.encode();
+        assert!(exposed.contains("gfe_ebpf_enabled 1\n"), "{exposed}");
+        let expected = format!("gfe_ebpf_attached {}\n", u8::from(attached));
+        assert!(exposed.contains(&expected), "{exposed}");
+    }
+
+    #[test]
+    fn exports_that_the_kernel_view_is_not_asked_for() {
+        let metrics = GfeMetrics::new();
+
+        attach(&node_config(false), &metrics);
+
+        let exposed = metrics.encode();
+        assert!(exposed.contains("gfe_ebpf_enabled 0\n"), "{exposed}");
+        assert!(exposed.contains("gfe_ebpf_attached 0\n"), "{exposed}");
     }
 
     /// A scrape of the ops server is a connection the node accepts, but it

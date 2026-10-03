@@ -31,9 +31,12 @@ pub struct UpstreamEndingLabels {
 }
 
 /// What the kernel reports about the node's TCP connections (eBPF). All of
-/// it stays at zero unless the kernel program is attached.
+/// it but `ebpf_enabled` stays at zero unless the kernel program is attached.
 #[derive(Clone)]
 pub struct KernelMetrics {
+    /// 1 when the config asks for the kernel program, attached or not: with
+    /// `ebpf_attached` it tells "could not attach" from "not asked for".
+    pub ebpf_enabled: Gauge,
     pub ebpf_attached: Gauge,
     pub ebpf_lost_events: Gauge,
     pub client_tcp_rtt_seconds: Family<ListenerLabel, Histogram>,
@@ -56,6 +59,7 @@ fn rtt_histogram() -> Histogram {
 impl KernelMetrics {
     pub fn register(registry: &mut Registry) -> Self {
         let m = KernelMetrics {
+            ebpf_enabled: Gauge::default(),
             ebpf_attached: Gauge::default(),
             ebpf_lost_events: Gauge::default(),
             client_tcp_rtt_seconds: Family::new_with_constructor(rtt_histogram),
@@ -68,6 +72,11 @@ impl KernelMetrics {
             upstream_tcp_closes: Family::default(),
         };
 
+        registry.register(
+            "gfe_ebpf_enabled",
+            "Whether the config asks for the kernel program (1), attached or not",
+            m.ebpf_enabled.clone(),
+        );
         registry.register(
             "gfe_ebpf_attached",
             "Whether the kernel program is attached (1) and the gfe_*_tcp_* metrics are being fed",
