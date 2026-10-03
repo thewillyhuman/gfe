@@ -20,6 +20,9 @@ spread connections across a fleet with no coordination.
   rotated in place on disk is picked up within 10 s, no restart needed.
 - **L7 routing** — match by SNI/`Host` (exact + single-label wildcard) and path
   (longest-prefix / exact); forward / redirect / fixed-response actions.
+- **gRPC** — unary and streaming calls are proxied end to end over HTTP/2,
+  message by message, with trailers; backends are reached over TLS (`https`,
+  HTTP/2 by ALPN) or cleartext HTTP/2 (`h2c`).
 - **Upstream load balancing** — `round_robin`, `least_request` (fewest in-flight),
   and `ring_hash` (consistent-hash session affinity), over the healthy set only.
 - **Connection pooling** — long-lived pooled h1/h2 upstream connections via

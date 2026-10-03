@@ -46,6 +46,19 @@ fn strip_hop_by_hop(headers: &mut HeaderMap) {
     }
 }
 
+/// Whether the request carries `te: trailers`, and nothing else in `te`.
+///
+/// `TE` is a hop-by-hop header, but `trailers` is the one value HTTP/2
+/// permits (RFC 9113 §8.2.2), and it is not optional for gRPC: clients must
+/// send it and servers use it to detect proxies that cannot relay trailers.
+fn asks_for_trailers(headers: &HeaderMap) -> bool {
+    let mut values = headers.get_all(http::header::TE).iter();
+    match (values.next(), values.next()) {
+        (Some(only), None) => only.as_bytes().eq_ignore_ascii_case(b"trailers"),
+        _ => false,
+    }
+}
+
 fn set_header(headers: &mut HeaderMap, name: &'static str, value: &str) {
     if let Ok(v) = HeaderValue::from_str(value) {
         headers.insert(HeaderName::from_static(name), v);
@@ -108,7 +121,14 @@ pub async fn forward(
     let proto = if ctx.is_tls { "https" } else { "http" };
 
     let (mut parts, body) = req.into_parts();
+    let asks_for_trailers = asks_for_trailers(&parts.headers);
     strip_hop_by_hop(&mut parts.headers);
+    if asks_for_trailers {
+        // GFE relays trailers, so it may make this request on its own hop.
+        parts
+            .headers
+            .insert(http::header::TE, HeaderValue::from_static("trailers"));
+    }
     append_forwarded_for(&mut parts.headers, &ctx.client_ip.to_string());
     set_header(&mut parts.headers, "x-forwarded-proto", proto);
     set_header(&mut parts.headers, "x-forwarded-host", host);
@@ -286,4 +306,45 @@ pub fn fixed_response(status: u16, body: &str, request_id: &str) -> Response<Res
         resp.headers_mut().insert("x-request-id", v);
     }
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.append(*name, HeaderValue::from_static(value));
+        }
+        map
+    }
+
+    #[test]
+    fn te_trailers_asks_for_trailers() {
+        assert!(asks_for_trailers(&headers(&[("te", "trailers")])));
+        assert!(asks_for_trailers(&headers(&[("te", "Trailers")])));
+    }
+
+    #[test]
+    fn other_te_values_do_not_ask_for_trailers() {
+        assert!(!asks_for_trailers(&headers(&[])));
+        assert!(!asks_for_trailers(&headers(&[("te", "gzip")])));
+        assert!(!asks_for_trailers(&headers(&[("te", "trailers, gzip")])));
+    }
+
+    #[test]
+    fn strips_hop_by_hop_and_connection_named_headers() {
+        let mut map = headers(&[
+            ("connection", "x-internal"),
+            ("x-internal", "1"),
+            ("te", "trailers"),
+            ("accept", "*/*"),
+        ]);
+
+        strip_hop_by_hop(&mut map);
+
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key("accept"));
+    }
 }

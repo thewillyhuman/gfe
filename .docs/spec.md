@@ -455,11 +455,12 @@ Long-lived pooled upstream connections are a primary reason to run a shared edge
 
 Forwarding streams bodies without buffering them in full:
 
-- **Hop-by-hop headers** (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade`, `TE`, `Proxy-*`, etc.) are stripped per RFC 9110.
+- **Hop-by-hop headers** (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade`, `TE`, `Proxy-*`, etc.) are stripped per RFC 9110. The one exception is a `TE` of exactly `trailers`, which is passed on: GFE does relay trailers, and gRPC requires the header.
 - **Forwarding headers** are added/normalized: `X-Forwarded-For` (append client IP), `X-Forwarded-Proto`, `X-Forwarded-Host`, `Forwarded`, and a generated `X-Request-Id` (propagated if the client supplied a valid one) for end-to-end tracing.
 - **Streaming.** Request and response bodies are streamed (`http-body`), so large uploads/downloads do not consume proportional memory. Backpressure flows naturally through the async body.
 - **HSTS** (`Strict-Transport-Security`) is injected on HTTPS responses per TLS policy.
 - **Protocol translation.** Client h2 ↔ upstream h1 (and vice versa) is handled transparently by hyper at the request/response abstraction level.
+- **gRPC.** A gRPC call is an HTTP/2 request whose status travels in the response trailers, so it needs HTTP/2 on both legs and nothing buffered in between. GFE proxies unary and streaming calls (client-, server- and bidirectional) when the client connects over HTTP/2 and the pool's scheme is `https` (the backend selects `h2` by ALPN) or `h2c` (Section 4). Messages are relayed frame by frame in both directions and trailers are passed through. gRPC calls are `POST`s, so they are never retried. When GFE itself fails a call (no route, no healthy upstream, upstream error or timeout) the client receives the plain HTTP status, which gRPC clients map to a gRPC status themselves (`502`/`503`/`504` → `UNAVAILABLE`).
 
 ### 6.8 Timeouts, Retries, and Limits
 

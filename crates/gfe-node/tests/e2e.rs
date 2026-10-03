@@ -868,6 +868,18 @@ async fn relays_grpc_call_with_trailers_to_h2c_upstream() {
     assert_eq!(trailers["grpc-status"], "0");
 }
 
+/// gRPC servers use `te: trailers` to detect proxies that cannot relay
+/// trailers, and reject calls that arrive without it.
+#[tokio::test]
+async fn forwards_te_trailers_to_grpc_upstream() {
+    let upstream = spawn_grpc_upstream().await;
+    let (proxy, _tx) = start_proxy(&grpc_config(upstream), build_shared()).await;
+
+    let call = GrpcCall::open(proxy).await;
+
+    assert_eq!(call.response.headers()["x-seen-te"], "trailers");
+}
+
 #[tokio::test]
 async fn relays_grpc_stream_message_by_message() {
     let upstream = spawn_grpc_upstream().await;
