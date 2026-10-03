@@ -7,8 +7,14 @@ use gfe_metrics::RejectLabel;
 use gfe_types::Listener;
 use rustls::ServerConfig;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::{watch, Semaphore};
+
+/// How long the accept loop waits after a failed `accept` before trying
+/// again. The errors that persist (out of file descriptors or memory) would
+/// otherwise spin the loop on a core and flood the log.
+const ACCEPT_ERROR_PAUSE: Duration = Duration::from_millis(100);
 
 /// Accept connections on one socket until `shutdown` flips to `true`. The
 /// connections accepted until then watch the same signal, to leave in an
@@ -45,6 +51,10 @@ pub async fn run_listener(
                     Ok(v) => v,
                     Err(e) => {
                         tracing::warn!(error = %e, id = %listener.id, "accept error");
+                        if pause_unless_shut_down(&mut shutdown, ACCEPT_ERROR_PAUSE).await {
+                            tracing::info!(id = %listener.id, "listener draining, stop accepting");
+                            break;
+                        }
                         continue;
                     }
                 };
@@ -78,6 +88,15 @@ pub async fn run_listener(
     }
 }
 
+/// Wait for `pause`, unless `shutdown` turns `true` (or its sender goes away)
+/// first. Returns `true` if the pause was cut short by the shutdown.
+async fn pause_unless_shut_down(shutdown: &mut watch::Receiver<bool>, pause: Duration) -> bool {
+    tokio::select! {
+        _ = tokio::time::sleep(pause) => false,
+        _ = shutdown.wait_for(|shut_down| *shut_down) => true,
+    }
+}
+
 fn reject(shared: &ProxyShared, reason: &str) {
     shared
         .metrics
@@ -87,4 +106,34 @@ fn reject(shared: &ProxyShared, reason: &str) {
             reason: reason.to_string(),
         })
         .inc();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn pause_lasts_its_whole_length_without_shutdown() {
+        let (_tx, mut shutdown) = watch::channel(false);
+        let started = std::time::Instant::now();
+
+        let shut_down = pause_unless_shut_down(&mut shutdown, Duration::from_millis(50)).await;
+
+        assert!(!shut_down);
+        assert!(started.elapsed() >= Duration::from_millis(50));
+    }
+
+    #[tokio::test]
+    async fn pause_ends_as_soon_as_the_node_shuts_down() {
+        let (tx, mut shutdown) = watch::channel(false);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            tx.send(true).unwrap();
+        });
+
+        let pause = pause_unless_shut_down(&mut shutdown, Duration::from_secs(60));
+        let shut_down = tokio::time::timeout(Duration::from_secs(5), pause).await;
+
+        assert_eq!(shut_down, Ok(true));
+    }
 }

@@ -389,7 +389,7 @@ One accept loop runs per configured listener. Each loop:
 
 1. Binds the listener address (`TcpListener`) with `SO_REUSEADDR`; `TCP_NODELAY` and TCP keepalive (Section 6.8) are set on accepted sockets.
 2. Accepts connections and enforces a **global and per-listener max concurrent connection limit**. When the limit is hit, new connections are accepted and immediately closed (counted via `gfe_connections_rejected_total`) rather than being left to pile up in the backlog.
-3. Spawns one Tokio task per accepted connection (`connection.rs`). The accept loop never blocks on per-connection work.
+3. Spawns one Tokio task per accepted connection (`connection.rs`). The accept loop never blocks on per-connection work. After a failed `accept` it waits 100 ms before accepting again (still stopping at once on shutdown), so an error that persists, such as running out of file descriptors, neither spins a core nor floods the log.
 4. Applies an **accept-to-first-byte / handshake timeout** so slow-loris-style connections that never make progress are reaped early.
 
 The set of active listeners is part of the config snapshot and is reconciled on every reload (`listeners.rs`). A listening socket is identified by its **address and port**; a listener's protocol is read per accepted connection and its id per request, so they can change without rebinding (a renamed listener's open connections are routed by the new id). On reload:
