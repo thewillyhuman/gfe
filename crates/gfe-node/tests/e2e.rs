@@ -21,12 +21,19 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 
 /// Spawn a mock upstream that echoes the `X-Forwarded-For` and `Host` headers
 /// so tests can assert forwarding behaviour.
 async fn spawn_upstream() -> SocketAddr {
+    spawn_upstream_answering_after(Duration::ZERO).await
+}
+
+/// Like [`spawn_upstream`], but each response is delayed by `delay`.
+async fn spawn_upstream_answering_after(delay: Duration) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -34,7 +41,8 @@ async fn spawn_upstream() -> SocketAddr {
             let (stream, _) = listener.accept().await.unwrap();
             tokio::spawn(async move {
                 let io = TokioIo::new(stream);
-                let svc = service_fn(|req: Request<Incoming>| async move {
+                let svc = service_fn(move |req: Request<Incoming>| async move {
+                    tokio::time::sleep(delay).await;
                     let xff = req
                         .headers()
                         .get("x-forwarded-for")
@@ -71,6 +79,10 @@ fn self_signed_files(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
 }
 
 fn build_shared() -> Arc<ProxyShared> {
+    build_shared_with(TimeoutsConfig::default(), LimitsConfig::default())
+}
+
+fn build_shared_with(timeouts: TimeoutsConfig, limits: LimitsConfig) -> Arc<ProxyShared> {
     let resolver = Arc::new(SniResolver::new(CertStore::default()));
     Arc::new(ProxyShared {
         routes: ArcSwap::from_pointee(RouteTable::default()),
@@ -80,8 +92,8 @@ fn build_shared() -> Arc<ProxyShared> {
         health: Arc::new(HealthMap::new(true)),
         upstream: UpstreamClient::new(16).unwrap(),
         metrics: Arc::new(GfeMetrics::new()),
-        limits: LimitsConfig::default(),
-        timeouts: TimeoutsConfig::default(),
+        limits,
+        timeouts,
         tls: TlsConfig::default(),
         draining: AtomicBool::new(false),
     })
@@ -375,7 +387,6 @@ async fn serves_acme_http01_challenge() {
 async fn health_failover_excludes_dead_backend() {
     use gfe_health::HealthChecker;
     use gfe_types::{HealthCheckConfig, ProbeType};
-    use std::time::Duration;
 
     // One healthy upstream, one dead (closed port).
     let good = spawn_upstream().await;
@@ -453,4 +464,137 @@ async fn health_failover_excludes_dead_backend() {
         assert!(body.contains("upstream-ok"), "body: {body}");
     }
     checker.stop_all();
+}
+
+/// One plaintext listener answering every request with a fixed `200 ok`:
+/// enough to exercise connection handling without an upstream.
+fn fixed_response_config() -> DynamicConfig {
+    DynamicConfig {
+        listeners: vec![Listener {
+            id: ListenerId("http".into()),
+            address: "127.0.0.1".parse().unwrap(),
+            port: 0,
+            protocol: ListenProtocol::Http,
+        }],
+        routes: vec![Route {
+            id: RouteId("fixed".into()),
+            listener: ListenerId("http".into()),
+            host: "*".into(),
+            path_prefix: "/".into(),
+            action: RouteAction::Fixed(gfe_types::FixedAction {
+                status: 200,
+                body: "ok".into(),
+            }),
+        }],
+        ..Default::default()
+    }
+}
+
+/// Read until the server closes the connection, failing the test if it is
+/// still open after a few seconds.
+async fn read_until_closed(stream: &mut TcpStream) -> String {
+    let mut received = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut received))
+        .await
+        .expect("server should have closed the connection")
+        .unwrap();
+    String::from_utf8_lossy(&received).to_string()
+}
+
+#[tokio::test]
+async fn closes_connection_that_never_sends_a_request() {
+    let timeouts = TimeoutsConfig {
+        request_header: Duration::from_millis(200),
+        ..Default::default()
+    };
+    let shared = build_shared_with(timeouts, LimitsConfig::default());
+    let (proxy_addr, _tx) = start_proxy(&fixed_response_config(), shared).await;
+
+    let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
+    let received = read_until_closed(&mut stream).await;
+
+    assert_eq!(received, "");
+}
+
+#[tokio::test]
+async fn closes_keep_alive_connection_idle_for_client_idle() {
+    let timeouts = TimeoutsConfig {
+        client_idle: Duration::from_millis(200),
+        ..Default::default()
+    };
+    let shared = build_shared_with(timeouts, LimitsConfig::default());
+    let (proxy_addr, _tx) = start_proxy(&fixed_response_config(), shared).await;
+
+    let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nhost: a.example.org\r\n\r\n")
+        .await
+        .unwrap();
+    let received = read_until_closed(&mut stream).await;
+
+    assert!(received.starts_with("HTTP/1.1 200"), "{received}");
+}
+
+#[tokio::test]
+async fn serves_request_that_takes_longer_than_client_idle() {
+    let upstream = spawn_upstream_answering_after(Duration::from_millis(600)).await;
+    let cfg = DynamicConfig {
+        listeners: vec![Listener {
+            id: ListenerId("http".into()),
+            address: "127.0.0.1".parse().unwrap(),
+            port: 0,
+            protocol: ListenProtocol::Http,
+        }],
+        routes: vec![Route {
+            id: RouteId("web".into()),
+            listener: ListenerId("http".into()),
+            host: "a.example.org".into(),
+            path_prefix: "/".into(),
+            action: RouteAction::Forward("pool".into()),
+        }],
+        pools: vec![UpstreamPool {
+            id: PoolId("pool".into()),
+            scheme: Scheme::Http,
+            lb_policy: Default::default(),
+            upstreams: vec![Upstream {
+                host: upstream.ip().to_string(),
+                port: upstream.port(),
+                weight: 1,
+            }],
+            health_check: None,
+        }],
+        ..Default::default()
+    };
+    let timeouts = TimeoutsConfig {
+        request_header: Duration::from_millis(200),
+        client_idle: Duration::from_millis(200),
+        ..Default::default()
+    };
+    let shared = build_shared_with(timeouts, LimitsConfig::default());
+    let (proxy_addr, _tx) = start_proxy(&cfg, shared).await;
+
+    let (status, body) = http_get(proxy_addr, "a.example.org", "/").await;
+
+    assert_eq!(status, 200, "body: {body}");
+}
+
+#[tokio::test]
+async fn rejects_request_headers_larger_than_max_header_bytes() {
+    let limits = LimitsConfig {
+        max_header_bytes: 8192,
+        ..Default::default()
+    };
+    let shared = build_shared_with(TimeoutsConfig::default(), limits);
+    let (proxy_addr, _tx) = start_proxy(&fixed_response_config(), shared).await;
+
+    // A request head that fills the whole limit without ever ending. Sending
+    // exactly the limit (and no more) keeps the close clean: the server has
+    // nothing left unread, so the client sees the response, not a reset.
+    let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
+    let prefix = "GET / HTTP/1.1\r\nhost: a.example.org\r\nx-padding: ";
+    let request = format!("{prefix}{}", "a".repeat(8192 - prefix.len()));
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let received = read_until_closed(&mut stream).await;
+
+    assert!(received.starts_with("HTTP/1.1 431"), "{received}");
 }

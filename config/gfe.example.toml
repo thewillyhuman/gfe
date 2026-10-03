@@ -24,17 +24,17 @@ hsts        = "max-age=31536000; includeSubDomains"
 [limits]
 max_connections           = 100000
 max_connections_listener  = 50000
-max_header_bytes          = 65536
+max_header_bytes          = 65536    # request head limit (431 above it); minimum 8192
 max_h2_concurrent_streams = 256
 max_upstream_connections  = 20000
 
 [timeouts]
 tls_handshake       = "10s"
-request_header      = "10s"
+request_header      = "10s"   # first request head must arrive within this of connecting
 upstream_connect    = "3s"
 upstream_first_byte = "30s"
 request_total       = "60s"
-client_idle         = "75s"
+client_idle         = "75s"   # close a connection with no request in flight for this long
 drain_deadline      = "30s"
 
 [health_check_defaults]

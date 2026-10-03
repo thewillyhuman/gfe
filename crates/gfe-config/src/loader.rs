@@ -3,11 +3,24 @@
 use gfe_types::{DynamicConfig, GfeError, NodeConfig};
 use std::path::Path;
 
+/// The smallest `limits.max_header_bytes` the HTTP server can be given: it
+/// needs at least this much buffer to read a request head.
+pub const MIN_HEADER_BYTES: usize = 8192;
+
 /// Load the bootstrap node config from a TOML file.
 pub fn load_node_config(path: &Path) -> Result<NodeConfig, GfeError> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| GfeError::Config(format!("reading {}: {e}", path.display())))?;
-    toml::from_str(&text).map_err(|e| GfeError::Config(format!("parsing {}: {e}", path.display())))
+    let config: NodeConfig = toml::from_str(&text)
+        .map_err(|e| GfeError::Config(format!("parsing {}: {e}", path.display())))?;
+    if config.limits.max_header_bytes < MIN_HEADER_BYTES {
+        return Err(GfeError::Config(format!(
+            "{}: limits.max_header_bytes must be at least {MIN_HEADER_BYTES}, got {}",
+            path.display(),
+            config.limits.max_header_bytes
+        )));
+    }
+    Ok(config)
 }
 
 /// Load the dynamic config (listeners/routes/pools/certs) from a JSON file.
@@ -35,6 +48,20 @@ mod tests {
             .unwrap();
         let cfg = load_dynamic_config(&path).unwrap();
         assert_eq!(cfg.listeners.len(), 1);
+    }
+
+    #[test]
+    fn rejects_max_header_bytes_below_minimum() {
+        let toml = "[node]\nid = \"t\"\nloopback_vip = \"127.0.0.1\"\n\n\
+                    [control_plane]\nconfig_file = \"/etc/gfe/gfe-dynamic.json\"\n\n\
+                    [limits]\nmax_header_bytes = 1024\n\n\
+                    [health_check_defaults]\n";
+        let path = std::env::temp_dir().join(format!("gfe-node-{}.toml", std::process::id()));
+        std::fs::write(&path, toml).unwrap();
+
+        let err = load_node_config(&path).unwrap_err();
+
+        assert!(err.to_string().contains("max_header_bytes"), "{err}");
     }
 
     #[test]

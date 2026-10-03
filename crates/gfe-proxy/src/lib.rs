@@ -6,6 +6,7 @@
 //! reads them lock-free on the hot path.
 
 pub mod acceptor;
+pub mod activity;
 pub mod connection;
 pub mod drain;
 pub mod errors;

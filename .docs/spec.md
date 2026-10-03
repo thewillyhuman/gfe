@@ -460,8 +460,11 @@ Forwarding streams bodies without buffering them in full:
 Bounded, predictable behaviour under stress:
 
 - **Timeouts:** TLS handshake, request header, upstream connect, upstream first-byte, and overall request timeouts — all configurable, with safe defaults.
+- **Client timeouts (`activity.rs`, `connection.rs`).** A request is *in flight* from its parsed head until its response body is fully written. Two timeouts are derived from that:
+  - `request_header` — the **first** request head must arrive within this long of the connection being established (after the TLS handshake), else the connection is dropped. This bounds connections that never send, or drip, a request.
+  - `client_idle` — a connection with **no request in flight** for this long is shut down gracefully (HTTP/2 clients receive a `GOAWAY`). On HTTP/1 this covers the keep-alive wait *and* the time to receive the next request head, since hyper runs one timer over both. A connection with a request in flight is never closed by these timeouts, however slow the upstream or the transfer.
 - **Retries (conservative).** Only **idempotent** requests (per method, and only when the request body has not yet been streamed) are retried, and only on **connection-establishment / pre-response** failures, with a small bounded retry budget. GFE never retries after any response bytes have been forwarded. This avoids amplifying load during incidents.
-- **Limits:** max header bytes, max concurrent connections (global + per listener), max concurrent h2 streams, and max upstream connections. Exceeding a limit yields a clean `4xx`/`5xx` (or connection refusal) and a counter — never unbounded growth.
+- **Limits:** max header bytes (`431` when exceeded; at least 8192), max concurrent connections (global + per listener), max concurrent h2 streams, and max upstream connections. Exceeding a limit yields a clean `4xx`/`5xx` (or connection refusal) and a counter — never unbounded growth.
 - **Synthetic errors (`errors.rs`).** GFE emits compact, consistent error responses (404 no-route, 502 upstream error, 503 no-healthy-upstream / overloaded, 504 timeout) with a request id, suitable for debugging without leaking internals.
 
 ---
