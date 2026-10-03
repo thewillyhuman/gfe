@@ -10,7 +10,7 @@ use std::os::unix::net::{UnixDatagram, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -76,12 +76,23 @@ fn eventually(mut condition: impl FnMut() -> bool) -> bool {
     false
 }
 
-/// A loopback address that was free a moment ago.
+/// A loopback address that was free a moment ago, and that no other call
+/// returns.
+///
+/// Its port is below the ones the system gives the client end of a
+/// connection (from 32768 on Linux, 49152 on macOS). The clients of a test
+/// open hundreds of connections a second, and one of them could otherwise
+/// take the port before the node it was meant for listens on it.
 fn free_addr() -> SocketAddr {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
+    static NEXT: AtomicU16 = AtomicU16::new(0);
+    // Apart from the ports of a run of these tests next to this one.
+    let first = 20_000 + u16::try_from(std::process::id() % 100).unwrap() * 100;
+    loop {
+        let port = first + NEXT.fetch_add(1, Ordering::SeqCst) % 100;
+        if let Ok(socket) = TcpListener::bind(("127.0.0.1", port)) {
+            return socket.local_addr().unwrap();
+        }
+    }
 }
 
 /// A node that was started to take over the sockets of this test, which
