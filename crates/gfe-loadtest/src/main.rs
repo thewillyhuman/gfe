@@ -163,7 +163,9 @@ async fn run_load(
     Ok(())
 }
 
-/// One connection reused for many sequential requests until the deadline.
+/// One connection reused for many sequential requests until the deadline. A
+/// server that says `Connection: close` is obeyed, as an HTTP client would:
+/// the next request goes over a new connection, and nothing went wrong.
 async fn worker_keepalive(
     t: Arc<Target>,
     connector: Option<tokio_rustls::TlsConnector>,
@@ -182,7 +184,12 @@ async fn worker_keepalive(
         while Instant::now() < deadline {
             let start = Instant::now();
             match send_one(&mut sender, &t).await {
-                Ok(()) => lat.push(start.elapsed().as_nanos() as u64),
+                Ok(reusable) => {
+                    lat.push(start.elapsed().as_nanos() as u64);
+                    if !reusable {
+                        break; // reconnect, as told
+                    }
+                }
                 Err(_) => {
                     errors += 1;
                     break; // reconnect
@@ -211,7 +218,7 @@ async fn worker_reconnect(
         })
         .await;
         match result {
-            Ok(Ok(())) => lat.push(start.elapsed().as_nanos() as u64),
+            Ok(Ok(_)) => lat.push(start.elapsed().as_nanos() as u64),
             _ => errors += 1,
         }
     }
@@ -244,7 +251,10 @@ where
     Ok(sender)
 }
 
-async fn send_one(sender: &mut Sender, t: &Target) -> Result<()> {
+/// Send one request and read its response. Returns whether the connection
+/// may carry another request, which it may not once the server has said
+/// `Connection: close`.
+async fn send_one(sender: &mut Sender, t: &Target) -> Result<bool> {
     let req = Request::builder()
         .uri(&t.path)
         .header("host", &t.host)
@@ -253,9 +263,13 @@ async fn send_one(sender: &mut Sender, t: &Target) -> Result<()> {
     if !resp.status().is_success() {
         anyhow::bail!("status {}", resp.status());
     }
+    let told_to_close = resp
+        .headers()
+        .get(hyper::header::CONNECTION)
+        .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"close"));
     // Drain the body so the connection is reusable.
     let _ = resp.into_body().collect().await?;
-    Ok(())
+    Ok(!told_to_close)
 }
 
 fn report(label: &str, mode: &str, latencies: &mut [u64], errors: u64, elapsed: f64) {
@@ -330,5 +344,42 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
         rustls::crypto::ring::default_provider()
             .signature_verification_algorithms
             .supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A server that answers one request per connection and says so.
+    async fn spawn_server_closing_after_each_response() -> std::net::SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut request = [0u8; 1024];
+                    let _ = stream.read(&mut request).await;
+                    let response =
+                        b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok";
+                    let _ = stream.write_all(response).await;
+                });
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn keepalive_client_reconnects_when_told_to_without_counting_an_error() {
+        let server = spawn_server_closing_after_each_response().await;
+        let target = Arc::new(parse_target(&format!("http://{server}/")).unwrap());
+        let deadline = Instant::now() + Duration::from_millis(200);
+
+        let (answered, errors) = worker_keepalive(target, None, deadline).await;
+
+        assert_eq!(errors, 0);
+        assert!(answered.len() > 1, "{} requests answered", answered.len());
     }
 }
