@@ -3,7 +3,8 @@
 FROM fullstorydev/grpcurl:latest AS grpcurl
 
 FROM alpine:3.22
-RUN apk add --no-cache curl
+# iproute2 provides `tc`, to degrade a client's network on purpose.
+RUN apk add --no-cache curl iproute2
 COPY --from=grpcurl /bin/grpcurl /usr/local/bin/grpcurl
 COPY traffic.sh /traffic.sh
 ENTRYPOINT ["/bin/sh", "/traffic.sh"]

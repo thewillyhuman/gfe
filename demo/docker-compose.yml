@@ -54,6 +54,12 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command: ["/usr/local/bin/gfe-node --config /etc/gfe/gfe.toml 2>&1 | tee -a /var/log/gfe/gfe.log"]
     restart: unless-stopped
+    # Kernel TCP statistics: loading the eBPF program needs CAP_BPF and
+    # CAP_NET_ADMIN. Docker only gives added capabilities to root, hence the
+    # user; under systemd the unprivileged service user gets them as ambient
+    # capabilities instead (see deploy/gfe-node.service).
+    user: "0:0"
+    cap_add: [BPF, NET_ADMIN]
     volumes:
       - ./gfe:/etc/gfe:ro
       - certs:/etc/gfe-certs:ro
@@ -106,7 +112,17 @@ services:
     restart: unless-stopped
     depends_on: [gfe]
     deploy:
-      replicas: 3        # three client addresses in the logs
+      replicas: 2        # with traffic-far: three client addresses in the logs
+
+  traffic-far:
+    # The same client behind a worse network: 40 ms away and losing packets.
+    # It is what the kernel-view panels have to tell apart from the others.
+    build: ./traffic
+    restart: unless-stopped
+    depends_on: [gfe]
+    cap_add: [NET_ADMIN]   # for `tc`, which applies NETEM
+    environment:
+      NETEM: "delay 40ms 10ms loss 3%"
 
   # -------------------------------------------------------------- monitoring
   node-exporter:

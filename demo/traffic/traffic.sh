@@ -92,6 +92,13 @@ worker() {
     done
 }
 
+# NETEM, if set, degrades this client's network with `tc` (it needs
+# CAP_NET_ADMIN), e.g. "delay 40ms 10ms loss 3%".
+if [ -n "${NETEM:-}" ]; then
+    # shellcheck disable=SC2086  # NETEM is a list of tc arguments
+    tc qdisc replace dev eth0 root netem $NETEM && echo "traffic: network degraded ($NETEM)"
+fi
+
 echo "traffic: $WORKERS workers against $GFE"
 i=0
 while [ "$i" -lt "$WORKERS" ]; do

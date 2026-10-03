@@ -46,9 +46,11 @@ The HTTP backends are [go-httpbin](https://github.com/mccutchen/go-httpbin):
 `/status/503`, `/delay/5`, `/bytes/100000`, `/drip` and friends produce any
 status, latency or size on demand.
 
-**The clients.** Three `traffic` containers (three client addresses) run
+**The clients.** Three containers (three client addresses) run
 [`traffic/traffic.sh`](traffic/traffic.sh): about two thirds healthy requests
 over HTTP/1.1, HTTP/2 and gRPC, and one third of what an edge sees every day.
+Two of them (`traffic`) sit next to the node. The third (`traffic-far`) is the
+same client behind a worse network: 40 ms away and losing 3% of its packets.
 
 | The traffic does | Look for |
 |---|---|
@@ -62,6 +64,17 @@ over HTTP/1.1, HTTP/2 and gRPC, and one third of what an edge sees every day.
 | plain HTTP sent to the TLS port, an untrusted certificate, TLS 1.1 only | `TLS handshake failures by reason`; the connection log's `tls_error` and `error` |
 | gRPC calls that fail on purpose, and one to a dead pool | `gRPC calls by status`; status 14 with `error` set is GFE's own answer |
 | a 10-second gRPC server stream | long durations on the `grpcbin` route: streams, not slowness |
+| the same requests from the far client | the *Kernel* panels: its round-trip time and retransmissions, which no request metric shows |
+
+**The kernel view.** The node runs with `[ebpf] enabled = true`: a small eBPF
+program attached to its cgroup reports, for every TCP connection of the node,
+how long it waited to be accepted, its round-trip time, its retransmissions
+and how it ended. The panels titled *Kernel: …* on both dashboards are built
+on it, and each closed connection is logged as a `gfe::tcp` event. The
+container runs as root with `CAP_BPF` and `CAP_NET_ADMIN` for this, because
+Docker gives added capabilities to root only; under systemd the unprivileged
+service user gets them through the drop-in in
+[`deploy/gfe-node-ebpf.conf`](../deploy/gfe-node-ebpf.conf).
 
 **The monitoring.**
 
@@ -106,6 +119,11 @@ docker compose start web2
 # Lose a gRPC backend: the gRPC health probe takes it out
 docker compose stop greeter1
 
+# Make the far client's network worse, or as good as the others': watch the
+# Kernel panels, and note that request latency barely tells them apart
+docker compose exec traffic-far tc qdisc replace dev eth0 root netem delay 150ms loss 10%
+docker compose exec traffic-far tc qdisc del dev eth0 root
+
 # Rotate the certificate under the running node: picked up within 10 s,
 # visible as a step in "Days until cert expiry" and as one reload in the logs
 ROTATE=1 docker compose run --rm setup
@@ -126,6 +144,9 @@ the previous config, counts a reload error and raises
 - Always bring the whole project up (`docker compose up -d`), not single
   services: node_exporter lives in the node's network namespace and has to be
   recreated with it.
+- The kernel view needs the Docker VM's kernel to allow eBPF, which Docker
+  Desktop's does. Where it does not, the node logs why, `gfe_ebpf_attached`
+  stays at 0 and the *Kernel* panels stay empty; everything else works.
 - The log file grows for as long as the stack runs; `docker compose down -v`
   removes it.
 - Grafana runs without a login and with admin rights. That is acceptable for a

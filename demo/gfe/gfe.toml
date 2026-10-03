@@ -17,6 +17,9 @@ hsts        = "max-age=3600"
 upstream_first_byte = "3s"          # short, so the traffic's slow requests time out
 client_idle         = "30s"
 
+[ebpf]
+enabled = true                      # kernel TCP statistics; the container gets CAP_BPF and CAP_NET_ADMIN
+
 [health_check_defaults]
 type                = "http"
 interval            = "2s"

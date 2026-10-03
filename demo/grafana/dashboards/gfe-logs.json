@@ -466,14 +466,128 @@
       }
     },
     {
-      "id": 13,
+      "title": "Kernel: round-trip time by client (p95)",
+      "type": "timeseries",
+      "description": "From the gfe::tcp log (eBPF). One line per client address: the network distance to each client.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{fields_client}}",
+          "expr": "quantile_over_time(0.95, {job=\"gfe\", target=\"gfe::tcp\"} | json | fields_side=\"client\" | unwrap fields_rtt_ms [$__auto]) by (fields_client)"
+        }
+      ],
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 32
+      },
+      "id": 13
+    },
+    {
+      "title": "Kernel: retransmitted segments by client",
+      "type": "bargauge",
+      "description": "From the gfe::tcp log (eBPF): which clients sit behind a lossy path.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__series.name}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{fields_client}}",
+          "expr": "sum by (fields_client) (sum_over_time({job=\"gfe\", target=\"gfe::tcp\"} | json | fields_side=\"client\" | unwrap fields_retransmits [$__interval]))"
+        }
+      ],
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 32
+      },
+      "id": 14
+    },
+    {
+      "title": "Kernel: how connections end",
+      "type": "bargauge",
+      "description": "From the gfe::tcp log (eBPF): who closed first at the TCP level, or whether the connection was aborted.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "displayName": "${__series.name}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{fields_side}} · {{fields_ending}}",
+          "expr": "sum by (fields_side, fields_ending) (count_over_time({job=\"gfe\", target=\"gfe::tcp\"} | json [$__interval]))"
+        }
+      ],
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 32
+      },
+      "id": 15
+    },
+    {
+      "id": 16,
       "title": "Requests that did not complete",
       "type": "logs",
       "gridPos": {
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 32
+        "y": 40
       },
       "datasource": {
         "type": "loki",
@@ -496,14 +610,14 @@
       }
     },
     {
-      "id": 14,
+      "id": 17,
       "title": "Server errors",
       "type": "logs",
       "gridPos": {
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 32
+        "y": 40
       },
       "datasource": {
         "type": "loki",
@@ -526,14 +640,14 @@
       }
     },
     {
-      "id": 15,
+      "id": 18,
       "title": "Access log (filter with the variables above)",
       "type": "logs",
       "gridPos": {
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 50
       },
       "datasource": {
         "type": "loki",
@@ -557,14 +671,14 @@
       }
     },
     {
-      "id": 16,
+      "id": 19,
       "title": "Node events",
       "type": "logs",
       "gridPos": {
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 54
+        "y": 62
       },
       "datasource": {
         "type": "loki",
