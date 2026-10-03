@@ -14,7 +14,7 @@
 # systemd service per `deploy/gfe-node.service`); it exists for CI integration
 # tests and for environments that already standardise on container delivery.
 
-FROM rust:1.87-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 WORKDIR /src
 
 # Copy the manifest first to maximise Docker layer caching: the dep build

@@ -32,7 +32,7 @@ license = "MIT"
 # Internal workspace crates, not crates.io publications.
 publish = false
 # Minimum supported Rust version (floor, not target). CI tracks stable.
-rust-version = "1.87"
+rust-version = "1.88"
 
 [workspace.dependencies]
 # Workspace crates
