@@ -128,8 +128,9 @@ async fn serves_certificate_rotated_in_place() {
     let node = Node::start("cert", |dir| {
         original = Some(rotate_certificate(dir));
         format!(
-            r#"{{"certificates":[{{"default":true,"cert_file":"{0}/tls.crt","key_file":"{0}/tls.key"}}]}}"#,
-            dir.display()
+            r#"{{"certificates":[{{"default":true,"cert_file":"{0}/tls.crt","key_file":"{0}/tls.key"}}],"listeners":[{1}]}}"#,
+            dir.display(),
+            listener_json("http", free_addr())
         )
     });
     assert_eq!(Some(served_certificate(&node.shared)), original);

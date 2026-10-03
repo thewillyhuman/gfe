@@ -18,6 +18,17 @@ pub const MAX_RING_POINTS: u64 = 1_000_000;
 
 /// Validate the dynamic config. Returns the first error found.
 pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
+    // A node serves nothing without a listener, and applying such a config
+    // closes every socket it has. An empty file is far more likely a
+    // template that rendered nothing than a wish to stop serving.
+    if cfg.listeners.is_empty() {
+        return Err(GfeError::Validation(
+            "the config has no listeners: a node would close every listening socket; \
+             stop the service instead if that is the intent"
+                .into(),
+        ));
+    }
+
     // Unique listener ids, and one listener per address: a listening socket
     // is identified by the address it is bound to.
     let mut listener_ids = HashSet::new();
@@ -184,6 +195,18 @@ mod tests {
     }
 
     #[test]
+    fn config_without_listeners_fails() {
+        let cfg = DynamicConfig {
+            pools: vec![pool("p")],
+            ..Default::default()
+        };
+
+        let err = validate(&cfg).unwrap_err();
+
+        assert!(err.to_string().contains("no listeners"), "{err}");
+    }
+
+    #[test]
     fn two_listeners_on_one_address_fail() {
         let mut second = listener();
         second.id = ListenerId("other".into());
@@ -229,9 +252,11 @@ mod tests {
         };
         let cfg = DynamicConfig {
             certificates: vec![mk(), mk()],
+            listeners: vec![listener()],
             ..Default::default()
         };
-        assert!(validate(&cfg).is_err());
+        let err = validate(&cfg).unwrap_err();
+        assert!(err.to_string().contains("default certificate"), "{err}");
     }
 
     /// A valid config whose only pool is `pool`.

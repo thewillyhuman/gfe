@@ -172,6 +172,15 @@ mod tests {
         assert!(s.resolver.current().resolve(None).is_some());
     }
 
+    fn http_listener() -> Listener {
+        Listener {
+            id: ListenerId("http".into()),
+            address: "127.0.0.1".parse().unwrap(),
+            port: 8080,
+            protocol: ListenProtocol::Http,
+        }
+    }
+
     #[test]
     fn prepare_rejects_a_certificate_that_cannot_be_loaded() {
         let cfg = DynamicConfig {
@@ -181,6 +190,7 @@ mod tests {
                 cert_file: "/nonexistent/gfe.crt".into(),
                 key_file: "/nonexistent/gfe.key".into(),
             }],
+            listeners: vec![http_listener()],
             ..Default::default()
         };
 
@@ -201,9 +211,12 @@ mod tests {
                 path_prefix: "/".into(),
                 action: RouteAction::Forward("p".into()),
             }],
+            listeners: vec![http_listener()],
             ..Default::default()
         };
 
-        assert!(prepare(&cfg).is_err());
+        let err = prepare(&cfg).err().expect("the route is dangling");
+
+        assert!(err.to_string().contains("unknown listener"), "{err}");
     }
 }
