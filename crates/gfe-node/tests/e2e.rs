@@ -1822,9 +1822,14 @@ async fn answers_503_at_the_upstream_connection_limit() {
     assert_eq!(shared.upstream.open_connections(), 1);
 }
 
-/// Send a `method` request with `body` to `proxy` over cleartext HTTP/2. The
-/// body is streamed, so the request carries no `content-length`.
-async fn h2_request(proxy: SocketAddr, method: &str, body: &'static str) -> (u16, String) {
+/// Send a `method` request for `uri` with `body` to `proxy` over cleartext
+/// HTTP/2. The body is streamed, so the request carries no `content-length`.
+async fn h2_request(
+    proxy: SocketAddr,
+    method: &str,
+    uri: &str,
+    body: &'static str,
+) -> (u16, String) {
     let stream = TcpStream::connect(proxy).await.unwrap();
     let (mut sender, conn) =
         hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
@@ -1836,7 +1841,7 @@ async fn h2_request(proxy: SocketAddr, method: &str, body: &'static str) -> (u16
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     let req = Request::builder()
         .method(method)
-        .uri("http://a.example.org/resource")
+        .uri(uri)
         .body(ChannelBody(rx))
         .unwrap();
     tokio::spawn(async move {
@@ -1868,7 +1873,8 @@ async fn forwards_the_body_of_an_http2_request_without_content_length() {
     let upstream = spawn_upload_upstream().await;
     let (proxy, _tx) = start_proxy(&forwarding_config(upstream), build_shared()).await;
 
-    let (status, body) = h2_request(proxy, "DELETE", "hello").await;
+    let (status, body) =
+        h2_request(proxy, "DELETE", "http://a.example.org/resource", "hello").await;
 
     assert_eq!(status, 200, "{body}");
     assert_eq!(body, "received 5");
@@ -1893,6 +1899,176 @@ async fn does_not_retry_a_delete_with_a_body() {
 
     assert!(response.starts_with("HTTP/1.1 502"), "{response}");
     assert_eq!(event["attempts"], 1);
+}
+
+/// What reached a backend of a request: its HTTP version, its `Host` header
+/// and the authority of its target.
+fn describe_request(req: &Request<Incoming>) -> String {
+    let host = req
+        .headers()
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("none");
+    let authority = req.uri().authority().map_or("none", |a| a.as_str());
+    format!(
+        "version={:?} host={host} authority={authority}",
+        req.version()
+    )
+}
+
+/// Spawn a cleartext HTTP/2 backend answering every request with
+/// [`describe_request`].
+async fn spawn_h2c_describing_upstream() -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let svc = service_fn(|req: Request<Incoming>| async move {
+                    let body = describe_request(&req);
+                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(body))))
+                });
+                let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(stream), svc)
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+/// Spawn a TLS backend offering HTTP/2 and HTTP/1.1 by ALPN and answering
+/// every request with [`describe_request`]. Returns its address and the
+/// certificate (PEM) to trust it by.
+async fn spawn_tls_describing_upstream() -> (SocketAddr, Vec<u8>) {
+    let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+    let key = rustls::pki_types::PrivateKeyDer::try_from(cert.key_pair.serialize_der()).unwrap();
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut server_cfg = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert.cert.der().clone()], key)
+        .unwrap();
+    server_cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_cfg));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                let Ok(tls) = acceptor.accept(stream).await else {
+                    return;
+                };
+                let svc = service_fn(|req: Request<Incoming>| async move {
+                    let body = describe_request(&req);
+                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(body))))
+                });
+                let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(tls), svc)
+                    .await;
+            });
+        }
+    });
+    (addr, cert.cert.pem().into_bytes())
+}
+
+/// Shared state whose upstream client trusts the certificate `ca_pem`.
+fn build_shared_trusting(ca_pem: Vec<u8>) -> Arc<ProxyShared> {
+    let client = UpstreamClient::with_options(gfe_upstream::UpstreamClientOptions {
+        extra_ca_pem: Some(ca_pem),
+        ..Default::default()
+    })
+    .unwrap();
+    Arc::new(ProxyShared::new(
+        client,
+        Arc::new(GfeMetrics::new()),
+        LimitsConfig::default(),
+        TimeoutsConfig::default(),
+        TlsConfig::default(),
+    ))
+}
+
+#[tokio::test]
+async fn backend_sees_the_host_an_http1_client_asked_for() {
+    let upstream = spawn_upstream().await;
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), build_shared()).await;
+
+    let (_, body) = http_get(proxy, "a.example.org", "/").await;
+
+    assert!(body.ends_with("host=a.example.org"), "{body}");
+}
+
+#[tokio::test]
+async fn backend_sees_the_host_an_http2_client_asked_for() {
+    let upstream = spawn_upstream().await;
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), build_shared()).await;
+
+    let (_, body) = h2_request(proxy, "GET", "http://a.example.org/", "").await;
+
+    assert!(body.ends_with("host=a.example.org"), "{body}");
+}
+
+#[tokio::test]
+async fn keeps_the_port_of_the_host_the_client_asked_for() {
+    let upstream = spawn_upstream().await;
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), build_shared()).await;
+
+    let (_, body) = h2_request(proxy, "GET", "http://a.example.org:8080/", "").await;
+
+    assert!(body.ends_with("host=a.example.org:8080"), "{body}");
+}
+
+/// Over HTTP/2 the backend would be named by `:authority`, contradicting
+/// the client's host in `Host`, so an `https` pool is spoken to in HTTP/1.1.
+#[tokio::test]
+async fn sends_requests_to_an_https_pool_over_http1_with_the_clients_host() {
+    let (upstream, ca_pem) = spawn_tls_describing_upstream().await;
+    let mut cfg = forwarding_config(upstream);
+    cfg.pools[0].scheme = Scheme::Https;
+    let (proxy, _tx) = start_proxy(&cfg, build_shared_trusting(ca_pem)).await;
+
+    let (status, body) = h2_request(proxy, "GET", "http://a.example.org/", "").await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        body.starts_with("version=HTTP/1.1 host=a.example.org "),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn sends_grpc_calls_to_an_https_pool_over_http2_without_host() {
+    let (upstream, ca_pem) = spawn_tls_describing_upstream().await;
+    let mut cfg = grpc_config(upstream);
+    cfg.pools[0].scheme = Scheme::Https;
+    let (proxy, _tx) = start_proxy(&cfg, build_shared_trusting(ca_pem)).await;
+
+    let mut call = GrpcCall::open(proxy).await;
+    let body = call.next_frame().await.into_data().unwrap();
+
+    assert_eq!(
+        body,
+        format!("version=HTTP/2.0 host=none authority={upstream}")
+    );
+}
+
+#[tokio::test]
+async fn sends_no_host_to_an_h2c_pool() {
+    let upstream = spawn_h2c_describing_upstream().await;
+    let mut cfg = forwarding_config(upstream);
+    cfg.pools[0].scheme = Scheme::H2c;
+    let (proxy, _tx) = start_proxy(&cfg, build_shared()).await;
+
+    let (_, body) = http_get(proxy, "a.example.org", "/").await;
+
+    assert_eq!(
+        body,
+        format!("version=HTTP/2.0 host=none authority={upstream}")
+    );
 }
 
 /// A streaming call may legitimately have nothing to send, not even headers,

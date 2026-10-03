@@ -324,7 +324,7 @@ A **route** maps an incoming request to an action.
 An **upstream pool** is a named set of application backends serving the same role.
 
 - Each **upstream** is `host:port` plus optional `weight` (relative, default 1, at most 1000). `host` is a hostname or an IP literal, an IPv6 address written without brackets (`"2001:db8::1"`); GFE brackets it where a URI needs it. A `ring_hash` pool places 160 ring points per unit of weight and may hold at most 1,000,000 of them (sum of its weights at most 6250); a config beyond either limit is rejected.
-- `scheme`: how GFE talks to the pool's backends, independent of the client-facing protocol: `http` (cleartext HTTP/1.1), `https` (TLS; HTTP/2 or HTTP/1.1 by ALPN) or `h2c` (cleartext HTTP/2 with prior knowledge, for backends that speak only HTTP/2 without TLS, typically gRPC servers).
+- `scheme`: how GFE talks to the pool's backends, independent of the client-facing protocol: `http` (cleartext HTTP/1.1), `https` (TLS; HTTP/1.1, or HTTP/2 by ALPN for gRPC calls) or `h2c` (cleartext HTTP/2 with prior knowledge, for backends that speak only HTTP/2 without TLS, typically gRPC servers).
 - `lb_policy`: how requests are distributed across healthy upstreams (Section 6.5).
 - `health_check`: L7 probe config (Section 7.1).
 - Pools may be **referenced by multiple routes**. Health checks are deduplicated across pools by `(ip, port, probe)`.
@@ -461,7 +461,7 @@ Weights are honored by `round_robin` and `ring_hash`. If a pool has **no healthy
 
 Long-lived pooled upstream connections are a primary reason to run a shared edge: they amortize TCP + TLS handshake cost across all client requests to a backend.
 
-- **Per-backend idle pools.** Keyed by `(scheme, host, port)`. Idle connections are reused; the pool caps idle count and idle age per backend. HTTP/2 upstream connections (`https` via ALPN, or `h2c`) are multiplexed: many concurrent requests share one connection per backend.
+- **Per-backend idle pools.** Keyed by `(scheme, host, port)`. Idle connections are reused; the pool caps idle count and idle age per backend. HTTP/2 upstream connections (gRPC calls to `https` pools via ALPN, or `h2c`) are multiplexed: many concurrent requests share one connection per backend.
 - **HTTP/1.1 and HTTP/2 upstreams.** For h2 upstreams, a single connection multiplexes many concurrent requests (subject to the upstream's `SETTINGS_MAX_CONCURRENT_STREAMS`); for h1, one request per connection at a time.
 - **Upstream TLS (`client.rs`).** When `scheme=https`, GFE validates the upstream certificate against a configured trust store (system roots or a pinned CA). Optional mTLS (client cert to upstream) is supported for zero-trust backends.
 - **Health-aware eviction.** When a backend transitions to UNHEALTHY or DRAINING, its idle connections are dropped and no new ones are opened.
@@ -475,6 +475,7 @@ Forwarding streams bodies without buffering them in full:
 
 - **Hop-by-hop headers** (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade`, `TE`, `Proxy-*`, etc.) are stripped per RFC 9110. The one exception is a `TE` of exactly `trailers`, which is passed on: GFE does relay trailers, and gRPC requires the header.
 - **Forwarding headers** are added/normalized: `X-Forwarded-For` (append client IP), `X-Forwarded-Proto`, `X-Forwarded-Host`, `Forwarded`, and a generated `X-Request-Id` (propagated if the client supplied a valid one) for end-to-end tracing.
+- **`Host`.** As with HAProxy, the backend receives the host the client asked for, whatever protocol the client spoke: the `Host` header of an HTTP/1.x request, or the `:authority` of an HTTP/2 one, port included if the client sent one. This is why requests to `http` and `https` pools go out over HTTP/1.1. A request that needs HTTP/2 (a gRPC call to an `https` pool, or any request to an `h2c` pool) is sent with `:authority` set to the backend's own `host:port` and without a `Host` header, which would contradict it. `X-Forwarded-Host` and `Forwarded` carry the client's host in every case.
 - **Streaming.** Request and response bodies are streamed (`http-body`), so large uploads/downloads do not consume proportional memory. Backpressure flows naturally through the async body.
 - **HSTS** (`Strict-Transport-Security`) is injected on HTTPS responses per TLS policy.
 - **Protocol translation.** Client h2 ↔ upstream h1 (and vice versa) is handled transparently by hyper at the request/response abstraction level.

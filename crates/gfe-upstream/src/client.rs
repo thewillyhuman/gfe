@@ -3,10 +3,17 @@
 //! `https` upstreams is provided by a `hyper-rustls` connector using the
 //! `ring` provider and webpki roots.
 //!
-//! The HTTP version on the upstream leg follows the pool's [`Scheme`]:
-//! HTTP/1.1 for `http`, whatever ALPN negotiates for `https`, and HTTP/2
-//! with prior knowledge for `h2c`. The last one needs a client of its own,
+//! The HTTP version on the upstream leg follows the pool's [`Scheme`] and
+//! the request: HTTP/1.1 for `http`; for `https`, HTTP/1.1 unless the
+//! request needs HTTP/2 (gRPC), which ALPN then negotiates; and HTTP/2 with
+//! prior knowledge for `h2c`. Each needs a client of its own: one offering
+//! only HTTP/1.1 by ALPN, one offering both, and one that never negotiates,
 //! as cleartext offers no way to negotiate the version per connection.
+//!
+//! Over HTTP/1.1 the backend is told the host the client asked for, in
+//! `Host`, as HAProxy does. Over HTTP/2 the backend is named by
+//! `:authority`, which is its own address, and no `Host` is sent that would
+//! contradict it.
 
 use crate::failure::UpstreamFailure;
 use crate::limit::{ConnectionLimit, LimitedConnector};
@@ -14,7 +21,8 @@ use bytes::Bytes;
 use gfe_types::{GfeError, Scheme};
 use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;
-use hyper::{Request, Response};
+use hyper::header::HOST;
+use hyper::{Request, Response, Version};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
@@ -64,11 +72,13 @@ pub struct KeepAlive {
 /// A cloneable, pooled client for forwarding requests to upstreams.
 #[derive(Clone)]
 pub struct UpstreamClient {
-    /// `http` and `https` pools.
+    /// `http` pools, and `https` pools for requests that do not need HTTP/2.
+    http1: Client<Connector, ReqBody>,
+    /// `https` pools, for requests that need HTTP/2.
     negotiating: Client<Connector, ReqBody>,
     /// `h2c` pools.
     http2_prior_knowledge: Client<Connector, ReqBody>,
-    /// Counts, and caps, the connections of both clients together.
+    /// Counts, and caps, the connections of all clients together.
     connections: Arc<ConnectionLimit>,
 }
 
@@ -124,12 +134,18 @@ impl UpstreamClient {
         http.enforce_http(false);
         http.set_connect_timeout(opts.connect_timeout);
 
+        let connections = ConnectionLimit::new(opts.max_connections);
+        let https_http1 = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(tls.clone())
+            .https_or_http()
+            .enable_http1()
+            .wrap_connector(http.clone());
+        let https_http1 = LimitedConnector::new(https_http1, connections.clone());
         let https = hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(tls)
             .https_or_http()
             .enable_all_versions()
             .wrap_connector(http);
-        let connections = ConnectionLimit::new(opts.max_connections);
         let https = LimitedConnector::new(https, connections.clone());
 
         let mut builder = Client::builder(TokioExecutor::new());
@@ -141,10 +157,12 @@ impl UpstreamClient {
                 .http2_keep_alive_interval(keep_alive.idle)
                 .http2_keep_alive_timeout(keep_alive.timeout);
         }
+        let http1 = builder.build(https_http1);
         let negotiating = builder.build(https.clone());
         let http2_prior_knowledge = builder.http2_only(true).build(https);
 
         Ok(UpstreamClient {
+            http1,
             negotiating,
             http2_prior_knowledge,
             connections,
@@ -163,8 +181,14 @@ impl UpstreamClient {
     }
 
     /// Forward a request to the given upstream. The request's URI is rebuilt
-    /// with `scheme://authority` preserving path and query; the `Host`/
-    /// `:authority` is set to the upstream authority.
+    /// with `scheme://authority` preserving path and query.
+    ///
+    /// The request's `Host` header is expected to be the host the client
+    /// asked for. It reaches the backend when the request goes out over
+    /// HTTP/1.1; over HTTP/2 it is dropped, and `:authority` is the
+    /// upstream authority. A request whose version is HTTP/2 needs HTTP/2
+    /// (gRPC): to an `https` pool it goes out over whatever ALPN negotiates,
+    /// any other request to an `https` pool over HTTP/1.1.
     pub async fn send(
         &self,
         scheme: Scheme,
@@ -176,11 +200,19 @@ impl UpstreamClient {
             .path_and_query()
             .map(|pq| pq.as_str().to_string())
             .unwrap_or_else(|| "/".to_string());
-        let (client, uri_scheme) = match scheme {
-            Scheme::Http => (&self.negotiating, "http"),
-            Scheme::Https => (&self.negotiating, "https"),
-            Scheme::H2c => (&self.http2_prior_knowledge, "http"),
+        let needs_http2 = req.version() == Version::HTTP_2;
+        let (client, uri_scheme, over_http1) = match scheme {
+            Scheme::Http => (&self.http1, "http", true),
+            Scheme::Https if needs_http2 => (&self.negotiating, "https", false),
+            Scheme::Https => (&self.http1, "https", true),
+            Scheme::H2c => (&self.http2_prior_knowledge, "http", false),
         };
+        if over_http1 {
+            // The client refuses an HTTP/2 request on an HTTP/1 connection.
+            *req.version_mut() = Version::HTTP_11;
+        } else {
+            req.headers_mut().remove(HOST);
+        }
         let uri: hyper::Uri = format!("{uri_scheme}://{authority}{path_and_query}")
             .parse()
             .map_err(|e| UpstreamFailure::other(Box::new(e)))?;

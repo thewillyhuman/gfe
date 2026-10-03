@@ -19,7 +19,8 @@ pub enum Scheme {
     /// Cleartext HTTP/1.1.
     #[default]
     Http,
-    /// TLS; HTTP/2 or HTTP/1.1 as negotiated by ALPN.
+    /// TLS; HTTP/1.1, or HTTP/2 as negotiated by ALPN for requests that
+    /// need it (gRPC).
     Https,
     /// Cleartext HTTP/2 with prior knowledge, for backends that speak only
     /// HTTP/2 without TLS (typically gRPC servers).
@@ -55,10 +56,11 @@ fn default_weight() -> u32 {
 }
 
 impl Upstream {
-    /// `host:port` authority string, used as the connection-pool key and for
-    /// the upstream request `Host` header. An IPv6 literal, written without
-    /// brackets in the config, is bracketed (`[2001:db8::1]:443`) as a URI
-    /// authority requires.
+    /// `host:port` authority string: where the node connects, the key of the
+    /// connection pool, and the `:authority` of the HTTP/2 requests it sends
+    /// there (an HTTP/1 request carries the client's `Host` instead). An IPv6
+    /// literal, written without brackets in the config, is bracketed
+    /// (`[2001:db8::1]:443`) as a URI authority requires.
     pub fn authority(&self) -> String {
         if self.host.parse::<std::net::Ipv6Addr>().is_ok() {
             format!("[{}]:{}", self.host, self.port)

@@ -11,7 +11,7 @@ use gfe_upstream::{BoxError, FailureKind, InflightGuard, Pool};
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use http_body_util::BodyExt;
 use hyper::body::{Body, Incoming};
-use hyper::{Request, Response, StatusCode};
+use hyper::{Request, Response, StatusCode, Version};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -75,6 +75,22 @@ fn append_forwarded_for(headers: &mut HeaderMap, client_ip: &str) {
     set_header(headers, "x-forwarded-for", &new);
 }
 
+/// Make the request's `Host` header the host the client asked for, as
+/// HAProxy hands it to backends, whatever protocol the client spoke: the
+/// authority of the request target when there is one (always over HTTP/2,
+/// where it is `:authority`; an HTTP/1.1 request in absolute form), else
+/// the `Host` header as the client sent it, port included.
+fn set_requested_host(parts: &mut http::request::Parts) {
+    // Any userinfo (`user@`) is not part of the host.
+    let target_host = parts.uri.authority().and_then(|authority| {
+        let host = authority.as_str().rsplit('@').next().unwrap_or_default();
+        HeaderValue::from_str(host).ok()
+    });
+    if let Some(host) = target_host {
+        parts.headers.insert(http::header::HOST, host);
+    }
+}
+
 /// Idempotent methods that are safe to retry on a pre-response failure.
 fn is_idempotent(method: &http::Method) -> bool {
     matches!(
@@ -134,6 +150,14 @@ pub async fn forward(
     if !parts.headers.contains_key("x-request-id") {
         set_header(&mut parts.headers, "x-request-id", record.request_id());
     }
+    set_requested_host(&mut parts);
+    // gRPC needs HTTP/2 to the backend; anything else is left to the
+    // upstream client.
+    let version = if record.is_grpc() {
+        Version::HTTP_2
+    } else {
+        Version::HTTP_11
+    };
 
     // Whether there is a body is decided by the body itself, not by headers:
     // an HTTP/1.1 body may be chunked (and `Transfer-Encoding` is stripped
@@ -205,6 +229,7 @@ pub async fn forward(
         let upstream_req = if retryable {
             let mut b = Request::builder()
                 .method(parts.method.clone())
+                .version(version)
                 .uri(&path_and_query);
             if let Some(h) = b.headers_mut() {
                 *h = parts.headers.clone();
@@ -214,6 +239,7 @@ pub async fn forward(
             let body = streamed_body.take().expect("body consumed once");
             let mut b = Request::builder()
                 .method(parts.method.clone())
+                .version(version)
                 .uri(&path_and_query);
             if let Some(h) = b.headers_mut() {
                 *h = parts.headers.clone();
