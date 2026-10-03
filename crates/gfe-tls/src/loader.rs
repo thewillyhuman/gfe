@@ -3,6 +3,7 @@
 use gfe_types::GfeError;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::sign::CertifiedKey;
+use rustls::InconsistentKeys;
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
@@ -42,9 +43,19 @@ pub fn load_cert_pem(cert_pem: &[u8], key_pem: &[u8]) -> Result<LoadedCert, GfeE
         .map_err(|e| GfeError::Certificate(format!("unsupported key type: {e}")))?;
 
     let not_after_unix = leaf_not_after(&certs[0])?;
-    let certified_key = Arc::new(CertifiedKey::new(certs, signing_key));
+    let certified_key = CertifiedKey::new(certs, signing_key);
+    match certified_key.keys_match() {
+        // `Unknown` means the key type cannot report its public half; that is
+        // not evidence of a mismatch.
+        Ok(()) | Err(rustls::Error::InconsistentKeys(InconsistentKeys::Unknown)) => {}
+        Err(e) => {
+            return Err(GfeError::Certificate(format!(
+                "private key does not match certificate: {e}"
+            )))
+        }
+    }
     Ok(LoadedCert {
-        certified_key,
+        certified_key: Arc::new(certified_key),
         not_after_unix,
     })
 }
@@ -98,6 +109,18 @@ mod tests {
         let loaded = load_cert_pem(&cert, &key).unwrap();
         assert!(loaded.not_after_unix > 0);
         assert!(!loaded.certified_key.cert.is_empty());
+    }
+
+    /// A half-finished rotation (new certificate, old key) must not be served:
+    /// every handshake with it would fail.
+    #[test]
+    fn rejects_key_that_does_not_match_certificate() {
+        let (cert, _) = self_signed(vec!["example.org".into()]);
+        let (_, other_key) = self_signed(vec!["example.org".into()]);
+
+        let err = load_cert_pem(&cert, &other_key).err().unwrap();
+
+        assert!(err.to_string().contains("does not match"), "{err}");
     }
 
     #[test]
