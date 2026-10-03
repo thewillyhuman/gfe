@@ -142,6 +142,141 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 40 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [ { "expr": "sum(gfe_backend_draining{instance=~\"$instance\"})" } ]
+    },
+    {
+      "id": 15, "title": "Requests in flight", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (instance) (gfe_requests_in_flight{instance=~\"$instance\"})", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 16, "title": "Aborted requests/s by who", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 48 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (by, route) (rate(gfe_requests_aborted_total{instance=~\"$instance\", host=~\"$host\"}[5m]))", "legendFormat": "{{by}} · {{route}}" }
+      ]
+    },
+    {
+      "id": 17, "title": "Connections closed/s by reason", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 48 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (reason) (rate(gfe_connections_closed_total{instance=~\"$instance\"}[5m]))", "legendFormat": "{{reason}}" }
+      ]
+    },
+    {
+      "id": 18, "title": "Connection saturation (active / limit)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 56 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "gfe_connections_active{instance=~\"$instance\"} / gfe_connections_limit{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 19, "title": "File descriptor saturation (open / max)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 56 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "process_open_fds{instance=~\"$instance\"} / process_max_fds{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 20, "title": "CPU cores in use and runtime queue", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 56 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "rate(process_cpu_seconds_total{instance=~\"$instance\"}[5m])", "legendFormat": "cores · {{instance}}" },
+        { "expr": "gfe_runtime_global_queue_depth{instance=~\"$instance\"}", "legendFormat": "queued tasks · {{instance}}" }
+      ]
+    },
+    {
+      "id": 21, "title": "Wire throughput by listener", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 64 },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (listener) (rate(gfe_bytes_in_total{instance=~\"$instance\"}[5m]))", "legendFormat": "in · {{listener}}" },
+        { "expr": "sum by (listener) (rate(gfe_bytes_out_total{instance=~\"$instance\"}[5m]))", "legendFormat": "out · {{listener}}" }
+      ]
+    },
+    {
+      "id": 22, "title": "TLS handshake failures/s by reason", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 64 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (reason) (rate(gfe_tls_handshake_failures_total{instance=~\"$instance\"}[5m]))", "legendFormat": "{{reason}}" }
+      ]
+    },
+    {
+      "id": 23, "title": "TLS connections/s by version and cipher", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 64 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (version, cipher, resumed) (rate(gfe_tls_connections_total{instance=~\"$instance\"}[5m]))", "legendFormat": "{{version}} {{cipher}} resumed={{resumed}}" }
+      ]
+    },
+    {
+      "id": 24, "title": "Upstream errors/s by kind", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 72 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (pool, kind) (rate(gfe_upstream_errors_total{instance=~\"$instance\", pool=~\"$pool\"}[5m]))", "legendFormat": "{{pool}} · {{kind}}" }
+      ]
+    },
+    {
+      "id": 25, "title": "Upstream requests in flight by backend", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 72 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (pool, backend) (gfe_upstream_requests_in_flight{instance=~\"$instance\", pool=~\"$pool\"})", "legendFormat": "{{pool}}/{{backend}}" }
+      ]
+    },
+    {
+      "id": 26, "title": "gRPC calls/s by status (0 = OK)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 72 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (route, grpc_status) (rate(gfe_grpc_responses_total{instance=~\"$instance\", host=~\"$host\"}[5m]))", "legendFormat": "{{route}} · {{grpc_status}}" }
+      ]
+    },
+    {
+      "id": 27, "title": "Host: TCP retransmission ratio (node_exporter)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 80 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "rate(node_netstat_Tcp_RetransSegs[5m]) / rate(node_netstat_Tcp_OutSegs[5m])", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 28, "title": "Host: interface errors and drops/s (node_exporter)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 80 },
+      "fieldConfig": { "defaults": { "unit": "pps" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "rate(node_network_receive_errs_total{device!=\"lo\"}[5m]) + rate(node_network_transmit_errs_total{device!=\"lo\"}[5m])", "legendFormat": "errors · {{instance}} {{device}}" },
+        { "expr": "rate(node_network_receive_drop_total{device!=\"lo\"}[5m]) + rate(node_network_transmit_drop_total{device!=\"lo\"}[5m])", "legendFormat": "drops · {{instance}} {{device}}" }
+      ]
+    },
+    {
+      "id": 29, "title": "Host: listen queue overflows/s (node_exporter)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 80 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "rate(node_netstat_TcpExt_ListenOverflows[5m])", "legendFormat": "{{instance}}" }
+      ]
     }
   ]
 }
