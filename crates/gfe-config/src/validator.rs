@@ -6,13 +6,21 @@ use std::collections::HashSet;
 
 /// Validate the dynamic config. Returns the first error found.
 pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
-    // Unique listener ids.
+    // Unique listener ids, and one listener per address: a listening socket
+    // is identified by the address it is bound to.
     let mut listener_ids = HashSet::new();
+    let mut listener_addrs = HashSet::new();
     for l in &cfg.listeners {
         if !listener_ids.insert(&l.id.0) {
             return Err(GfeError::Validation(format!(
                 "duplicate listener id: {}",
                 l.id
+            )));
+        }
+        if !listener_addrs.insert((l.address, l.port)) {
+            return Err(GfeError::Validation(format!(
+                "listener {} reuses address {}:{} of another listener",
+                l.id, l.address, l.port
             )));
         }
     }
@@ -141,6 +149,20 @@ mod tests {
             ..Default::default()
         };
         assert!(validate(&cfg).is_ok());
+    }
+
+    #[test]
+    fn two_listeners_on_one_address_fail() {
+        let mut second = listener();
+        second.id = ListenerId("other".into());
+        let cfg = DynamicConfig {
+            listeners: vec![listener(), second],
+            ..Default::default()
+        };
+
+        let err = validate(&cfg).unwrap_err();
+
+        assert!(err.to_string().contains("reuses address"), "{err}");
     }
 
     #[test]

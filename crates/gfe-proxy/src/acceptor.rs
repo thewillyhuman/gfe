@@ -1,7 +1,8 @@
-//! Per-listener accept loop with connection-limit enforcement.
+//! Per-socket accept loop with connection-limit enforcement.
 
 use crate::connection;
 use crate::ProxyShared;
+use arc_swap::ArcSwap;
 use gfe_metrics::RejectLabel;
 use gfe_types::Listener;
 use rustls::ServerConfig;
@@ -9,16 +10,20 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{watch, Semaphore};
 
-/// Accept connections for one listener until `shutdown` flips to `true`.
+/// Accept connections on one socket until `shutdown` flips to `true`.
+///
+/// `config` is the listener as currently configured; it is read for every
+/// accepted connection, so its id and protocol can change while the socket
+/// stays bound.
 ///
 /// `global_sem` bounds total concurrent connections across all listeners; a
 /// per-listener semaphore bounds this listener. When either is exhausted the
 /// connection is dropped and counted as rejected.
 pub async fn run_listener(
-    listener: Listener,
+    config: Arc<ArcSwap<Listener>>,
     tcp: TcpListener,
     shared: Arc<ProxyShared>,
-    server_config: Option<Arc<ServerConfig>>,
+    server_config: Arc<ServerConfig>,
     global_sem: Arc<Semaphore>,
     mut shutdown: watch::Receiver<bool>,
 ) {
@@ -28,11 +33,12 @@ pub async fn run_listener(
         tokio::select! {
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
-                    tracing::info!(id = %listener.id, "listener draining, stop accepting");
+                    tracing::info!(id = %config.load().id, "listener draining, stop accepting");
                     break;
                 }
             }
             accepted = tcp.accept() => {
+                let listener = config.load_full();
                 let (stream, peer) = match accepted {
                     Ok(v) => v,
                     Err(e) => {
@@ -57,12 +63,11 @@ pub async fn run_listener(
                 };
 
                 let shared = shared.clone();
-                let cfg = server_config.clone();
-                let listener = listener.clone();
+                let tls = listener.is_tls().then(|| server_config.clone());
                 tokio::spawn(async move {
                     let _g = global_permit;
                     let _l = listener_permit;
-                    connection::serve(stream, peer, listener, shared, cfg).await;
+                    connection::serve(stream, peer, listener, shared, tls).await;
                 });
             }
         }

@@ -4,7 +4,7 @@
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 use gfe_metrics::GfeMetrics;
-use gfe_proxy::{ProxyEngine, ProxyShared};
+use gfe_proxy::{ListenerSet, ProxyShared};
 use gfe_router::RouteTable;
 use gfe_tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_types::{
@@ -99,23 +99,35 @@ fn build_shared_with(timeouts: TimeoutsConfig, limits: LimitsConfig) -> Arc<Prox
     })
 }
 
-/// Start a proxy serving `cfg`; returns the bound proxy address and a shutdown
-/// sender plus the shared state.
-async fn start_proxy(
+/// Apply `cfg` and start its listeners; returns the listener set (to
+/// reconcile further configs against) and the shutdown sender.
+fn start_listeners(
     cfg: &DynamicConfig,
     shared: Arc<ProxyShared>,
-) -> (SocketAddr, watch::Sender<bool>) {
+) -> (ListenerSet, watch::Sender<bool>) {
     gfe_config::apply(&shared, cfg).expect("apply config");
     let server_config = Arc::new(
         gfe_tls::server_config(shared.resolver.clone(), gfe_types::MinVersion::Tls12).unwrap(),
     );
-    let bound = ProxyEngine::bind(&cfg.listeners).await.expect("bind");
-    let proxy_addr = bound[0].1.local_addr().unwrap();
-    let engine = ProxyEngine::new(shared);
     let (tx, rx) = watch::channel(false);
-    tokio::spawn(async move {
-        engine.serve(bound, server_config, rx).await;
-    });
+    let listeners = ListenerSet::new(shared, server_config, rx);
+    reconcile(&listeners, &cfg.listeners);
+    (listeners, tx)
+}
+
+/// Make `desired` the running listeners, as a config reload would.
+fn reconcile(listeners: &ListenerSet, desired: &[Listener]) {
+    listeners.commit(listeners.stage(desired).expect("bind"));
+}
+
+/// Start a proxy serving `cfg`; returns the address of its first listener
+/// and the shutdown sender.
+async fn start_proxy(
+    cfg: &DynamicConfig,
+    shared: Arc<ProxyShared>,
+) -> (SocketAddr, watch::Sender<bool>) {
+    let (listeners, tx) = start_listeners(cfg, shared);
+    let proxy_addr = listeners.local_addr(&cfg.listeners[0].id).unwrap();
     (proxy_addr, tx)
 }
 
@@ -597,4 +609,93 @@ async fn rejects_request_headers_larger_than_max_header_bytes() {
     let received = read_until_closed(&mut stream).await;
 
     assert!(received.starts_with("HTTP/1.1 431"), "{received}");
+}
+
+/// A plaintext listener on an explicit loopback port.
+fn http_listener(id: &str, port: u16) -> Listener {
+    Listener {
+        id: ListenerId(id.into()),
+        address: "127.0.0.1".parse().unwrap(),
+        port,
+        protocol: ListenProtocol::Http,
+    }
+}
+
+/// A loopback port that was free a moment ago.
+fn free_port() -> u16 {
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    probe.local_addr().unwrap().port()
+}
+
+/// Whether something accepts connections on `addr`, waiting up to a few
+/// seconds for it to reach the `expected` state.
+async fn accepts_connections(addr: SocketAddr, expected: bool) -> bool {
+    for _ in 0..100 {
+        if TcpStream::connect(addr).await.is_ok() == expected {
+            return expected;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    !expected
+}
+
+#[tokio::test]
+async fn reconcile_binds_added_listener() {
+    let mut cfg = fixed_response_config();
+    let (listeners, _tx) = start_listeners(&cfg, build_shared());
+
+    // The fixed-response route is bound to the "http" listener, so the added
+    // listener is given a route of its own.
+    let added = http_listener("added", free_port());
+    cfg.listeners.push(added.clone());
+    reconcile(&listeners, &cfg.listeners);
+
+    let addr = listeners.local_addr(&added.id).unwrap();
+    assert!(accepts_connections(addr, true).await);
+}
+
+#[tokio::test]
+async fn reconcile_stops_removed_listener() {
+    let mut cfg = fixed_response_config();
+    let removed = http_listener("removed", free_port());
+    cfg.listeners.push(removed.clone());
+    let (listeners, _tx) = start_listeners(&cfg, build_shared());
+    let addr = listeners.local_addr(&removed.id).unwrap();
+    assert!(accepts_connections(addr, true).await);
+
+    cfg.listeners.pop();
+    reconcile(&listeners, &cfg.listeners);
+
+    assert!(!accepts_connections(addr, false).await);
+    assert_eq!(listeners.local_addr(&removed.id), None);
+}
+
+#[tokio::test]
+async fn reconcile_keeps_unchanged_listener_bound() {
+    let cfg = fixed_response_config();
+    let (listeners, _tx) = start_listeners(&cfg, build_shared());
+    let id = &cfg.listeners[0].id;
+    let before = listeners.local_addr(id).unwrap();
+
+    reconcile(&listeners, &cfg.listeners);
+
+    // The config asks for port 0, so a rebind would land on another port.
+    assert_eq!(listeners.local_addr(id), Some(before));
+    let (status, _) = http_get(before, "a.example.org", "/").await;
+    assert_eq!(status, 200);
+}
+
+#[tokio::test]
+async fn stage_fails_without_side_effects_when_address_is_taken() {
+    let cfg = fixed_response_config();
+    let (listeners, _tx) = start_listeners(&cfg, build_shared());
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let unbindable = http_listener("unbindable", taken.local_addr().unwrap().port());
+
+    let staged = listeners.stage(&[cfg.listeners[0].clone(), unbindable.clone()]);
+
+    assert!(staged.is_err());
+    assert_eq!(listeners.local_addr(&unbindable.id), None);
+    let addr = listeners.local_addr(&cfg.listeners[0].id).unwrap();
+    assert!(accepts_connections(addr, true).await);
 }

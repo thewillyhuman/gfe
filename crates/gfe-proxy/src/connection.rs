@@ -27,7 +27,7 @@ const CLOSE_GRACE: Duration = Duration::from_secs(5);
 pub async fn serve(
     stream: TcpStream,
     peer: SocketAddr,
-    listener: Listener,
+    listener: Arc<Listener>,
     shared: Arc<ProxyShared>,
     tls: Option<Arc<ServerConfig>>,
 ) {

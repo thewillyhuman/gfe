@@ -31,7 +31,8 @@ spread connections across a fleet with no coordination.
   to `DRAINING` (no new requests, in-flight complete) for zero-downtime deploys.
 - **Stateless + file config** — bootstrap TOML + hot-reloadable dynamic JSON
   (listeners/routes/pools/certs), watched via inotify, validated wholesale, and
-  swapped atomically with `ArcSwap` — in-flight requests never drop
+  swapped atomically with `ArcSwap` — in-flight requests never drop, and
+  listeners are bound and released on reload without a restart
   ([ADR-001](.docs/adr-001-configuration-model.md) model, inherited from `lb`).
 - **Last-known-good cache** — a restarted node serves immediately even if the
   config source is briefly unavailable.

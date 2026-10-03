@@ -171,9 +171,11 @@ gfe/
 │   ├── gfe-proxy/                  # L7 proxy engine (the data plane)
 │   │   ├── Cargo.toml
 │   │   └── src/
-│   │       ├── lib.rs                   # ProxyEngine public API
-│   │       ├── acceptor.rs              # Per-listener accept loop, connection limits
+│   │       ├── lib.rs                   # Shared data-plane state (ProxyShared)
+│   │       ├── listeners.rs             # Listening sockets, reconciled on reload
+│   │       ├── acceptor.rs              # Per-socket accept loop, connection limits
 │   │       ├── connection.rs            # Per-connection: TLS handshake → HTTP serve
+│   │       ├── activity.rs              # In-flight tracking for client timeouts
 │   │       ├── service.rs               # Per-request: route → select upstream → proxy
 │   │       ├── forward.rs               # Request/response streaming, header rewriting
 │   │       ├── errors.rs                # Synthetic error responses (4xx/5xx pages)
@@ -366,7 +368,7 @@ The proxy is a fully asynchronous Tokio service. Unlike `lb`'s forwarder, it ter
 
 ### 6.1 Listeners and Acceptors
 
-> **Code location:** `crates/gfe-proxy/src/acceptor.rs`
+> **Code location:** `crates/gfe-proxy/src/listeners.rs`, `crates/gfe-proxy/src/acceptor.rs`
 
 One accept loop runs per configured listener. Each loop:
 
@@ -375,7 +377,13 @@ One accept loop runs per configured listener. Each loop:
 3. Spawns one Tokio task per accepted connection (`connection.rs`). The accept loop never blocks on per-connection work.
 4. Applies an **accept-to-first-byte / handshake timeout** so slow-loris-style connections that never make progress are reaped early.
 
-The set of active listeners is part of the config snapshot. On reload, listeners that disappeared are drained and closed; new listeners begin accepting; unchanged listeners keep running (Section 7.2).
+The set of active listeners is part of the config snapshot and is reconciled on every reload (`listeners.rs`). A listening socket is identified by its **address and port**; a listener's id and protocol are read per accepted connection, so they can change without rebinding. On reload:
+
+- sockets for addresses the new config adds are bound **first** — if any cannot be bound the whole reload is rejected and nothing changes;
+- sockets the new config no longer names stop accepting (connections already accepted on them run to completion);
+- sockets whose address is unchanged are left untouched, so a reload never causes an accept gap.
+
+Two listeners may not share an address and port (rejected by validation).
 
 ### 6.2 TLS Termination and SNI Certificate Resolution
 
@@ -531,7 +539,7 @@ Responsibilities:
 
 1. **Load** (`loader.rs`) the bootstrap node config (TOML) once at startup, and the dynamic config (JSON: listeners, routes, pools, certificates) at startup and on every change.
 2. **Validate** (`validator.rs`) before applying: every route references an existing pool; every listener/route references a loadable certificate (for HTTPS); no duplicate listener binds; host/path patterns well-formed; ports in range; cert and key files parse and match. Invalid config is **rejected wholesale** — the running snapshot is kept.
-3. **Apply atomically** (`applier.rs`): compile a new `RouteTable` + cert store off the hot path, then swap both via `ArcSwap`. In-flight requests finish on the old snapshot; new requests use the new one. Listener add/remove is reconciled (Section 6.1).
+3. **Apply atomically** (`applier.rs`): compile a new `RouteTable` + cert store off the hot path, then swap both via `ArcSwap`. In-flight requests finish on the old snapshot; new requests use the new one. Listener add/remove is reconciled around the swap by the controller (Section 6.1).
 4. **Watch** (`watcher.rs`, `cert_files.rs`): `notify` (inotify on Linux) on the dynamic config file, with a debounce window that coalesces rapid successive writes (e.g. an editor writing in chunks) into a single reload. The certificate and key files the config names are **polled every 10 s** by `stat` (inode, size, mtime, ctime) rather than watched: their set changes with every reload and they are commonly swapped via rename or symlink, which a poll handles uniformly. A change triggers the same validated reload.
 5. **Cache** (`cache.rs`): persist the last-known-good dynamic config locally so a restarted node serves traffic immediately even if the source of the config file is briefly unavailable.
 

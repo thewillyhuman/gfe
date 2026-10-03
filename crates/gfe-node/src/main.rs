@@ -8,7 +8,7 @@ use arc_swap::ArcSwap;
 use clap::Parser;
 use gfe_controller::Controller;
 use gfe_metrics::GfeMetrics;
-use gfe_proxy::{DrainController, ProxyEngine, ProxyShared};
+use gfe_proxy::{DrainController, ListenerSet, ProxyShared};
 use gfe_router::RouteTable;
 use gfe_tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_upstream::{HealthMap, PoolSet, UpstreamClient, UpstreamClientOptions};
@@ -108,26 +108,22 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
         draining: AtomicBool::new(false),
     });
 
-    // Start the control plane: initial config load/apply (with cache
-    // fallback), health probes, last-known-good cache, and hot-reload watcher.
-    let mut controller = Controller::new(shared.clone(), &node);
-    let dynamic = controller
-        .start()
-        .map_err(|e| anyhow::anyhow!("starting controller: {e}"))?;
-
-    // Build the TLS server config (shared across https listeners). Cert
-    // rotation flows through the resolver's swappable store, so this need not
-    // be rebuilt on reload.
+    // The TLS server config is shared across https listeners. Cert rotation
+    // flows through the resolver's swappable store, so it is never rebuilt.
     let server_config = Arc::new(
         gfe_tls::server_config(resolver.clone(), node.tls.min_version)
             .map_err(|e| anyhow::anyhow!("building TLS server config: {e}"))?,
     );
 
     // Readiness + drain plumbing. The ops server reads `draining` from the
-    // shared state; the engine watches the drain controller's channel.
+    // shared state; the listeners watch the drain controller's channel.
     let ready = Arc::new(AtomicBool::new(false));
     let drain = DrainController::new();
-    let engine_rx = drain.subscribe();
+    let listeners = Arc::new(ListenerSet::new(
+        shared.clone(),
+        server_config,
+        drain.subscribe(),
+    ));
 
     // Ops server.
     let ops_state = Arc::new(OpsState {
@@ -145,11 +141,13 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
         });
     }
 
-    // Bind listeners up front (fail fast), then mark ready and serve.
-    let bound = ProxyEngine::bind(&dynamic.listeners)
-        .await
-        .context("binding listeners")?;
-    let engine = ProxyEngine::new(shared.clone());
+    // Start the control plane: initial config load/apply (with cache
+    // fallback), listeners, health probes, last-known-good cache, and the
+    // hot-reload watchers. Fails fast if a listener cannot be bound.
+    let mut controller = Controller::new(shared.clone(), listeners.clone(), &node);
+    controller
+        .start()
+        .map_err(|e| anyhow::anyhow!("starting controller: {e}"))?;
 
     // Signal handling → drain.
     {
@@ -162,9 +160,9 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
     }
 
     ready.store(true, Ordering::SeqCst);
-    tracing::info!(listeners = bound.len(), "gfe-node ready");
+    tracing::info!("gfe-node ready");
 
-    engine.serve(bound, server_config, engine_rx).await;
+    listeners.serve_until_drained().await;
 
     controller.shutdown();
     tracing::info!("gfe-node stopped");

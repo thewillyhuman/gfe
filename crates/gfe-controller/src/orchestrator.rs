@@ -1,10 +1,10 @@
-//! The control-plane orchestrator: ties together config load/apply, the
-//! health checker, the last-known-good cache, the hot-reload watcher, and the
-//! certificate file poller.
+//! The control-plane orchestrator: ties together config load/apply, listener
+//! reconciliation, the health checker, the last-known-good cache, the
+//! hot-reload watcher, and the certificate file poller.
 
 use gfe_config::{apply, cache, load_dynamic_config, spawn_watcher, validate, CertFiles};
 use gfe_health::HealthChecker;
-use gfe_proxy::ProxyShared;
+use gfe_proxy::{ListenerSet, ProxyShared};
 use gfe_types::{DynamicConfig, GfeError, HealthCheckConfig, NodeConfig};
 use notify::RecommendedWatcher;
 use std::path::PathBuf;
@@ -28,11 +28,13 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub fn new(shared: Arc<ProxyShared>, node: &NodeConfig) -> Self {
+    /// A controller applying configs to `shared` and reconciling `listeners`.
+    pub fn new(shared: Arc<ProxyShared>, listeners: Arc<ListenerSet>, node: &NodeConfig) -> Self {
         let checker = HealthChecker::new(shared.health.clone(), shared.metrics.clone());
         Controller {
             reloader: Arc::new(Reloader {
                 shared,
+                listeners,
                 checker,
                 config_file: node.control_plane.config_file.clone(),
                 cache_file: node.control_plane.local_cache.clone(),
@@ -53,18 +55,19 @@ impl Controller {
         self
     }
 
-    /// Load and apply the initial config (with cache fallback), start health
-    /// probes, write the cache, and begin watching for changes to the dynamic
-    /// config and to the certificate files it names.
+    /// Load and apply the initial config (with cache fallback), bind its
+    /// listeners, start health probes, write the cache, and begin watching
+    /// for changes to the dynamic config and to the certificate files it
+    /// names.
     ///
-    /// Returns the initial dynamic config so the caller can bind listeners.
-    /// Must be called from within a Tokio runtime.
-    pub fn start(&mut self) -> Result<DynamicConfig, GfeError> {
+    /// Fails, with nothing serving, if the config is invalid or a listener
+    /// cannot be bound. Must be called from within a Tokio runtime.
+    pub fn start(&mut self) -> Result<(), GfeError> {
         let cfg = self.reloader.load_initial()?;
         {
             let mut cert_files = self.reloader.lock_cert_files();
             *cert_files = CertFiles::snapshot(&cfg.certificates);
-            apply(&self.reloader.shared, &cfg)?;
+            self.reloader.apply_with_listeners(&cfg)?;
         }
         self.reloader
             .checker
@@ -93,7 +96,7 @@ impl Controller {
                 reloader.reload_if_certs_changed();
             }
         }));
-        Ok(cfg)
+        Ok(())
     }
 
     /// Stop all health probes and the certificate poller.
@@ -109,6 +112,7 @@ impl Controller {
 /// file watcher and the certificate poller, which may fire concurrently.
 struct Reloader {
     shared: Arc<ProxyShared>,
+    listeners: Arc<ListenerSet>,
     checker: Arc<HealthChecker>,
     config_file: PathBuf,
     cache_file: Option<PathBuf>,
@@ -148,6 +152,19 @@ impl Reloader {
                 }
             }
         }
+    }
+
+    /// Apply `cfg` and make its listeners the running set, all or nothing:
+    /// the sockets it adds are bound first, so a config whose listeners
+    /// cannot be bound is rejected before anything is swapped.
+    fn apply_with_listeners(&self, cfg: &DynamicConfig) -> Result<(), GfeError> {
+        let staged = self
+            .listeners
+            .stage(&cfg.listeners)
+            .map_err(|e| GfeError::Config(e.to_string()))?;
+        apply(&self.shared, cfg)?;
+        self.listeners.commit(staged);
+        Ok(())
     }
 
     fn write_cache(&self, cfg: &DynamicConfig) {
@@ -193,7 +210,7 @@ impl Reloader {
         // Snapshot before `apply` reads the files: a file replaced in between
         // is then seen as changed by the next poll.
         *cert_files = CertFiles::snapshot(&cfg.certificates);
-        match apply(&self.shared, &cfg) {
+        match self.apply_with_listeners(&cfg) {
             Ok(()) => {
                 self.checker.reconcile(&cfg.pools, &self.defaults);
                 self.write_cache(&cfg);

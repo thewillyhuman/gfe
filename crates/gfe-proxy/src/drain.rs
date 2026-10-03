@@ -1,9 +1,9 @@
 //! Graceful drain coordination.
 //!
-//! Phase 1 provides the shutdown signal plumbing: a watch channel that tells
-//! accept loops to stop accepting, plus a `draining` flag the ops server uses
-//! to fail `/readyz`. In-flight connections finish on their own; Phase 2 adds
-//! the drain deadline and upstream connection close-out.
+//! A watch channel tells the accept loops to stop accepting, and a `draining`
+//! flag makes the ops server fail `/readyz`. Connections already open finish
+//! on their own, bounded by the drain deadline
+//! ([`ListenerSet::serve_until_drained`](crate::ListenerSet::serve_until_drained)).
 
 use crate::ProxyShared;
 use std::sync::atomic::Ordering;
@@ -20,7 +20,7 @@ impl DrainController {
         DrainController { tx }
     }
 
-    /// A receiver for an accept loop / engine to watch.
+    /// A receiver for the listeners to watch.
     pub fn subscribe(&self) -> watch::Receiver<bool> {
         self.tx.subscribe()
     }
