@@ -621,6 +621,25 @@ async fn rejects_request_headers_larger_than_max_header_bytes() {
     assert!(received.starts_with("HTTP/1.1 431"), "{received}");
 }
 
+/// [`fixed_response_config`] with its one route restricted to `host`.
+fn fixed_response_config_for(host: &str) -> DynamicConfig {
+    let mut cfg = fixed_response_config();
+    cfg.routes[0].host = host.into();
+    cfg
+}
+
+#[tokio::test]
+async fn wildcard_route_matches_only_subdomains_of_its_suffix() {
+    let shared = build_shared();
+    let (proxy_addr, _tx) = start_proxy(&fixed_response_config_for("*.example.org"), shared).await;
+
+    let (subdomain, _) = http_get(proxy_addr, "api.example.org", "/").await;
+    let (lookalike, _) = http_get(proxy_addr, "fooexample.org", "/").await;
+
+    assert_eq!(subdomain, 200);
+    assert_eq!(lookalike, 404);
+}
+
 /// A plaintext listener on an explicit loopback port.
 fn http_listener(id: &str, port: u16) -> Listener {
     Listener {

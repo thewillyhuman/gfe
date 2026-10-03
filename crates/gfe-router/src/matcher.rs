@@ -5,7 +5,7 @@
 /// Patterns:
 /// - `*` matches any host.
 /// - `*.example.org` matches a single extra label: `api.example.org` ✓,
-///   `example.org` ✗, `a.b.example.org` ✗.
+///   `example.org` ✗, `a.b.example.org` ✗, `fooexample.org` ✗.
 /// - anything else is an exact (case-insensitive) match.
 ///
 /// This is the slow-path reference used in tests and for `any`/wildcard
@@ -14,13 +14,11 @@ pub fn host_matches(pattern: &str, host: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    if let Some(suffix) = pattern.strip_prefix("*.") {
-        // host must be `<single-label>.<suffix>`
+    if let Some(suffix) = pattern.strip_prefix('*').filter(|s| s.starts_with('.')) {
+        // The suffix keeps its leading dot (`.example.org`), so the host must
+        // be `<single-label>.example.org`, never `<label>example.org`.
         match host.strip_suffix(suffix) {
-            Some(prefix) => {
-                let prefix = prefix.strip_suffix('.').unwrap_or(prefix);
-                !prefix.is_empty() && !prefix.contains('.')
-            }
+            Some(label) => !label.is_empty() && !label.contains('.'),
             None => false,
         }
     } else {
@@ -51,6 +49,11 @@ mod tests {
         assert!(host_matches("*.example.org", "api.example.org"));
         assert!(!host_matches("*.example.org", "example.org"));
         assert!(!host_matches("*.example.org", "a.b.example.org"));
+    }
+
+    #[test]
+    fn wildcard_host_requires_the_dot_before_the_suffix() {
+        assert!(!host_matches("*.example.org", "fooexample.org"));
     }
 
     #[test]
