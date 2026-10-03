@@ -182,9 +182,9 @@ async fn run(
         shared: shared.clone(),
         kernel: kernel.as_ref().map(|(view, _)| view.clone()),
     });
-    if let Some((_, closed)) = kernel {
-        tokio::spawn(kernel::report(closed, listeners.clone(), metrics.clone()));
-    }
+    let kernel_reporting = kernel.map(|(_, closed)| {
+        tokio::spawn(kernel::report(closed, listeners.clone(), metrics.clone()))
+    });
     // A node without its ops endpoints still serves traffic, so not being
     // able to listen for them is reported and lived with.
     let ops_addr = node.node.metrics_addr;
@@ -238,6 +238,11 @@ async fn run(
                         // The ops endpoints are the successor's from now on:
                         // answering next to it would mix two nodes' metrics.
                         let _ = stop_ops.send(true);
+                        // So is the kernel's view: the two processes share a
+                        // cgroup, and both would report every connection.
+                        if let Some(reporting) = &kernel_reporting {
+                            reporting.abort();
+                        }
                         break;
                     }
                     Err(e) => {

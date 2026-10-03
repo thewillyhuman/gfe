@@ -114,6 +114,12 @@ jq -r 'select(.target=="gfe::tcp" and .fields.side=="client" and .fields.retrans
        | .fields | [.retransmits, .rtt_ms, .client] | @tsv' | sort -rn | head
 ```
 
+While a node is upgraded in place, the outgoing process and its successor are
+in the same cgroup and each has its own program attached. The outgoing one
+stops reporting the moment its successor takes over, so nothing is reported
+twice. The connections it is still draining then have a `gfe::conn` event but
+no `gfe::tcp` event.
+
 It needs Linux, `CAP_BPF` and `CAP_NET_ADMIN` (the drop-in
 `deploy/gfe-node-ebpf.conf` grants them under systemd). If it cannot be
 attached, the node logs why, sets `gfe_ebpf_attached` to 0 and runs without it.
