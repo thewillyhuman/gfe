@@ -42,6 +42,7 @@ Each target can be routed or silenced on its own, e.g.
 | Is the node keeping up with new connections? (kernel view) | `gfe_accept_queue_wait_seconds{listener}` | connection log `accept_wait_ms` |
 | Is the node saturated? | `gfe_connections_active / gfe_connections_limit`, `process_open_fds / process_max_fds`, `rate(process_cpu_seconds_total[5m])`, `gfe_runtime_global_queue_depth` | — |
 | Is it refusing work? | `gfe_connections_rejected_total{reason="limit"}` | — |
+| Is the log complete? | `gfe_log_lost_lines{destination}` | — |
 | Did a config or certificate change land? | `gfe_config_last_reload_timestamp`, `gfe_config_reload_errors_total`, `gfe_cert_expiry_timestamp` | node log |
 | Did an upgrade in place land? | `gfe_upgrade_failures_total`; `process_start_time_seconds` moves when it did | node log, from both processes; `systemctl status` |
 
@@ -186,3 +187,13 @@ Reading the two layers together:
   not emit spans.
 - **Sampling.** Every request and connection is logged. At very high request
   rates, drop or sample a target in the log pipeline rather than in GFE.
+
+## When the log cannot keep up
+
+Writing the log never makes a request wait. Lines are queued and written by a
+thread of their own; if the destination is slower than the node logs, the
+queue fills and further lines are dropped. That is deliberate: a front end
+that stalls because its log is slow fails everybody, while a log with a hole
+in it fails nobody, provided the hole is known. `gfe_log_lost_lines` counts
+the lines that were never written, per destination, and
+`GfeLogLinesLost` alerts on it.

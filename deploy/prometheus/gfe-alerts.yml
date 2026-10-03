@@ -244,6 +244,13 @@ groups:
           summary: "{{ $value | humanizePercentage }} of the segments sent to backend {{ $labels.backend }} are retransmissions"
           description: "Packet loss between the node and this backend, which shows up as backend latency."
 
+      - alert: GfeLogLinesLost
+        expr: delta(gfe_log_lost_lines[15m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} is losing log lines written to {{ $labels.destination }}"
+          description: "The node logs faster than {{ $labels.destination }} takes the lines, or the destination refuses them (a full disk, a file that cannot be written). The node does not wait for its log, so requests are served, but the access and connection logs of this period are incomplete."
+
       - alert: GfeKernelEventsLost
         expr: delta(gfe_ebpf_lost_events[15m]) > 0
         labels: { severity: warning }

@@ -1,8 +1,9 @@
 //! The operations HTTP server: `/healthz`, `/readyz`, `/metrics`.
 
 use crate::kernel::KernelView;
+use crate::logging::Log;
 use bytes::Bytes;
-use gfe_metrics::GfeMetrics;
+use gfe_metrics::{GfeMetrics, LogDestinationLabel};
 use gfe_proxy::ProxyShared;
 use http_body_util::Full;
 use hyper::service::service_fn;
@@ -23,6 +24,8 @@ pub struct OpsState {
     pub shared: Arc<ProxyShared>,
     /// The kernel's view, when attached.
     pub kernel: Option<Arc<KernelView>>,
+    /// The node's log, for what it has lost.
+    pub log: Arc<Log>,
 }
 
 /// The socket the ops server listens on.
@@ -119,6 +122,14 @@ async fn handle(state: Arc<OpsState>, path: &str) -> Result<Response<Full<Bytes>
             if let Some(kernel) = &state.kernel {
                 let lost = i64::try_from(kernel.lost_events()).unwrap_or(i64::MAX);
                 state.metrics.kernel.ebpf_lost_events.set(lost);
+            }
+            for (destination, lost) in state.log.lost_lines() {
+                process
+                    .log_lost_lines
+                    .get_or_create(&LogDestinationLabel {
+                        destination: destination.to_string(),
+                    })
+                    .set(i64::try_from(lost).unwrap_or(i64::MAX));
             }
             let body = state.metrics.encode();
             let mut r = Response::new(Full::new(Bytes::from(body)));

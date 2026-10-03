@@ -845,6 +845,7 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `process_cpu_seconds_total` | Counter | User + system CPU time (Linux); `rate()` of it is cores in use |
 | `process_start_time_seconds` | Gauge | Process start, Unix seconds (restarts show as a step) |
 | `gfe_runtime_workers` / `gfe_runtime_alive_tasks` / `gfe_runtime_global_queue_depth` | Gauge | Async runtime: worker threads, live tasks, and tasks queued for a free worker — the last one rising means the workers are saturated |
+| `gfe_log_lost_lines` | Gauge | Log lines that were never written, since the node started (label: destination). The destination was too slow and the queue was full, or it refused them |
 | `gfe_build_info` | Gauge | Always 1 (label: version) |
 
 The `process_*` names are the ones every Prometheus client library uses, so stock dashboards and alerts apply unchanged.
@@ -909,6 +910,7 @@ It prints which listener/route matched, which pool and which backend would be se
   Fields that do not apply to a request are omitted.
 - **Connection logs** (`conn_record.rs`): one structured event per client connection under the target `gfe::conn`, emitted when the connection is gone. Fields: `client`, `client_port`, `listener`, `proto`, `sni`, `tls_version`, `tls_cipher`, `alpn`, `tls_resumed`, `tls_handshake_ms`, `tls_error` (why a handshake failed), `accept_wait_ms` (time in the accept queue; only with the kernel view), `requests` (served on the connection), `bytes_in` / `bytes_out` (on the wire), `duration_ms`, `reason` (as in `gfe_connections_closed_total`) and `error` (the error text, when there was one). Both targets can be silenced or routed independently, e.g. `RUST_LOG=info,gfe::conn=off`.
 - **TCP logs** (`gfe-node/src/kernel.rs`, only with the kernel view): one event per closed TCP connection under the target `gfe::tcp`. Fields: `side` (`client` or `upstream`), `client` and `client_port` (the same as in the `gfe::conn` event of that connection) or `backend`, `listener`, `ending`, `rtt_ms`, `min_rtt_ms`, `retransmits`, `segments_sent`, `bytes_acked`, `bytes_received`, `lifetime_ms`.
+- **Writing the log never holds up a request** (`gfe-node/src/logging.rs`). An event is formatted where it happens and queued; a thread of its own writes the queue out. A destination slower than the node logs fills the queue (128,000 lines), and from then on lines are dropped rather than waited for. Lines dropped, or refused by the destination, are counted in `gfe_log_lost_lines`. What is still queued when the node exits is written out first.
 - Log levels: ERROR/WARN always on; INFO/DEBUG adjustable at runtime via an env-filter reload, no restart.
 - **No body logging.** Headers are logged selectively (allowlist) to avoid leaking secrets.
 

@@ -7,7 +7,7 @@ pub mod proxy_metrics;
 
 pub use control_metrics::{BackendLabels, ControlMetrics, SniLabel};
 pub use kernel_metrics::{BackendLabel, ClientEndingLabels, KernelMetrics, UpstreamEndingLabels};
-pub use process_metrics::ProcessMetrics;
+pub use process_metrics::{LogDestinationLabel, ProcessMetrics};
 /// Counter and gauge handles, for callers that hold one series of a family.
 pub use prometheus_client::metrics::counter::Counter;
 pub use prometheus_client::metrics::gauge::Gauge;

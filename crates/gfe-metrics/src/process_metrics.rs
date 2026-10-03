@@ -24,6 +24,12 @@ pub struct BuildLabels {
     pub version: String,
 }
 
+/// `destination` label of the log series: where the lines were going.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct LogDestinationLabel {
+    pub destination: String,
+}
+
 /// Process-level and async-runtime metrics.
 pub struct ProcessMetrics {
     open_fds: Gauge,
@@ -39,6 +45,8 @@ pub struct ProcessMetrics {
     /// Tasks waiting in the runtime's global queue for a free worker. Stays
     /// near zero unless the workers are saturated.
     pub runtime_global_queue_depth: Gauge,
+    /// Log lines that were never written, per destination.
+    pub log_lost_lines: Family<LogDestinationLabel, Gauge>,
 }
 
 impl ProcessMetrics {
@@ -52,6 +60,7 @@ impl ProcessMetrics {
             runtime_workers: Gauge::default(),
             runtime_alive_tasks: Gauge::default(),
             runtime_global_queue_depth: Gauge::default(),
+            log_lost_lines: Family::default(),
         };
 
         let build_info = Family::<BuildLabels, Gauge>::default();
@@ -105,6 +114,11 @@ impl ProcessMetrics {
             "gfe_runtime_global_queue_depth",
             "Tasks queued for a free runtime worker",
             m.runtime_global_queue_depth.clone(),
+        );
+        registry.register(
+            "gfe_log_lost_lines",
+            "Log lines that were never written because their destination was too slow or refused them",
+            m.log_lost_lines.clone(),
         );
         m
     }

@@ -95,6 +95,8 @@ anyhow = "1"
 # Logging / tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+# Hands log lines to a writer thread, so that a slow log never slows a request.
+tracing-appender = "0.2"
 
 # Metrics
 prometheus-client = "0.23"

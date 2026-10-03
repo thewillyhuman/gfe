@@ -2,6 +2,7 @@
 //! control-plane pieces (config load/apply, ops server) on one box.
 
 mod kernel;
+mod logging;
 mod ops;
 mod signals;
 mod systemd;
@@ -14,6 +15,7 @@ use gfe_metrics::GfeMetrics;
 use gfe_proxy::{DrainController, ListenerSet, ProxyShared};
 use gfe_tls::CertStore;
 use gfe_upstream::{KeepAlive, UpstreamClient, UpstreamClientOptions};
+use logging::Log;
 use ops::OpsState;
 use signals::{Request, Signals};
 use std::path::Path;
@@ -85,7 +87,8 @@ fn main() -> Result<()> {
     // controller does, and falls back to the last-known-good cache if the
     // deployed file cannot be used.
     let node = node.context("--config is required to run a node")?;
-    init_tracing();
+    // Kept to the end: dropping it writes out the lines still queued.
+    let log = Arc::new(Log::start());
     let (predecessor, inherited) = if args.upgrade {
         let (predecessor, inherited) = upgrade::take_over()?;
         (Some(predecessor), inherited)
@@ -99,7 +102,7 @@ fn main() -> Result<()> {
         rt.worker_threads(node.node.worker_threads);
     }
     let rt = rt.build().context("building tokio runtime")?;
-    rt.block_on(run(node, predecessor, inherited))
+    rt.block_on(run(node, predecessor, inherited, log.clone()))
 }
 
 /// Check a dynamic config the way a node would before applying it: parse,
@@ -119,22 +122,13 @@ fn check_dynamic_config(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn init_tracing() {
-    use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    fmt()
-        .json()
-        .with_env_filter(filter)
-        .with_current_span(false)
-        .init();
-}
-
 /// Run a node until it is told to stop. `inherited` are the listening sockets
 /// it starts with, and `predecessor` the node it took them from, if any.
 async fn run(
     node: gfe_types::NodeConfig,
     predecessor: Option<Predecessor>,
     inherited: Inherited,
+    log: Arc<Log>,
 ) -> Result<()> {
     tracing::info!(node = %node.node.id, vip = %node.node.loopback_vip, "starting gfe-node");
 
@@ -190,6 +184,7 @@ async fn run(
         ready: ready.clone(),
         shared: shared.clone(),
         kernel: kernel.as_ref().map(|(view, _)| view.clone()),
+        log,
     });
     let kernel_reporting = kernel.map(|(_, closed)| {
         tokio::spawn(kernel::report(closed, listeners.clone(), metrics.clone()))
