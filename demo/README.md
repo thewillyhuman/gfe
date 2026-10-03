@@ -90,9 +90,10 @@ service user gets them through the drop-in in
 - **Grafana** has both data sources and two dashboards provisioned:
   - *GFE — General Front End*: the metrics dashboard shipped in
     [`deploy/grafana`](../deploy/grafana).
-  - *GFE — Logs*: built from the access and connection logs: top clients by
-    requests and bytes, user agents, why GFE answered instead of a backend,
-    broken-off exchanges, TLS failures, and the raw logs with a client filter.
+  - *GFE — Logs*: built from the access, connection and kernel logs, which is
+    where the client addresses are. It ranks clients by traffic and by what
+    goes wrong for them, and narrows every panel to one client; see
+    [Finding a client that has a problem](#finding-a-client-that-has-a-problem).
 
   *Explore → Loki* is the place for ad-hoc questions, e.g.
 
@@ -100,6 +101,33 @@ service user gets them through the drop-in in
   {job="gfe", target="gfe::access"} | json | fields_status >= 500
   {job="gfe", target="gfe::conn"} | json | fields_reason != "closed"
   ```
+
+## Finding a client that has a problem
+
+Client addresses are in the logs only, so that a client cannot inflate the
+metric series. This is therefore done on *GFE — Logs*, in two steps.
+
+**Who?** The *Clients* row ranks clients over the selected time range:
+
+| Panel | A client high on it |
+|---|---|
+| *Requests not completed, by client* | gives up before the answer is complete (`client_abort`), or is cut off by a backend (`upstream_abort`) |
+| *Failed TLS handshakes, by client* | cannot negotiate TLS with the node; the name says why |
+| *Error responses, by client* | is sent 4xx (its own requests are wrong) or 5xx (the service is) |
+| *Connections that did not end cleanly, by client* | has connections that end in anything but an orderly close |
+| *Kernel: round-trip time by client* | is far away, or on a slow path |
+| *Kernel: retransmitted segments by client* | is on a path that loses packets |
+
+**What exactly?** Type its address into *Client IP* at the top. Every panel
+(except *Node events*) and every log panel then shows that client only: its
+status codes, the routes and backends it uses, how its connections end, and
+each of its requests. The field is a regular expression matched against the
+whole address, so `172\.23\..*` selects a network.
+
+Try it with the far client (`docker compose exec traffic-far hostname -i`).
+It leads both kernel panels, while errors are the same share of its requests
+as of everybody else's: what is wrong with it is its network, not the
+service.
 
 ## Things to try
 
