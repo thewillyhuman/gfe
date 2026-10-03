@@ -23,7 +23,10 @@ bytes = { workspace = true }
 arc-swap = { workspace = true }
 tracing = { workspace = true }
 rand = { workspace = true }
+socket2 = { workspace = true }
 
 [dev-dependencies]
+# `all` exposes the getters the tests read socket options back with.
+socket2 = { workspace = true, features = ["all"] }
 gfe-tls = { workspace = true }
 rcgen = { workspace = true }

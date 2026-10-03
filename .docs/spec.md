@@ -387,7 +387,7 @@ The proxy is a fully asynchronous Tokio service. Unlike `lb`'s forwarder, it ter
 
 One accept loop runs per configured listener. Each loop:
 
-1. Binds the listener address (`TcpListener`) with `SO_REUSEADDR`; `TCP_NODELAY` is set on accepted sockets.
+1. Binds the listener address (`TcpListener`) with `SO_REUSEADDR`; `TCP_NODELAY` and TCP keepalive (Section 6.8) are set on accepted sockets.
 2. Accepts connections and enforces a **global and per-listener max concurrent connection limit**. When the limit is hit, new connections are accepted and immediately closed (counted via `gfe_connections_rejected_total`) rather than being left to pile up in the backlog.
 3. Spawns one Tokio task per accepted connection (`connection.rs`). The accept loop never blocks on per-connection work.
 4. Applies an **accept-to-first-byte / handshake timeout** so slow-loris-style connections that never make progress are reaped early.
@@ -496,6 +496,7 @@ Bounded, predictable behaviour under stress:
 - **Client timeouts (`activity.rs`, `connection.rs`).** A request is *in flight* from its parsed head until its response body is fully written. Two timeouts are derived from that:
   - `request_header` — the **first** request head must arrive within this long of the connection being established (after the TLS handshake), else the connection is dropped. This bounds connections that never send, or drip, a request.
   - `client_idle` — a connection with **no request in flight** for this long is shut down gracefully (HTTP/2 clients receive a `GOAWAY`). On HTTP/1 this covers the keep-alive wait *and* the time to receive the next request head, since hyper runs one timer over both. A connection with a request in flight is never closed by these timeouts, however slow the upstream or the transfer.
+  - A client that **vanishes** (no FIN or RST: a NAT dropped its mapping, a laptop was suspended) is caught by keep-alive instead, request in flight or not. An HTTP/2 client that has sent no frame for `client_idle` is sent a PING, and the connection is closed if the PING is not acknowledged within a quarter of `client_idle`. Every accepted socket also has TCP keepalive enabled, probing a peer silent for `client_idle` (at least 1 s; the probe interval and count are the kernel's), which catches a dead HTTP/1 peer. Either way the connection is closed with reason `client_unresponsive`.
 - **Retries (conservative).** Only **idempotent** requests (per method, and only when the request body has not yet been streamed) are retried, and only on **connection-establishment / pre-response** failures, with a small bounded retry budget. GFE never retries after any response bytes have been forwarded. This avoids amplifying load during incidents.
 - **Limits:** max header bytes (`431` when exceeded; at least 8192), max concurrent connections (global + per listener), max concurrent h2 streams, and max upstream connections. Exceeding a limit yields a clean `4xx`/`5xx` (or connection refusal) and a counter — never unbounded growth.
 - **Synthetic errors (`errors.rs`).** GFE emits compact, consistent error responses (404 no-route, 408 stalled upload, 502 upstream error, 503 no-healthy-upstream / overloaded, 504 timeout) with a request id, suitable for debugging without leaking internals. To a gRPC caller the same failures are sent as a `grpc-status` (Section 6.7).
@@ -803,7 +804,7 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_connections_active` | Gauge | Currently open client connections |
 | `gfe_listener_connections_active` | Gauge | Currently open client connections (label: listener) |
 | `gfe_connections_rejected_total` | Counter | Connections rejected (label: reason ∈ {limit, handshake_timeout}) |
-| `gfe_connections_closed_total` | Counter | Closed connections (labels: listener, reason ∈ {closed, client_abort, idle_timeout, header_timeout, drain, protocol_error, tls_handshake_failed, tls_handshake_timeout, error, shutdown}) |
+| `gfe_connections_closed_total` | Counter | Closed connections (labels: listener, reason ∈ {closed, client_abort, client_unresponsive, idle_timeout, header_timeout, drain, protocol_error, tls_handshake_failed, tls_handshake_timeout, error, shutdown}) |
 | `gfe_connection_duration_seconds` | Histogram | Lifetime of client connections (label: listener) |
 | `gfe_bytes_in_total` / `gfe_bytes_out_total` | Counter | Bytes read from / written to client sockets, on the wire (TLS included), counted as they flow (label: listener) |
 | `gfe_tls_handshakes_total` | Counter | TLS handshakes (label: result ∈ {ok, failed}) |

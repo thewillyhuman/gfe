@@ -16,6 +16,7 @@ use hyper::Version;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use rustls::ServerConfig;
+use socket2::{SockRef, TcpKeepalive};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +38,25 @@ fn idle_grace(timeouts: &TimeoutsConfig) -> Duration {
     timeouts.drain_deadline / 2
 }
 
+/// How long an HTTP/2 client has to acknowledge a PING before it is taken for
+/// gone. The PING is sent after `client_idle` without a frame from it.
+fn keep_alive_timeout(timeouts: &TimeoutsConfig) -> Duration {
+    timeouts.client_idle / 4
+}
+
+/// Have the kernel probe a peer that has been silent for `client_idle`. A
+/// client that vanished without FIN or RST then fails the connection even
+/// with an HTTP/1 request in flight, which nothing else would notice. A
+/// socket that refuses the option is served without it.
+fn enable_tcp_keepalive(stream: &TcpStream, timeouts: &TimeoutsConfig) {
+    // The kernel counts in whole seconds, and rejects zero.
+    let silence = timeouts.client_idle.max(Duration::from_secs(1));
+    let keepalive = TcpKeepalive::new().with_time(silence);
+    if let Err(e) = SockRef::from(stream).set_tcp_keepalive(&keepalive) {
+        tracing::debug!(error = %e, "cannot enable tcp keepalive");
+    }
+}
+
 /// Serve a single accepted TCP connection until it ends or, once `drain`
 /// flips to `true`, until the client has been asked to leave. The connection
 /// is accounted for by a [`ConnRecord`], which reports it when this function
@@ -54,6 +74,7 @@ pub async fn serve(
     drain: watch::Receiver<bool>,
 ) {
     let _ = stream.set_nodelay(true);
+    enable_tcp_keepalive(&stream, &shared.timeouts);
     let mut record = ConnRecord::open(
         shared.clone(),
         &listener.load(),
@@ -124,7 +145,9 @@ struct Closed {
 /// * `request_header` — the first request head must arrive within this long
 ///   of the connection being established, else the connection is dropped.
 /// * `client_idle` — a connection with no request in flight for this long is
-///   shut down gracefully (HTTP/2 clients get a `GOAWAY`).
+///   shut down gracefully (HTTP/2 clients get a `GOAWAY`). An HTTP/2 client
+///   silent for this long is sent a PING, and the connection is closed if
+///   the PING is not acknowledged within [`keep_alive_timeout`].
 /// * drain — once `drain` flips to `true` the client is asked to leave, in a
 ///   way that loses no request. A connection with a request in flight is shut
 ///   down gracefully at once: the request is answered, and HTTP/2 clients get
@@ -147,12 +170,15 @@ where
     let activity = ConnActivity::new(Instant::now());
     // Set once a response has told an HTTP/1 client to close the connection.
     let told_to_close = Arc::new(AtomicBool::new(false));
+    // Set once the connection has carried an HTTP/2 request.
+    let http2 = Arc::new(AtomicBool::new(false));
 
     let io = TokioIo::new(stream);
     let svc = service_fn({
         let activity = activity.clone();
         let shared = shared.clone();
         let told_to_close = told_to_close.clone();
+        let http2 = http2.clone();
         move |req| {
             let ctx = Arc::new(ConnCtx {
                 listener_id: listener.load().id.clone(),
@@ -163,6 +189,9 @@ where
             let told_to_close = told_to_close.clone();
             // HTTP/2 has no header for it: its clients are sent a GOAWAY.
             let http1 = req.version() < Version::HTTP_2;
+            if !http1 {
+                http2.store(true, Ordering::Relaxed);
+            }
             async move {
                 let mut resp = handle_request(ctx, req).await?;
                 if http1 && shared.draining.load(Ordering::Relaxed) {
@@ -194,7 +223,8 @@ where
                 Ok(()) => (shut_down_for.unwrap_or("closed"), None),
                 Err(e) => {
                     tracing::debug!(error = %e, "connection closed with error");
-                    (error_close_reason(e.as_ref()), Some(e.to_string()))
+                    let reason = error_close_reason(e.as_ref(), http2.load(Ordering::Relaxed));
+                    (reason, Some(e.to_string()))
                 }
             },
             changed = drain.changed(), if !draining => {
@@ -245,12 +275,19 @@ where
 }
 
 /// Why a connection that ended with an error did so, as a bounded label
-/// value. The error text itself goes to the connection log.
-fn error_close_reason(error: &(dyn std::error::Error + 'static)) -> &'static str {
+/// value. The error text itself goes to the connection log. `http2` tells
+/// whether the connection carried HTTP/2 requests.
+fn error_close_reason(error: &(dyn std::error::Error + 'static), http2: bool) -> &'static str {
     if let Some(http) = error.downcast_ref::<hyper::Error>() {
         if http.is_timeout() {
-            // hyper's own HTTP/1 timer, which runs for `client_idle`.
-            return "idle_timeout";
+            // hyper runs one timer per protocol: on HTTP/1 the wait for a
+            // request head, for `client_idle`; on HTTP/2 the wait for a PING
+            // acknowledgement.
+            return if http2 {
+                "client_unresponsive"
+            } else {
+                "idle_timeout"
+            };
         }
         if http.is_parse() || http.is_parse_too_large() {
             return "protocol_error";
@@ -267,6 +304,8 @@ fn error_close_reason(error: &(dyn std::error::Error + 'static)) -> &'static str
                 | std::io::ErrorKind::ConnectionAborted
                 | std::io::ErrorKind::BrokenPipe
                 | std::io::ErrorKind::UnexpectedEof => "client_abort",
+                // TCP keepalive (or retransmission) gave up on the peer.
+                std::io::ErrorKind::TimedOut => "client_unresponsive",
                 _ => "error",
             };
         }
@@ -290,7 +329,50 @@ fn http_builder(shared: &ProxyShared) -> auto::Builder<TokioExecutor> {
     builder
         .http2()
         .timer(TokioTimer::new())
+        .keep_alive_interval(Some(shared.timeouts.client_idle))
+        .keep_alive_timeout(keep_alive_timeout(&shared.timeouts))
         .max_concurrent_streams(shared.limits.max_h2_concurrent_streams)
         .max_header_list_size(u32::try_from(max_header_bytes).unwrap_or(u32::MAX));
     builder
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn accepted_socket_probes_a_peer_silent_for_client_idle() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (accepted, _) = listener.accept().await.unwrap();
+        let timeouts = TimeoutsConfig {
+            client_idle: Duration::from_secs(42),
+            ..Default::default()
+        };
+
+        enable_tcp_keepalive(&accepted, &timeouts);
+
+        let socket = socket2::SockRef::from(&accepted);
+        assert!(socket.keepalive().unwrap());
+        assert_eq!(
+            socket.tcp_keepalive_time().unwrap(),
+            Duration::from_secs(42)
+        );
+    }
+
+    #[test]
+    fn a_connection_timed_out_by_tcp_keepalive_is_unresponsive() {
+        let error = std::io::Error::from(std::io::ErrorKind::TimedOut);
+
+        assert_eq!(error_close_reason(&error, false), "client_unresponsive");
+    }
+
+    #[test]
+    fn a_reset_connection_is_a_client_abort() {
+        let error = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
+
+        assert_eq!(error_close_reason(&error, true), "client_abort");
+    }
 }

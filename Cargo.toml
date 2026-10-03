@@ -48,6 +48,9 @@ gfe-handover = { path = "crates/gfe-handover" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+# Socket options tokio does not expose (TCP keepalive). Already in the tree
+# through tokio.
+socket2 = "0.6"
 
 # HTTP server + client
 hyper = { version = "1", features = ["full"] }

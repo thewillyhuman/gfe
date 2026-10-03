@@ -819,6 +819,106 @@ async fn read_status_line(stream: &mut TcpStream) -> String {
     String::from_utf8_lossy(&received).trim_end().to_string()
 }
 
+/// A client socket that can be made to go silent: once frozen it neither
+/// reads nor writes again, yet stays open, like a peer that vanished behind a
+/// NAT that dropped its mapping.
+struct FreezableIo {
+    inner: TcpStream,
+    frozen: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl FreezableIo {
+    fn is_frozen(&self) -> bool {
+        self.frozen.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl tokio::io::AsyncRead for FreezableIo {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.is_frozen() {
+            return std::task::Poll::Pending;
+        }
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for FreezableIo {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.is_frozen() {
+            return std::task::Poll::Pending;
+        }
+        std::pin::Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.is_frozen() {
+            return std::task::Poll::Pending;
+        }
+        std::pin::Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.is_frozen() {
+            return std::task::Poll::Pending;
+        }
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[tokio::test]
+async fn closes_an_http2_connection_whose_client_stops_answering_pings() {
+    let (logs, _guard) = CapturedLogs::start();
+    let client_idle = Duration::from_millis(400);
+    let timeouts = TimeoutsConfig {
+        client_idle,
+        ..Default::default()
+    };
+    let shared = build_shared_with(timeouts, LimitsConfig::default());
+    let upstream = spawn_upstream_answering_after(Duration::from_secs(30)).await;
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+    let frozen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let io = FreezableIo {
+        inner: TcpStream::connect(proxy).await.unwrap(),
+        frozen: frozen.clone(),
+    };
+    let (mut sender, conn) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(io))
+            .await
+            .unwrap();
+    tokio::spawn(conn);
+    let req = Request::builder()
+        .uri("http://a.example.org/")
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let _response = tokio::spawn(sender.send_request(req));
+    while shared.metrics.proxy.requests_in_flight.get() == 0 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    frozen.store(true, std::sync::atomic::Ordering::Relaxed);
+    let frozen_at = std::time::Instant::now();
+    let event = logs.connection_event().await;
+    let closed_after = frozen_at.elapsed();
+
+    assert_eq!(event["reason"], "client_unresponsive");
+    assert!(closed_after >= client_idle, "{closed_after:?}");
+    assert!(closed_after < client_idle * 4, "{closed_after:?}");
+}
+
 /// A plaintext listener on an explicit loopback port.
 fn http_listener(id: &str, port: u16) -> Listener {
     Listener {
