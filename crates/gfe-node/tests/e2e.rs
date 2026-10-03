@@ -1405,3 +1405,40 @@ async fn stalled_upload_is_answered_with_408() {
     let metrics = shared.metrics.encode();
     assert!(!metrics.contains(r#"kind="timeout""#), "{metrics}");
 }
+
+#[tokio::test]
+async fn answers_503_at_the_upstream_connection_limit() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_upstream_answering_after(Duration::from_millis(400)).await;
+    let client = UpstreamClient::with_options(gfe_upstream::UpstreamClientOptions {
+        max_connections: Some(1),
+        ..Default::default()
+    })
+    .unwrap();
+    let shared = Arc::new(ProxyShared::new(
+        client,
+        Arc::new(GfeMetrics::new()),
+        LimitsConfig::default(),
+        TimeoutsConfig::default(),
+        TlsConfig::default(),
+    ));
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+
+    // The first request holds the only upstream connection the node may open.
+    let first = tokio::spawn(async move { http_get(proxy, "a.example.org", "/first").await });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let (second_status, _) = http_get(proxy, "a.example.org", "/second").await;
+    let (first_status, _) = first.await.unwrap();
+
+    assert_eq!(first_status, 200);
+    assert_eq!(second_status, 503);
+    let refused = logs
+        .events_of("gfe::access")
+        .into_iter()
+        .find(|event| event["path"] == "/second")
+        .expect("the refused request is logged");
+    assert_eq!(refused["error"], "upstream_connection_limit");
+    // A node-wide limit is not something another backend selection can fix.
+    assert_eq!(refused["attempts"], 1);
+    assert_eq!(shared.upstream.open_connections(), 1);
+}

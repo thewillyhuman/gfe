@@ -9,6 +9,7 @@
 //! as cleartext offers no way to negotiate the version per connection.
 
 use crate::failure::UpstreamFailure;
+use crate::limit::{ConnectionLimit, LimitedConnector};
 use bytes::Bytes;
 use gfe_types::{GfeError, Scheme};
 use http_body_util::combinators::BoxBody;
@@ -42,16 +43,24 @@ pub struct UpstreamClientOptions {
     /// Upper bound on establishing the TCP connection to a backend. `None`
     /// leaves it to the operating system, which can take minutes.
     pub connect_timeout: Option<Duration>,
+    /// Upper bound on the upstream connections held open, over all backends.
+    /// A request that would need one more fails at once. `None`: no bound.
+    pub max_connections: Option<usize>,
 }
 
 /// A cloneable, pooled client for forwarding requests to upstreams.
 #[derive(Clone)]
 pub struct UpstreamClient {
     /// `http` and `https` pools.
-    negotiating: Client<HttpsConnector<HttpConnector>, ReqBody>,
+    negotiating: Client<Connector, ReqBody>,
     /// `h2c` pools.
-    http2_prior_knowledge: Client<HttpsConnector<HttpConnector>, ReqBody>,
+    http2_prior_knowledge: Client<Connector, ReqBody>,
+    /// Counts, and caps, the connections of both clients together.
+    connections: Arc<ConnectionLimit>,
 }
+
+/// TCP, optionally TLS, under the connection limit.
+type Connector = LimitedConnector<HttpsConnector<HttpConnector>>;
 
 impl UpstreamClient {
     /// Build the client with default trust (webpki roots) and no client cert.
@@ -107,6 +116,8 @@ impl UpstreamClient {
             .https_or_http()
             .enable_all_versions()
             .wrap_connector(http);
+        let connections = ConnectionLimit::new(opts.max_connections);
+        let https = LimitedConnector::new(https, connections.clone());
 
         let negotiating = Client::builder(TokioExecutor::new())
             .pool_max_idle_per_host(idle)
@@ -119,7 +130,19 @@ impl UpstreamClient {
         Ok(UpstreamClient {
             negotiating,
             http2_prior_knowledge,
+            connections,
         })
+    }
+
+    /// Upstream connections currently open (or being opened), over all
+    /// backends.
+    pub fn open_connections(&self) -> usize {
+        self.connections.open()
+    }
+
+    /// The cap on open upstream connections, if one is set.
+    pub fn max_connections(&self) -> Option<usize> {
+        self.connections.max()
     }
 
     /// Forward a request to the given upstream. The request's URI is rebuilt
@@ -261,5 +284,82 @@ mod tests {
             .unwrap();
 
         assert_eq!(failure.kind, FailureKind::ConnectRefused, "{failure}");
+    }
+
+    /// A local HTTP/1.1 server that answers every request after `delay`.
+    async fn spawn_slow_server(delay: Duration) -> String {
+        use http_body_util::Empty;
+        use hyper::service::service_fn;
+        use hyper_util::rt::TokioIo;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let authority = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let svc = service_fn(move |_req| async move {
+                        tokio::time::sleep(delay).await;
+                        Ok::<_, std::convert::Infallible>(Response::new(Empty::<Bytes>::new()))
+                    });
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), svc)
+                        .await;
+                });
+            }
+        });
+        authority
+    }
+
+    fn get() -> Request<ReqBody> {
+        use http_body_util::{BodyExt, Empty};
+        Request::builder()
+            .uri("/")
+            .body(
+                Empty::<Bytes>::new()
+                    .map_err(|e| Box::new(e) as BoxError)
+                    .boxed(),
+            )
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn refuses_to_open_more_connections_than_the_limit() {
+        let backend = spawn_slow_server(Duration::from_millis(300)).await;
+        let client = UpstreamClient::with_options(UpstreamClientOptions {
+            max_connections: Some(1),
+            ..Default::default()
+        })
+        .unwrap();
+
+        // The first request occupies the only connection there may be.
+        let busy = {
+            let (client, backend) = (client.clone(), backend.clone());
+            tokio::spawn(async move { client.send(Scheme::Http, &backend, get()).await })
+        };
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let refused = client.send(Scheme::Http, &backend, get()).await;
+
+        let failure = refused.expect_err("a second connection exceeds the limit");
+        assert_eq!(failure.kind, FailureKind::ConnectionLimit, "{failure}");
+        assert!(busy.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn reuses_a_pooled_connection_at_the_limit() {
+        let backend = spawn_slow_server(Duration::ZERO).await;
+        let client = UpstreamClient::with_options(UpstreamClientOptions {
+            idle_per_host: 1,
+            max_connections: Some(1),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let first = client.send(Scheme::Http, &backend, get()).await;
+        let second = client.send(Scheme::Http, &backend, get()).await;
+
+        assert!(first.is_ok() && second.is_ok());
+        assert_eq!(client.open_connections(), 1);
+        assert_eq!(client.max_connections(), Some(1));
     }
 }

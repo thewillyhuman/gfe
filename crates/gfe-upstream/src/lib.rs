@@ -4,6 +4,7 @@
 pub mod client;
 pub mod failure;
 pub mod health_map;
+pub mod limit;
 pub mod policy;
 pub mod pool;
 

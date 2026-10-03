@@ -94,7 +94,7 @@ pub struct UpstreamLabels {
 
 /// Labels for upstream requests that failed before any response. `kind` is
 /// what went wrong (connect_timeout, connect_refused, connect_error, tls,
-/// reset, timeout, other).
+/// reset, connection_limit, timeout, other).
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct UpstreamErrorLabels {
     pub pool: String,
@@ -146,6 +146,8 @@ pub struct ProxyMetrics {
     pub upstream_errors: Family<UpstreamErrorLabels, Counter>,
     pub upstream_retries: Family<PoolLabel, Counter>,
     pub upstream_requests_in_flight: Family<UpstreamDurationLabels, Gauge>,
+    pub upstream_connections: Gauge,
+    pub upstream_connections_limit: Gauge,
     pub bytes_in: Family<ListenerLabel, Counter>,
     pub bytes_out: Family<ListenerLabel, Counter>,
 }
@@ -200,6 +202,8 @@ impl ProxyMetrics {
             upstream_errors: Family::default(),
             upstream_retries: Family::default(),
             upstream_requests_in_flight: Family::default(),
+            upstream_connections: Gauge::default(),
+            upstream_connections_limit: Gauge::default(),
             bytes_in: Family::default(),
             bytes_out: Family::default(),
         };
@@ -343,6 +347,16 @@ impl ProxyMetrics {
             "gfe_upstream_requests_in_flight",
             "Requests a backend is currently working on, until the response ends",
             m.upstream_requests_in_flight.clone(),
+        );
+        registry.register(
+            "gfe_upstream_connections",
+            "Upstream connections open, over all backends",
+            m.upstream_connections.clone(),
+        );
+        registry.register(
+            "gfe_upstream_connections_limit",
+            "Configured limit on open upstream connections (max_upstream_connections)",
+            m.upstream_connections_limit.clone(),
         );
         registry.register(
             "gfe_bytes_in",

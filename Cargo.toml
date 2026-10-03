@@ -57,6 +57,9 @@ hyper-util = { version = "0.1", features = ["full"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["ring", "http1", "http2", "webpki-tokio", "tls12", "logging"] }
 http = "1"
 http-body-util = "0.1"
+# The connector trait hyper-util's client is generic over; needed to wrap the
+# upstream connector with the connection limit.
+tower-service = "0.3"
 bytes = "1"
 
 # TLS. Pin the `ring` crypto provider (default-features off) so we avoid the

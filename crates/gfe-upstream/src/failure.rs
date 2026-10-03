@@ -1,6 +1,7 @@
 //! Why an upstream request failed before any response arrived.
 
 use crate::client::BoxError;
+use crate::limit::ConnectionLimitReached;
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -21,6 +22,9 @@ pub enum FailureKind {
     Tls,
     /// The backend closed or reset the connection instead of responding.
     Reset,
+    /// The node already holds as many upstream connections as it may
+    /// (`max_upstream_connections`), so none was opened for this request.
+    ConnectionLimit,
     /// Anything else.
     Other,
 }
@@ -33,6 +37,7 @@ impl FailureKind {
             FailureKind::ConnectError => "connect_error",
             FailureKind::Tls => "tls",
             FailureKind::Reset => "reset",
+            FailureKind::ConnectionLimit => "connection_limit",
             FailureKind::Other => "other",
         }
     }
@@ -42,6 +47,9 @@ impl FailureKind {
     fn of(error: &(dyn Error + 'static), connecting: bool) -> FailureKind {
         let mut cause = Some(error);
         while let Some(current) = cause {
+            if current.downcast_ref::<ConnectionLimitReached>().is_some() {
+                return FailureKind::ConnectionLimit;
+            }
             if current.downcast_ref::<rustls::Error>().is_some() {
                 return FailureKind::Tls;
             }

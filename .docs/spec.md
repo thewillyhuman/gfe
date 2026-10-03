@@ -447,7 +447,7 @@ Long-lived pooled upstream connections are a primary reason to run a shared edge
 - **HTTP/1.1 and HTTP/2 upstreams.** For h2 upstreams, a single connection multiplexes many concurrent requests (subject to the upstream's `SETTINGS_MAX_CONCURRENT_STREAMS`); for h1, one request per connection at a time.
 - **Upstream TLS (`client.rs`).** When `scheme=https`, GFE validates the upstream certificate against a configured trust store (system roots or a pinned CA). Optional mTLS (client cert to upstream) is supported for zero-trust backends.
 - **Health-aware eviction.** When a backend transitions to UNHEALTHY or DRAINING, its idle connections are dropped and no new ones are opened.
-- **Bounded.** Total upstream connections per node are capped to protect both GFE and the backends from connection storms after a reload or failover.
+- **Bounded (`limit.rs`).** Open upstream connections are capped node-wide at `max_upstream_connections`, to protect both GFE and the backends from connection storms after a reload or failover. The cap is enforced where connections are opened: a request that finds a pooled connection is unaffected, one that would need a new connection beyond the cap is answered at once with a `503` (`error=upstream_connection_limit`), without retrying and without counting against the backend. Connections are counted for as long as their socket is open, idle ones included.
 
 ### 6.7 Request and Response Forwarding
 
@@ -795,10 +795,11 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_no_healthy_upstream_total` | Counter | Requests with no healthy upstream (503) |
 | `gfe_upstream_requests_total` | Counter | Upstream requests (labels: pool, backend, status) |
 | `gfe_upstream_request_duration_seconds` | Histogram | Upstream round-trip latency |
-| `gfe_upstream_errors_total` | Counter | Upstream requests that failed before any response (labels: pool, backend, kind ∈ {connect_timeout, connect_refused, connect_error, tls, reset, timeout, other}) |
+| `gfe_upstream_errors_total` | Counter | Upstream requests that failed before any response (labels: pool, backend, kind ∈ {connect_timeout, connect_refused, connect_error, tls, reset, connection_limit, timeout, other}) |
 | `gfe_upstream_connect_errors_total` | Counter | The same, all kinds together (kept for existing dashboards) |
 | `gfe_upstream_retries_total` | Counter | Requests retried against a new backend selection (label: pool) |
 | `gfe_upstream_requests_in_flight` | Gauge | Requests a backend is working on, until the response has been relayed to its end (labels: pool, backend) |
+| `gfe_upstream_connections` / `gfe_upstream_connections_limit` | Gauge | Upstream connections open over all backends, and the configured `max_upstream_connections` |
 
 **Control-plane metrics (`control_metrics.rs`):**
 
@@ -853,7 +854,7 @@ It prints which listener/route matched, which pool and which backend would be se
   | `status` | Response status; `499` when the client left before a response existed |
   | `grpc_status` | For gRPC calls (`content-type: application/grpc*`), the numeric status the call ended with, read from the response trailers (or headers, for calls that fail before any message). A gRPC call is HTTP `200` whatever its outcome, so this is the field that tells success from failure |
   | `route`, `pool`, `backend`, `attempts` | Routing decision, the backend of the last attempt, and how many attempts were made |
-  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_error`, `upstream_timeout`, `request_body_timeout` (a `408`: the client stalled while sending the body), `unknown_acme_challenge` |
+  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_connection_limit`, `upstream_error`, `upstream_timeout`, `request_body_timeout` (a `408`: the client stalled while sending the body), `unknown_acme_challenge` |
   | `termination` | `complete`, `client_abort` (client left before or during the response) or `upstream_abort` (upstream failed mid-body) |
   | `request_bytes`, `response_bytes` | Body bytes actually read from / written to the client |
   | `duration_ms` | Request head to last response byte, microsecond resolution |
@@ -969,7 +970,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] `gfe-config`: inotify watcher + debounce + last-known-good cache
 - [x] `gfe-controller`: orchestrator wiring config + health + cert lifecycle
 - [x] `gfe-upstream`: `least_request` and `ring_hash` (affinity) policies, upstream TLS validation
-- [~] bounded pools — idle connections bounded per host; a global upstream-connection cap is a follow-up
+- [x] bounded pools — idle connections bounded per host; open upstream connections capped node-wide (`max_upstream_connections`)
 - [x] `gfe-proxy`: graceful drain (deadline), request-total timeout, conservative idempotent retries, connection limits
 - [x] per-stage timeouts — TLS handshake, request header, client idle, upstream connect, upstream first-byte and overall `request_total`
 - [x] `gfe-metrics`: control-plane metrics; structured access logging (`gfe::access`)

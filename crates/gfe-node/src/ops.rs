@@ -69,6 +69,16 @@ async fn handle(state: Arc<OpsState>, path: &str) -> Result<Response<Full<Bytes>
             process
                 .runtime_global_queue_depth
                 .set(runtime.global_queue_depth() as i64);
+            // The upstream client keeps its own count; sample it like the
+            // runtime, when asked.
+            let upstream = &state.shared.upstream;
+            let proxy = &state.metrics.proxy;
+            proxy
+                .upstream_connections
+                .set(upstream.open_connections() as i64);
+            if let Some(max) = upstream.max_connections() {
+                proxy.upstream_connections_limit.set(max as i64);
+            }
             let body = state.metrics.encode();
             let mut r = Response::new(Full::new(Bytes::from(body)));
             r.headers_mut().insert(

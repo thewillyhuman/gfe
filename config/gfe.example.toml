@@ -26,7 +26,7 @@ max_connections           = 100000
 max_connections_listener  = 50000
 max_header_bytes          = 65536    # request head limit (431 above it); minimum 8192
 max_h2_concurrent_streams = 256
-max_upstream_connections  = 20000
+max_upstream_connections  = 20000    # open upstream connections, all backends together (503 above it)
 
 [timeouts]
 tls_handshake       = "10s"

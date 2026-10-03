@@ -104,6 +104,14 @@ groups:
         annotations:
           summary: "{{ $labels.instance }} is refusing connections at its connection limit"
 
+      - alert: GfeUpstreamConnectionsNearLimit
+        expr: gfe_upstream_connections / gfe_upstream_connections_limit > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} uses {{ $value | humanizePercentage }} of its upstream connection limit"
+          description: "At the limit, requests needing a new upstream connection are answered with 503 (gfe_upstream_errors_total{kind=\"connection_limit\"})."
+
       - alert: GfeFileDescriptorsNearLimit
         expr: process_open_fds{job="gfe"} / process_max_fds{job="gfe"} > 0.8
         for: 5m

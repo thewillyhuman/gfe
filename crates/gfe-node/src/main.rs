@@ -108,7 +108,7 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
 
     // The shared data-plane state starts empty; the controller fills it in.
     let shared = Arc::new(ProxyShared::new(
-        build_upstream_client(&node.upstream, &node.timeouts)?,
+        build_upstream_client(&node.upstream, &node.timeouts, &node.limits)?,
         metrics.clone(),
         node.limits.clone(),
         node.timeouts.clone(),
@@ -179,10 +179,11 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
 
 /// Build the upstream client from the node's `[upstream]` config (idle pool
 /// size, optional extra CA bundle, optional mTLS client certificate) and the
-/// `upstream_connect` timeout.
+/// `upstream_connect` timeout and `max_upstream_connections` limit.
 fn build_upstream_client(
     cfg: &gfe_types::UpstreamConfig,
     timeouts: &gfe_types::TimeoutsConfig,
+    limits: &gfe_types::LimitsConfig,
 ) -> Result<UpstreamClient> {
     fn read(p: &Path) -> Result<Vec<u8>> {
         std::fs::read(p).with_context(|| format!("reading {}", p.display()))
@@ -193,6 +194,7 @@ fn build_upstream_client(
         client_key_pem: cfg.client_key_file.as_deref().map(read).transpose()?,
         extra_ca_pem: cfg.extra_ca_file.as_deref().map(read).transpose()?,
         connect_timeout: Some(timeouts.upstream_connect),
+        max_connections: Some(limits.max_upstream_connections),
     };
     UpstreamClient::with_options(opts).map_err(|e| anyhow::anyhow!("building upstream client: {e}"))
 }

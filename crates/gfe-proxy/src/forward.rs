@@ -249,6 +249,19 @@ pub async fn forward(
                 record_upstream(shared, pool, &authority, resp.status().as_u16());
                 return map_upstream_response(resp, ctx);
             }
+            Ok(Err(e)) if e.kind == FailureKind::ConnectionLimit => {
+                // The node is at `max_upstream_connections`. That is not the
+                // backend's failure, and no other backend would fare better,
+                // so neither count it against the backend nor retry.
+                record_upstream_error(shared, pool, &authority, e.kind.as_str());
+                tracing::debug!(error = %e, backend = %authority, "upstream connection refused");
+                record.failed(failure_reason(e.kind));
+                return synthetic(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "upstream connection limit",
+                    record.request_id(),
+                );
+            }
             Ok(Err(e)) => {
                 shared.metrics.proxy.upstream_connect_errors.inc();
                 record_upstream_error(shared, pool, &authority, e.kind.as_str());
@@ -323,6 +336,7 @@ fn failure_reason(kind: FailureKind) -> &'static str {
         FailureKind::ConnectError => "upstream_connect_error",
         FailureKind::Tls => "upstream_tls",
         FailureKind::Reset => "upstream_reset",
+        FailureKind::ConnectionLimit => "upstream_connection_limit",
         FailureKind::Other => "upstream_error",
     }
 }
