@@ -10,6 +10,7 @@
 //! went away before any response, is therefore still reported.
 
 use crate::errors::RespBody;
+use crate::progress::SendProgress;
 use crate::ConnCtx;
 use bytes::{Buf, Bytes};
 use gfe_metrics::{AbortLabels, GrpcLabels, RequestLabels, RouteLabels};
@@ -377,15 +378,26 @@ impl Body for ObservedBody {
     }
 }
 
-/// A request body that adds the bytes read from it to a shared counter.
+/// A request body on its way to a backend: the bytes read from it are added
+/// to a shared counter, and its progress and end are noted on a
+/// [`SendProgress`], which is what the response deadline is derived from.
 pub struct CountedBody<B> {
     inner: B,
     bytes: Arc<AtomicU64>,
+    progress: Arc<SendProgress>,
 }
 
-impl<B> CountedBody<B> {
-    pub fn new(inner: B, bytes: Arc<AtomicU64>) -> Self {
-        CountedBody { inner, bytes }
+impl<B: Body> CountedBody<B> {
+    pub fn new(inner: B, bytes: Arc<AtomicU64>, progress: Arc<SendProgress>) -> Self {
+        // A body that is empty from the start is never polled.
+        if inner.is_end_stream() {
+            progress.body_ended(Instant::now());
+        }
+        CountedBody {
+            inner,
+            bytes,
+            progress,
+        }
     }
 }
 
@@ -402,11 +414,20 @@ where
     ) -> Poll<Option<Result<Frame<Bytes>, B::Error>>> {
         let this = &mut *self;
         let frame = ready!(Pin::new(&mut this.inner).poll_frame(cx));
-        if let Some(Ok(frame)) = &frame {
-            if let Some(data) = frame.data_ref() {
-                this.bytes
-                    .fetch_add(data.remaining() as u64, Ordering::Relaxed);
+        match &frame {
+            Some(Ok(frame)) => {
+                if let Some(data) = frame.data_ref() {
+                    this.bytes
+                        .fetch_add(data.remaining() as u64, Ordering::Relaxed);
+                }
+                if this.inner.is_end_stream() {
+                    this.progress.body_ended(Instant::now());
+                } else {
+                    this.progress.body_progressed(Instant::now());
+                }
             }
+            Some(Err(_)) => {}
+            None => this.progress.body_ended(Instant::now()),
         }
         Poll::Ready(frame)
     }

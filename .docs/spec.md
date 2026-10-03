@@ -469,6 +469,10 @@ Forwarding streams bodies without buffering them in full:
 Bounded, predictable behaviour under stress:
 
 - **Timeouts:** TLS handshake, request header, upstream connect, upstream first-byte, and overall request timeouts — all configurable, with safe defaults.
+- **Upstream timeouts (`progress.rs`, `forward.rs`).** Three timeouts bound the wait for a backend's response headers; none of them ever cuts a response that has started:
+  - `upstream_connect` — establishing the TCP connection.
+  - `upstream_first_byte` — per attempt: the backend must start responding within this long of having last been sent something, be it the request or a piece of its body. An upload therefore never times out while it progresses. If the wait expires while the request body is still incomplete, it is the client that stalled: it gets a `408` and the backend is not counted as failing. Otherwise the client gets a `504`.
+  - `request_total` — across attempts: once the request has been sent in full, a response must arrive within this long, however many backends are tried.
 - **Client timeouts (`activity.rs`, `connection.rs`).** A request is *in flight* from its parsed head until its response body is fully written. Two timeouts are derived from that:
   - `request_header` — the **first** request head must arrive within this long of the connection being established (after the TLS handshake), else the connection is dropped. This bounds connections that never send, or drip, a request.
   - `client_idle` — a connection with **no request in flight** for this long is shut down gracefully (HTTP/2 clients receive a `GOAWAY`). On HTTP/1 this covers the keep-alive wait *and* the time to receive the next request head, since hyper runs one timer over both. A connection with a request in flight is never closed by these timeouts, however slow the upstream or the transfer.
@@ -849,7 +853,7 @@ It prints which listener/route matched, which pool and which backend would be se
   | `status` | Response status; `499` when the client left before a response existed |
   | `grpc_status` | For gRPC calls (`content-type: application/grpc*`), the numeric status the call ended with, read from the response trailers (or headers, for calls that fail before any message). A gRPC call is HTTP `200` whatever its outcome, so this is the field that tells success from failure |
   | `route`, `pool`, `backend`, `attempts` | Routing decision, the backend of the last attempt, and how many attempts were made |
-  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_error`, `upstream_timeout`, `unknown_acme_challenge` |
+  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_error`, `upstream_timeout`, `request_body_timeout` (a `408`: the client stalled while sending the body), `unknown_acme_challenge` |
   | `termination` | `complete`, `client_abort` (client left before or during the response) or `upstream_abort` (upstream failed mid-body) |
   | `request_bytes`, `response_bytes` | Body bytes actually read from / written to the client |
   | `duration_ms` | Request head to last response byte, microsecond resolution |
@@ -967,7 +971,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] `gfe-upstream`: `least_request` and `ring_hash` (affinity) policies, upstream TLS validation
 - [~] bounded pools — idle connections bounded per host; a global upstream-connection cap is a follow-up
 - [x] `gfe-proxy`: graceful drain (deadline), request-total timeout, conservative idempotent retries, connection limits
-- [~] per-stage timeouts — overall `request_total`, TLS-handshake and upstream-connect timeouts applied; upstream first-byte is a follow-up
+- [x] per-stage timeouts — TLS handshake, request header, client idle, upstream connect, upstream first-byte and overall `request_total`
 - [x] `gfe-metrics`: control-plane metrics; structured access logging (`gfe::access`)
 - [x] `gfe-trace` CLI (offline routing tracer)
 

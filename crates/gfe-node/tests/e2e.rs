@@ -1310,3 +1310,98 @@ async fn backend_stays_in_flight_for_the_whole_response() {
     assert!(during.contains(&in_flight(1)), "{during}");
     assert!(after.contains(&in_flight(0)), "{after}");
 }
+
+/// Spawn a mock upstream that reads the whole request body before answering
+/// with its length, as an upload endpoint would.
+async fn spawn_upload_upstream() -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let svc = service_fn(|req: Request<Incoming>| async move {
+                    let received = req.into_body().collect().await.unwrap().to_bytes();
+                    let body = format!("received {}", received.len());
+                    Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(body))))
+                });
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), svc)
+                    .await;
+            });
+        }
+    });
+    addr
+}
+
+/// Shared state whose backends must start responding within `first_byte`.
+fn build_shared_with_first_byte(first_byte: Duration) -> Arc<ProxyShared> {
+    let timeouts = TimeoutsConfig {
+        upstream_first_byte: first_byte,
+        ..Default::default()
+    };
+    build_shared_with(timeouts, LimitsConfig::default())
+}
+
+#[tokio::test]
+async fn gives_up_on_a_backend_silent_for_upstream_first_byte() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_upstream_answering_after(Duration::from_secs(5)).await;
+    let shared = build_shared_with_first_byte(Duration::from_millis(200));
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared).await;
+
+    let started = std::time::Instant::now();
+    let (status, _) = http_get(proxy, "a.example.org", "/").await;
+    let event = logs.access_event().await;
+
+    assert_eq!(status, 504);
+    assert_eq!(event["error"], "upstream_timeout");
+    // Well before the 60s `request_total` that used to be the only bound.
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn upload_slower_than_upstream_first_byte_succeeds_while_it_progresses() {
+    let upstream = spawn_upload_upstream().await;
+    let shared = build_shared_with_first_byte(Duration::from_millis(300));
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared).await;
+
+    // 10 bytes every 100 ms: one second in total, three times the timeout.
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    let head = "POST /upload HTTP/1.1\r\nhost: a.example.org\r\ncontent-length: 100\r\nconnection: close\r\n\r\n";
+    stream.write_all(head.as_bytes()).await.unwrap();
+    for _ in 0..10 {
+        stream.write_all(b"0123456789").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let response = read_until_closed(&mut stream).await;
+
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with("received 100"), "{response}");
+}
+
+/// When the upload itself stalls, the client is the one at fault: it gets a
+/// 408 and the backend is not counted as having timed out.
+#[tokio::test]
+async fn stalled_upload_is_answered_with_408() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_upload_upstream().await;
+    let shared = build_shared_with_first_byte(Duration::from_millis(200));
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    let head = "POST /upload HTTP/1.1\r\nhost: a.example.org\r\ncontent-length: 100\r\n\r\n";
+    stream.write_all(head.as_bytes()).await.unwrap();
+    stream.write_all(b"0123456789").await.unwrap();
+    let response = read_until_closed(&mut stream).await;
+    let event = logs.access_event().await;
+
+    assert!(response.starts_with("HTTP/1.1 408"), "{response}");
+    assert_eq!(event["error"], "request_body_timeout");
+    let metrics = shared.metrics.encode();
+    assert!(!metrics.contains(r#"kind="timeout""#), "{metrics}");
+}

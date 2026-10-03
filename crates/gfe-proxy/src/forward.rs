@@ -2,6 +2,7 @@
 //! headers, the upstream call, and mapping the upstream response back.
 
 use crate::errors::{full_body, incoming_body, synthetic, RespBody};
+use crate::progress::SendProgress;
 use crate::record::{CountedBody, RequestRecord};
 use crate::ConnCtx;
 use bytes::Bytes;
@@ -156,14 +157,15 @@ pub async fn forward(
 
     // For the non-retryable path we forward the real (streamed) body exactly
     // once, so move it into an Option consumed on the single attempt.
+    let forwarding_started = Instant::now();
+    let progress = SendProgress::begin(forwarding_started, !retryable);
     let mut streamed_body = if retryable {
         None
     } else {
-        let counted = CountedBody::new(body, record.request_bytes());
+        let counted = CountedBody::new(body, record.request_bytes(), progress.clone());
         Some(counted.map_err(|e| Box::new(e) as BoxError).boxed())
     };
 
-    let forwarding_started = Instant::now();
     for attempt in 0..max_attempts {
         let selection = match pool.select(&shared.health, hash_key) {
             Some(s) => s,
@@ -229,11 +231,11 @@ pub async fn forward(
         };
 
         let start = Instant::now();
-        let result = tokio::time::timeout(
-            shared.timeouts.request_total,
-            shared.upstream.send(pool.scheme, &authority, upstream_req),
-        )
-        .await;
+        progress.attempt_started(start);
+        let result = tokio::select! {
+            result = shared.upstream.send(pool.scheme, &authority, upstream_req) => Ok(result),
+            _ = progress.overdue(&shared.timeouts) => Err(()),
+        };
         shared
             .metrics
             .proxy
@@ -263,7 +265,19 @@ pub async fn forward(
                     record.request_id(),
                 );
             }
-            Err(_) => {
+            Err(()) if !progress.request_complete() => {
+                // Nothing has been sent to the backend for too long while
+                // the request body is still incomplete: the client stalled,
+                // which is not the backend's failure.
+                tracing::debug!(backend = %authority, "request body stalled");
+                record.failed("request_body_timeout");
+                return synthetic(
+                    StatusCode::REQUEST_TIMEOUT,
+                    "request body timeout",
+                    record.request_id(),
+                );
+            }
+            Err(()) => {
                 // Timeouts are not retried.
                 record_upstream_error(shared, pool, &authority, "timeout");
                 record_upstream(shared, pool, &authority, 504);

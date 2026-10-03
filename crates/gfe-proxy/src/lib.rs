@@ -14,6 +14,7 @@ pub mod drain;
 pub mod errors;
 pub mod forward;
 pub mod listeners;
+pub mod progress;
 pub mod record;
 pub mod service;
 
