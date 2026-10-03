@@ -44,14 +44,26 @@ fn keep_alive_timeout(timeouts: &TimeoutsConfig) -> Duration {
     timeouts.client_idle / 4
 }
 
-/// Have the kernel probe a peer that has been silent for `client_idle`. A
-/// client that vanished without FIN or RST then fails the connection even
-/// with an HTTP/1 request in flight, which nothing else would notice. A
-/// socket that refuses the option is served without it.
+/// How many TCP keepalive probes may go unanswered before the peer is taken
+/// for gone.
+const KEEPALIVE_PROBES: u32 = 3;
+
+/// Have the kernel probe a peer that has been silent for `client_idle`,
+/// every quarter of `client_idle`, and give it up after
+/// [`KEEPALIVE_PROBES`] unanswered probes. A client that vanished without
+/// FIN or RST then fails the connection even with an HTTP/1 request in
+/// flight, which nothing else would notice. A socket that refuses the option
+/// is served without it.
 fn enable_tcp_keepalive(stream: &TcpStream, timeouts: &TimeoutsConfig) {
     // The kernel counts in whole seconds, and rejects zero.
-    let silence = timeouts.client_idle.max(Duration::from_secs(1));
-    let keepalive = TcpKeepalive::new().with_time(silence);
+    let second = Duration::from_secs(1);
+    let silence = timeouts.client_idle.max(second);
+    // Left to itself the kernel would keep probing for many minutes (nine
+    // probes 75 s apart on Linux) before giving the peer up.
+    let keepalive = TcpKeepalive::new()
+        .with_time(silence)
+        .with_interval((timeouts.client_idle / 4).max(second))
+        .with_retries(KEEPALIVE_PROBES);
     if let Err(e) = SockRef::from(stream).set_tcp_keepalive(&keepalive) {
         tracing::debug!(error = %e, "cannot enable tcp keepalive");
     }
@@ -360,6 +372,30 @@ mod tests {
             socket.tcp_keepalive_time().unwrap(),
             Duration::from_secs(42)
         );
+    }
+
+    #[tokio::test]
+    async fn accepted_socket_gives_up_on_a_dead_peer_within_client_idle() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (accepted, _) = listener.accept().await.unwrap();
+        let timeouts = TimeoutsConfig {
+            client_idle: Duration::from_secs(40),
+            ..Default::default()
+        };
+
+        enable_tcp_keepalive(&accepted, &timeouts);
+
+        // Three probes ten seconds apart: gone for 30 s after the 40 s of
+        // silence, not for the kernel's default of many minutes.
+        let socket = socket2::SockRef::from(&accepted);
+        assert_eq!(
+            socket.tcp_keepalive_interval().unwrap(),
+            Duration::from_secs(10)
+        );
+        assert_eq!(socket.tcp_keepalive_retries().unwrap(), 3);
     }
 
     #[test]
