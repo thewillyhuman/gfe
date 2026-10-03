@@ -267,6 +267,43 @@ mod tests {
         assert!(load_with_section("client-pair", section).is_ok());
     }
 
+    /// A file of the repository's `config/` directory, which the package
+    /// ships as the examples.
+    fn shipped_example(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../config")
+            .join(name)
+    }
+
+    #[test]
+    fn example_node_config_loads() {
+        assert!(load_node_config(&shipped_example("gfe.example.toml")).is_ok());
+    }
+
+    /// The paths the package and its systemd unit provide: the cache must
+    /// survive a stop, which `/tmp` does not under `PrivateTmp=yes`.
+    #[test]
+    fn example_node_config_uses_the_packaged_paths() {
+        let node = load_node_config(&shipped_example("gfe.example.toml")).unwrap();
+
+        assert_eq!(
+            node.control_plane.config_file,
+            Path::new("/etc/gfe/gfe-dynamic.json")
+        );
+        assert_eq!(
+            node.control_plane.local_cache.as_deref(),
+            Some(Path::new("/var/lib/gfe/config-cache.json"))
+        );
+    }
+
+    /// Certificates are not loaded: the files it names exist only on a node.
+    #[test]
+    fn example_dynamic_config_loads_and_validates() {
+        let cfg = load_dynamic_config(&shipped_example("gfe-dynamic.example.json")).unwrap();
+
+        assert!(crate::validate(&cfg).is_ok());
+    }
+
     #[test]
     fn reports_missing_file() {
         let err = load_dynamic_config(Path::new("/nonexistent/gfe.json"));

@@ -185,7 +185,7 @@ Put differently, **a single GFE instance sustained ~71k fully-terminated HTTPS r
 # Build
 cargo build --release
 
-# Validate config
+# Validate config (with the dynamic config it names, /etc/gfe/gfe-dynamic.json)
 ./target/release/gfe-node --config config/gfe.example.toml --check-config
 
 # Validate a candidate dynamic config before it replaces the deployed one

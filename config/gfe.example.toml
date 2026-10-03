@@ -12,8 +12,8 @@ metrics_addr  = "127.0.0.1:9101"      # /healthz, /readyz, /metrics; use 0.0.0.0
 worker_threads = 0                     # 0 = Tokio default (= number of CPUs)
 
 [control_plane]
-config_file     = "/Users/gfacundo/repos/github.com/thewillyhuman/gfe/config/gfe-dynamic.json"   # listeners/routes/pools/certs; watched via inotify
-local_cache     = "/tmp/gfe-config-cache.json"
+config_file     = "/etc/gfe/gfe-dynamic.json"       # listeners/routes/pools/certs; watched via inotify
+local_cache     = "/var/lib/gfe/config-cache.json"  # last-known-good; the unit's StateDirectory (not /tmp: PrivateTmp)
 reload_debounce = "250ms"
 
 [tls]
