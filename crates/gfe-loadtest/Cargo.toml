@@ -20,3 +20,6 @@ rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

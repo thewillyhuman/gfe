@@ -32,6 +32,12 @@ publish = false
 # Minimum supported Rust version (floor, not target). CI tracks stable.
 rust-version = "1.88"
 
+# The workspace's own code contains no `unsafe`: what needs it (system calls,
+# eBPF maps) goes through crates whose job that is. Enforced, so that it
+# stays a decision and does not become an accident.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
 [workspace.dependencies]
 # Workspace crates
 gfe-types = { path = "crates/gfe-types" }

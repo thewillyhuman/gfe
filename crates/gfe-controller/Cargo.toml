@@ -21,3 +21,6 @@ tracing = { workspace = true }
 gfe-tls = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }
+
+[lints]
+workspace = true

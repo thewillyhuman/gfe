@@ -30,3 +30,6 @@ socket2 = { workspace = true, features = ["all"] }
 [dev-dependencies]
 gfe-tls = { workspace = true }
 rcgen = { workspace = true }
+
+[lints]
+workspace = true

@@ -76,3 +76,6 @@ post_uninstall_script = "../../packaging/rpm/post-uninstall.sh"
 [package.metadata.generate-rpm.requires]
 systemd = "*"
 shadow-utils = "*"
+
+[lints]
+workspace = true

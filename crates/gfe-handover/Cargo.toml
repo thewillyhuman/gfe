@@ -8,3 +8,6 @@ publish.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["net"] }
+
+[lints]
+workspace = true

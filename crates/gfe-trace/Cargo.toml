@@ -17,3 +17,6 @@ gfe-router = { workspace = true }
 gfe-upstream = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

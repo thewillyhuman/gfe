@@ -24,3 +24,6 @@ rustls-pemfile = { workspace = true }
 [[bench]]
 name = "handshake"
 harness = false
+
+[lints]
+workspace = true
