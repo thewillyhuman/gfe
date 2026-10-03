@@ -17,6 +17,12 @@
 FROM rust:1.88-bookworm AS builder
 WORKDIR /src
 
+# clang compiles the eBPF program of `gfe-ebpf` (kernel TCP statistics).
+# Without it the image still builds, with that feature unavailable.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends clang \
+ && rm -rf /var/lib/apt/lists/*
+
 # Copy the manifest first to maximise Docker layer caching: the dep build
 # only re-runs when Cargo.lock or any Cargo.toml changes.
 COPY Cargo.toml Cargo.lock ./

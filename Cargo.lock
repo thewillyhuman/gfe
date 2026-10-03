@@ -717,6 +717,7 @@ dependencies = [
  "clap",
  "gfe-config",
  "gfe-controller",
+ "gfe-ebpf",
  "gfe-health",
  "gfe-metrics",
  "gfe-proxy",

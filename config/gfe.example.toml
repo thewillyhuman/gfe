@@ -38,6 +38,13 @@ request_total       = "60s"   # all attempts together, from the request being se
 client_idle         = "75s"   # close a connection with no request in flight for this long
 drain_deadline      = "30s"
 
+# Kernel-side TCP statistics (accept-queue wait, round-trip time,
+# retransmissions, how connections end), collected by an eBPF program. Linux
+# only; needs CAP_BPF and CAP_NET_ADMIN (see deploy/gfe-node-ebpf.conf).
+# Where it cannot be attached the node says so and runs without it.
+[ebpf]
+enabled = false
+
 [health_check_defaults]
 type                = "http"       # http | https | tcp | grpc (grpc.health.v1, for gRPC pools)
 interval            = "5s"

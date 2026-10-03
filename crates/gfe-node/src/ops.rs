@@ -1,5 +1,6 @@
 //! The operations HTTP server: `/healthz`, `/readyz`, `/metrics`.
 
+use crate::kernel::KernelView;
 use bytes::Bytes;
 use gfe_metrics::GfeMetrics;
 use gfe_proxy::ProxyShared;
@@ -19,6 +20,8 @@ pub struct OpsState {
     pub metrics: Arc<GfeMetrics>,
     pub ready: Arc<AtomicBool>,
     pub shared: Arc<ProxyShared>,
+    /// The kernel's view, when attached.
+    pub kernel: Option<Arc<KernelView>>,
 }
 
 /// Run the ops server until the process exits.
@@ -78,6 +81,10 @@ async fn handle(state: Arc<OpsState>, path: &str) -> Result<Response<Full<Bytes>
                 .set(upstream.open_connections() as i64);
             if let Some(max) = upstream.max_connections() {
                 proxy.upstream_connections_limit.set(max as i64);
+            }
+            if let Some(kernel) = &state.kernel {
+                let lost = i64::try_from(kernel.lost_events()).unwrap_or(i64::MAX);
+                state.metrics.kernel.ebpf_lost_events.set(lost);
             }
             let body = state.metrics.encode();
             let mut r = Response::new(Full::new(Bytes::from(body)));

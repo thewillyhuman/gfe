@@ -37,6 +37,9 @@ Each target can be routed or silenced on its own, e.g.
 | How much traffic on the wire? | `gfe_bytes_in_total`, `gfe_bytes_out_total` (TLS included) | connection log `bytes_in`, `bytes_out` |
 | Which backend is failing, and how? | `gfe_upstream_errors_total{pool,backend,kind}`, `gfe_backend_health_status` | `pool`, `backend`, `attempts`, `error` |
 | How loaded is each backend? | `gfe_upstream_requests_in_flight{pool,backend}` | — |
+| Is a slow exchange the network's fault? (kernel view) | `gfe_client_tcp_rtt_seconds`, `gfe_client_tcp_retransmits_total / gfe_client_tcp_segments_sent_total` | `gfe::tcp`: `rtt_ms`, `retransmits`, joined on `client` + `client_port` |
+| Is a backend far, or slow? (kernel view) | `gfe_upstream_tcp_rtt_seconds{backend}` against `gfe_upstream_request_duration_seconds` | `gfe::tcp` with `side=upstream` |
+| Is the node keeping up with new connections? (kernel view) | `gfe_accept_queue_wait_seconds{listener}` | connection log `accept_wait_ms` |
 | Is the node saturated? | `gfe_connections_active / gfe_connections_limit`, `process_open_fds / process_max_fds`, `rate(process_cpu_seconds_total[5m])`, `gfe_runtime_global_queue_depth` | — |
 | Is it refusing work? | `gfe_connections_rejected_total{reason="limit"}` | — |
 | Did a config or certificate change land? | `gfe_config_last_reload_timestamp`, `gfe_config_reload_errors_total`, `gfe_cert_expiry_timestamp` | node log |
@@ -88,6 +91,32 @@ jq -c 'select(.target=="gfe::conn" and .fields.client=="203.0.113.7")
 In Loki the same questions are `{unit="gfe-node"} | json | target="gfe::access"`
 followed by a filter on the extracted fields, e.g.
 `| fields_status >= 500 | line_format "{{.fields_client}} {{.fields_path}}"`.
+
+## The kernel's view of the node's connections
+
+Optional (`[ebpf] enabled = true`). A small eBPF program attached to the
+node's cgroup reports what only the kernel knows about each of the node's TCP
+connections: how long it waited to be accepted, its round-trip time, how many
+segments had to be retransmitted, and whether it ended with an orderly close.
+
+It watches the node's **sockets**, not packets on an interface, so it works
+the same way whether clients reach the node through `lb` and its tunnel or
+directly, for instance behind a DNS load balancer.
+
+Each closed connection is counted in the `gfe_client_tcp_*` or
+`gfe_upstream_tcp_*` metrics and logged as a `gfe::tcp` event. For a client
+connection that event carries the same `client` and `client_port` as the
+`gfe::conn` event, which is how the two are joined:
+
+```bash
+# Clients whose connections needed retransmissions, worst first
+jq -r 'select(.target=="gfe::tcp" and .fields.side=="client" and .fields.retransmits > 0)
+       | .fields | [.retransmits, .rtt_ms, .client] | @tsv' | sort -rn | head
+```
+
+It needs Linux, `CAP_BPF` and `CAP_NET_ADMIN` (the drop-in
+`deploy/gfe-node-ebpf.conf` grants them under systemd). If it cannot be
+attached, the node logs why, sets `gfe_ebpf_attached` to 0 and runs without it.
 
 ## Below the proxy: packets, drops, interfaces
 
@@ -141,10 +170,10 @@ Reading the two layers together:
 - **Query strings and request headers** (other than `User-Agent`): they carry
   tokens and personal data. The access log has the path only.
 - **Request and response bodies.**
-- **Per-connection TCP statistics** (round-trip time, retransmissions of one
-  client). The kernel exposes them through `TCP_INFO`, for which Rust has no
-  safe API; reading it would be the first `unsafe` code in the project. The
-  host-level retransmission ratio covers the fleet-wide question.
+- **Per-connection TCP statistics without the kernel view.** Round-trip
+  time, retransmissions and the accept-queue wait come from the optional eBPF
+  program (`[ebpf] enabled = true`). Without it, only the host-level
+  retransmission ratio from node_exporter is available.
 - **Distributed traces.** `X-Request-Id` is propagated and logged at both
   ends, which correlates a request across GFE and the backend, but GFE does
   not emit spans.

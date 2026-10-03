@@ -13,8 +13,8 @@ pub mod tls;
 pub mod upstream;
 
 pub use config::{
-    ControlPlaneConfig, DynamicConfig, HealthCheckConfig, LimitsConfig, NodeConfig, NodeSection,
-    ProbeType, TimeoutsConfig, UpstreamConfig,
+    ControlPlaneConfig, DynamicConfig, EbpfConfig, HealthCheckConfig, LimitsConfig, NodeConfig,
+    NodeSection, ProbeType, TimeoutsConfig, UpstreamConfig,
 };
 pub use error::GfeError;
 pub use listener::{ListenProtocol, Listener, ListenerId};

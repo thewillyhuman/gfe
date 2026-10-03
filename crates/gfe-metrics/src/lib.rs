@@ -1,10 +1,12 @@
 //! Metrics registration and Prometheus exposition for GFE.
 
 pub mod control_metrics;
+pub mod kernel_metrics;
 pub mod process_metrics;
 pub mod proxy_metrics;
 
 pub use control_metrics::{BackendLabels, ControlMetrics, SniLabel};
+pub use kernel_metrics::{BackendLabel, ClientEndingLabels, KernelMetrics, UpstreamEndingLabels};
 pub use process_metrics::ProcessMetrics;
 /// Counter and gauge handles, for callers that hold one series of a family.
 pub use prometheus_client::metrics::counter::Counter;
@@ -24,6 +26,7 @@ pub struct GfeMetrics {
     pub proxy: ProxyMetrics,
     pub control: ControlMetrics,
     pub process: ProcessMetrics,
+    pub kernel: KernelMetrics,
 }
 
 impl GfeMetrics {
@@ -32,11 +35,13 @@ impl GfeMetrics {
         let proxy = ProxyMetrics::register(&mut registry);
         let control = ControlMetrics::register(&mut registry);
         let process = ProcessMetrics::register(&mut registry);
+        let kernel = KernelMetrics::register(&mut registry);
         GfeMetrics {
             registry: Mutex::new(registry),
             proxy,
             control,
             process,
+            kernel,
         }
     }
 

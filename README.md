@@ -56,6 +56,11 @@ spread connections across a fleet with no coordination.
   when it is over; `/healthz` `/readyz` `/metrics`; alert rules, a dashboard
   and an offline routing tracer (`gfe-trace`). See the
   [observability guide](.docs/observability.md).
+- **Kernel view (optional, eBPF)** — accept-queue wait, round-trip time,
+  retransmissions and how connections end, per listener and per backend,
+  from a small eBPF program attached to the node's own cgroup. It watches
+  sockets, so it works the same whether traffic arrives through `lb` or
+  directly. Off by default; needs `CAP_BPF` and `CAP_NET_ADMIN`.
 
 ## How it fits with `lb`
 
@@ -213,6 +218,7 @@ crates/
   gfe-config/       Load, validate, apply (atomic swap), watch, cache
   gfe-controller/   Orchestrator: config + health + cache + hot-reload
   gfe-metrics/      Prometheus counters/gauges/histograms
+  gfe-ebpf/         Optional kernel view of the node's TCP connections (eBPF)
   gfe-node/         Main binary: proxy + controller + ops server
   gfe-trace/        Offline routing-decision tracer + CI routing assertions
   gfe-cp-types/     Control-plane domain + agent/operator wire types
@@ -227,6 +233,7 @@ packaging/
   rpm/                        RPM scriptlets, build notes, Puppet usage
 deploy/
   gfe-node.service            systemd unit (hardened, CAP_NET_BIND_SERVICE only)
+  gfe-node-ebpf.conf          Drop-in granting what the eBPF kernel view needs
   backend-onboard.sh          GRE tunnel + loopback VIP (DSR) for L4 integration
   generate-config.sh          Scaffold a dynamic config
   validate-config.sh          --check-config wrapper

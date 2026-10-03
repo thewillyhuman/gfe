@@ -24,7 +24,20 @@ pub struct NodeConfig {
     pub timeouts: TimeoutsConfig,
     #[serde(default)]
     pub upstream: UpstreamConfig,
+    #[serde(default)]
+    pub ebpf: EbpfConfig,
     pub health_check_defaults: HealthCheckConfig,
+}
+
+/// The kernel-side view of the node's TCP connections (eBPF).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EbpfConfig {
+    /// Attach the kernel program at startup. Needs Linux and the `CAP_BPF`
+    /// and `CAP_NET_ADMIN` capabilities; where it cannot be attached the
+    /// node says so and runs without it. Off by default.
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// Upstream-leg (GFE → backend) connection settings.
@@ -314,6 +327,26 @@ config_file = "/etc/gfe/gfe-dynamic.json"
         assert_eq!(cfg.limits.max_connections, 100_000);
         assert_eq!(cfg.timeouts.upstream_connect, Duration::from_secs(3));
         assert_eq!(cfg.health_check_defaults.interval, Duration::from_secs(5));
+        assert!(!cfg.ebpf.enabled);
+    }
+
+    #[test]
+    fn ebpf_is_enabled_in_its_own_section() {
+        let toml_str = r#"
+[node]
+id = "gfe-node-01"
+loopback_vip = "188.184.100.10"
+
+[control_plane]
+config_file = "/etc/gfe/gfe-dynamic.json"
+
+[ebpf]
+enabled = true
+
+[health_check_defaults]
+"#;
+        let cfg: NodeConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.ebpf.enabled);
     }
 
     #[test]

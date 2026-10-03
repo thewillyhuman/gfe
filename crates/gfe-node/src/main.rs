@@ -1,6 +1,7 @@
 //! `gfe-node` — the main GFE binary: runs the proxy (data plane) and the
 //! control-plane pieces (config load/apply, ops server) on one box.
 
+mod kernel;
 mod ops;
 
 use anyhow::{Context, Result};
@@ -106,14 +107,21 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
 
     let metrics = Arc::new(GfeMetrics::new());
 
+    // The kernel's view of the node's connections, if enabled and available.
+    let kernel = kernel::attach(&node, &metrics);
+
     // The shared data-plane state starts empty; the controller fills it in.
-    let shared = Arc::new(ProxyShared::new(
+    let mut shared = ProxyShared::new(
         build_upstream_client(&node.upstream, &node.timeouts, &node.limits)?,
         metrics.clone(),
         node.limits.clone(),
         node.timeouts.clone(),
         node.tls.clone(),
-    ));
+    );
+    if let Some((view, _)) = &kernel {
+        shared = shared.with_accept_queue(view.clone());
+    }
+    let shared = Arc::new(shared);
     let resolver = shared.resolver.clone();
 
     // The TLS server config is shared across https listeners. Cert rotation
@@ -138,7 +146,11 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
         metrics: metrics.clone(),
         ready: ready.clone(),
         shared: shared.clone(),
+        kernel: kernel.as_ref().map(|(view, _)| view.clone()),
     });
+    if let Some((_, closed)) = kernel {
+        tokio::spawn(kernel::report(closed, listeners.clone(), metrics.clone()));
+    }
     {
         let addr = node.node.metrics_addr;
         let st = ops_state.clone();

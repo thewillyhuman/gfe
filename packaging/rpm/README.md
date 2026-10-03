@@ -83,6 +83,11 @@ Notes:
 - A node restarted while the dynamic config is missing or broken starts from
   its last-known-good cache (`local_cache`) and reports
   `gfe_config_from_cache = 1`; it does not stay down.
+- The kernel TCP statistics (`[ebpf] enabled = true`) need two more
+  capabilities than the unit grants. `/usr/share/gfe/gfe-node-ebpf.conf` is a
+  drop-in for `/etc/systemd/system/gfe-node.service.d/` that grants them. The
+  RPM must also have been built with clang available, or the binary has no
+  eBPF program in it and says so when asked to attach.
 - Listeners, routes, pools and certificates are all in the dynamic config
   and are reconciled on reload, including binding and releasing listening
   sockets. Only the bootstrap TOML requires a restart.

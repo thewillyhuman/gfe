@@ -171,6 +171,19 @@ impl ListenerSet {
             .map(|listener| listener.local_addr)
     }
 
+    /// The listener a connection accepted on the node's address `local`
+    /// belongs to, if it is one of the proxy's listeners.
+    pub fn listener_at(&self, local: SocketAddr) -> Option<ListenerId> {
+        self.running()
+            .values()
+            .find(|listener| {
+                let bound = listener.local_addr;
+                bound.port() == local.port()
+                    && (bound.ip().is_unspecified() || bound.ip() == local.ip())
+            })
+            .map(|listener| listener.config.load().id.clone())
+    }
+
     /// Serve until the shutdown signal, then stop accepting and wait for the
     /// open connections to finish, at most `drain_deadline`.
     pub async fn serve_until_drained(&self) {

@@ -218,7 +218,18 @@ gfe/
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── proxy_metrics.rs         # Connections, requests, latency, bytes
-│   │       └── control_metrics.rs       # Health, config reload, cert expiry
+│   │       ├── control_metrics.rs       # Health, config reload, cert expiry
+│   │       ├── process_metrics.rs       # File descriptors, CPU, memory, runtime
+│   │       └── kernel_metrics.rs        # What the kernel reports (eBPF)
+│   │
+│   ├── gfe-ebpf/                   # Kernel view of the node's TCP connections (optional)
+│   │   ├── build.rs                     # Compiles the kernel program with clang
+│   │   ├── bpf/tcp_events.bpf.c         # The eBPF program (sockops, cgroup-attached)
+│   │   └── src/
+│   │       ├── lib.rs                   # Types; why it may be unavailable
+│   │       ├── wire.rs                  # Byte layouts shared with the program
+│   │       ├── linux.rs                 # Load, attach, read
+│   │       └── unsupported.rs           # Stand-in elsewhere
 │   │
 │   │  ─────────────────────────────────
 │   │  BINARIES
@@ -831,6 +842,29 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 
 The `process_*` names are the ones every Prometheus client library uses, so stock dashboards and alerts apply unchanged.
 
+**Kernel view (`gfe-ebpf`, `kernel_metrics.rs`) — optional, `[ebpf] enabled = true`:**
+
+Some facts about a connection exist only in the kernel. With the eBPF program attached, the node reports them; without it, these series stay empty and nothing else changes.
+
+| Metric | Type | Description |
+|---|---|---|
+| `gfe_ebpf_attached` | Gauge | 1 while the kernel program is attached |
+| `gfe_ebpf_lost_events` | Gauge | Closed connections the kernel could not report because the reader fell behind |
+| `gfe_accept_queue_wait_seconds` | Histogram | Time a connection spent established but not yet accepted (label: listener). The earliest sign of a node falling behind |
+| `gfe_client_tcp_rtt_seconds` | Histogram | Smoothed round-trip time to the client when its connection closed (label: listener) |
+| `gfe_client_tcp_segments_sent_total` / `gfe_client_tcp_retransmits_total` | Counter | Segments sent / retransmitted to clients on closed connections (label: listener); their ratio is the loss clients experience |
+| `gfe_client_tcp_closes_total` | Counter | Closed client connections (labels: listener, ending ∈ {peer_closed, node_closed, aborted, other}) |
+| `gfe_upstream_tcp_rtt_seconds` | Histogram | The same for connections to backends (label: backend = `ip:port` as the kernel sees it): network distance to a backend, separate from how fast it answers |
+| `gfe_upstream_tcp_segments_sent_total` / `gfe_upstream_tcp_retransmits_total` | Counter | (label: backend) |
+| `gfe_upstream_tcp_closes_total` | Counter | (labels: backend, ending) |
+
+How it works, and what it does not assume:
+
+- One `sockops` program is attached to the **cgroup the node runs in**, so it sees exactly the node's sockets: connections it accepts and connections it opens (traffic to backends and health probes alike). It observes **sockets, not packets**, and is therefore indifferent to how traffic reached the node: through the L4 LB and its GRE tunnel, or directly from clients behind a DNS load balancer.
+- `ending` is read from the TCP state a connection was closed from: who sent its FIN first (`peer_closed`, `node_closed`), or no orderly shutdown at all (`aborted`: a reset in either direction, or the kernel giving up on a silent peer). On TLS connections the node usually closes first, in answer to the client's `close_notify`.
+- Statistics are reported once per connection, when it closes. A long-lived connection contributes when it ends.
+- Requirements: Linux ≥ 5.8, a build made with clang available, and `CAP_BPF` + `CAP_NET_ADMIN` (drop-in: `deploy/gfe-node-ebpf.conf`). The kernel program is C, checked by the kernel's verifier before it runs; the Rust side has no `unsafe`. Where any requirement is missing the node logs the reason and runs without the kernel view.
+
 ### 12.2 Request Tracer
 
 > **Code location:** `crates/gfe-trace/`
@@ -866,7 +900,8 @@ It prints which listener/route matched, which pool and which backend would be se
   | `tls_version`, `tls_cipher` | Negotiated TLS parameters of the connection the request arrived on |
 
   Fields that do not apply to a request are omitted.
-- **Connection logs** (`conn_record.rs`): one structured event per client connection under the target `gfe::conn`, emitted when the connection is gone. Fields: `client`, `client_port`, `listener`, `proto`, `sni`, `tls_version`, `tls_cipher`, `alpn`, `tls_resumed`, `tls_handshake_ms`, `tls_error` (why a handshake failed), `requests` (served on the connection), `bytes_in` / `bytes_out` (on the wire), `duration_ms`, `reason` (as in `gfe_connections_closed_total`) and `error` (the error text, when there was one). Both targets can be silenced or routed independently, e.g. `RUST_LOG=info,gfe::conn=off`.
+- **Connection logs** (`conn_record.rs`): one structured event per client connection under the target `gfe::conn`, emitted when the connection is gone. Fields: `client`, `client_port`, `listener`, `proto`, `sni`, `tls_version`, `tls_cipher`, `alpn`, `tls_resumed`, `tls_handshake_ms`, `tls_error` (why a handshake failed), `accept_wait_ms` (time in the accept queue; only with the kernel view), `requests` (served on the connection), `bytes_in` / `bytes_out` (on the wire), `duration_ms`, `reason` (as in `gfe_connections_closed_total`) and `error` (the error text, when there was one). Both targets can be silenced or routed independently, e.g. `RUST_LOG=info,gfe::conn=off`.
+- **TCP logs** (`gfe-node/src/kernel.rs`, only with the kernel view): one event per closed TCP connection under the target `gfe::tcp`. Fields: `side` (`client` or `upstream`), `client` and `client_port` (the same as in the `gfe::conn` event of that connection) or `backend`, `listener`, `ending`, `rtt_ms`, `min_rtt_ms`, `retransmits`, `segments_sent`, `bytes_acked`, `bytes_received`, `lifetime_ms`.
 - Log levels: ERROR/WARN always on; INFO/DEBUG adjustable at runtime via an env-filter reload, no restart.
 - **No body logging.** Headers are logged selectively (allowlist) to avoid leaking secrets.
 

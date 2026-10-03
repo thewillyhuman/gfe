@@ -1559,3 +1559,17 @@ async fn connection_log_has_no_accept_wait_without_a_kernel_view() {
 
     assert!(event.get("accept_wait_ms").is_none(), "{event}");
 }
+
+#[tokio::test]
+async fn tells_which_listener_a_local_address_belongs_to() {
+    let cfg = fixed_response_config();
+    let (listeners, _tx) = start_listeners(&cfg, build_shared());
+    let bound = listeners.local_addr(&cfg.listeners[0].id).unwrap();
+    let elsewhere = SocketAddr::new(bound.ip(), free_port());
+
+    assert_eq!(
+        listeners.listener_at(bound),
+        Some(cfg.listeners[0].id.clone())
+    );
+    assert_eq!(listeners.listener_at(elsewhere), None);
+}

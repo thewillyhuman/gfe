@@ -18,6 +18,7 @@ gfe-proxy = { workspace = true }
 gfe-metrics = { workspace = true }
 gfe-tls = { workspace = true }
 gfe-upstream = { workspace = true }
+gfe-ebpf = { workspace = true }
 tokio = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
@@ -50,6 +51,7 @@ assets = [
     { source = "target/release/gfe-node", dest = "/usr/bin/gfe-node", mode = "755" },
     { source = "target/release/gfe-trace", dest = "/usr/bin/gfe-trace", mode = "755" },
     { source = "../../deploy/gfe-node.service", dest = "/usr/lib/systemd/system/gfe-node.service", mode = "644" },
+    { source = "../../deploy/gfe-node-ebpf.conf", dest = "/usr/share/gfe/gfe-node-ebpf.conf", mode = "644" },
     { source = "../../deploy/backend-onboard.sh", dest = "/usr/share/gfe/backend-onboard.sh", mode = "755" },
     { source = "../../deploy/generate-config.sh", dest = "/usr/share/gfe/generate-config.sh", mode = "755" },
     { source = "../../deploy/validate-config.sh", dest = "/usr/share/gfe/validate-config.sh", mode = "755" },
