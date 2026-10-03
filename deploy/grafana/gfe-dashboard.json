@@ -288,6 +288,68 @@
       "targets": [
         { "expr": "rate(node_netstat_TcpExt_ListenOverflows[5m])", "legendFormat": "{{instance}}" }
       ]
+    },
+    {
+      "id": 30, "title": "Kernel: accept-queue wait p99 by listener", "type": "timeseries",
+      "description": "Needs the eBPF kernel view ([ebpf] enabled = true); empty without it.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 88 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "histogram_quantile(0.99, sum by (le, listener) (rate(gfe_accept_queue_wait_seconds_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{listener}}" }
+      ]
+    },
+    {
+      "id": 31, "title": "Kernel: client round-trip time by listener", "type": "timeseries",
+      "description": "Needs the eBPF kernel view ([ebpf] enabled = true); empty without it.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 88 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum by (le, listener) (rate(gfe_client_tcp_rtt_seconds_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "p50 · {{listener}}" },
+        { "expr": "histogram_quantile(0.95, sum by (le, listener) (rate(gfe_client_tcp_rtt_seconds_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "p95 · {{listener}}" }
+      ]
+    },
+    {
+      "id": 32, "title": "Kernel: segments retransmitted to clients", "type": "timeseries",
+      "description": "Needs the eBPF kernel view ([ebpf] enabled = true); empty without it.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 88 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (listener) (rate(gfe_client_tcp_retransmits_total{instance=~\"$instance\"}[5m])) / sum by (listener) (rate(gfe_client_tcp_segments_sent_total{instance=~\"$instance\"}[5m]))", "legendFormat": "{{listener}}" }
+      ]
+    },
+    {
+      "id": 33, "title": "Kernel: round-trip time to backends (p95)", "type": "timeseries",
+      "description": "Needs the eBPF kernel view ([ebpf] enabled = true); empty without it.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 96 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, backend) (rate(gfe_upstream_tcp_rtt_seconds_bucket{instance=~\"$instance\"}[5m])))", "legendFormat": "{{backend}}" }
+      ]
+    },
+    {
+      "id": 34, "title": "Kernel: segments retransmitted to backends", "type": "timeseries",
+      "description": "Needs the eBPF kernel view ([ebpf] enabled = true); empty without it.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 96 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (backend) (rate(gfe_upstream_tcp_retransmits_total{instance=~\"$instance\"}[5m])) / sum by (backend) (rate(gfe_upstream_tcp_segments_sent_total{instance=~\"$instance\"}[5m]))", "legendFormat": "{{backend}}" }
+      ]
+    },
+    {
+      "id": 35, "title": "Kernel: how connections end", "type": "timeseries",
+      "description": "Needs the eBPF kernel view ([ebpf] enabled = true); empty without it.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 96 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "sum by (ending) (rate(gfe_client_tcp_closes_total{instance=~\"$instance\"}[5m]))", "legendFormat": "client · {{ending}}" },
+        { "expr": "sum by (ending) (rate(gfe_upstream_tcp_closes_total{instance=~\"$instance\"}[5m]))", "legendFormat": "upstream · {{ending}}" }
+      ]
     }
   ]
 }

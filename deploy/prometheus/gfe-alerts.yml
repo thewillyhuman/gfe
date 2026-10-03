@@ -198,6 +198,52 @@ groups:
         annotations:
           summary: "{{ $labels.instance }} restarted more than once in 15 minutes"
 
+  # From the node's own kernel view (eBPF, `[ebpf] enabled = true`). These
+  # never fire on a node that runs without it: the series do not exist.
+  - name: gfe-kernel
+    rules:
+      - alert: GfeAcceptQueueWait
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, instance, listener) (rate(gfe_accept_queue_wait_seconds_bucket[5m]))
+          ) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Connections on {{ $labels.listener }} wait {{ $value | humanizeDuration }} to be accepted on {{ $labels.instance }}"
+          description: "The node accepts slower than connections arrive: it is short of CPU. This shows before the accept queue overflows and connections are lost."
+
+      - alert: GfeClientRetransmissions
+        expr: |
+          sum by (instance, listener) (rate(gfe_client_tcp_retransmits_total[10m]))
+            /
+          sum by (instance, listener) (rate(gfe_client_tcp_segments_sent_total[10m]))
+            > 0.02
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of the segments sent to clients of {{ $labels.listener }} are retransmissions"
+          description: "Packet loss on the way to clients. The gfe::tcp log says which clients."
+
+      - alert: GfeUpstreamRetransmissions
+        expr: |
+          sum by (instance, backend) (rate(gfe_upstream_tcp_retransmits_total[10m]))
+            /
+          sum by (instance, backend) (rate(gfe_upstream_tcp_segments_sent_total[10m]))
+            > 0.02
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of the segments sent to backend {{ $labels.backend }} are retransmissions"
+          description: "Packet loss between the node and this backend, which shows up as backend latency."
+
+      - alert: GfeKernelEventsLost
+        expr: delta(gfe_ebpf_lost_events[15m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} is missing kernel TCP statistics for some connections"
+          description: "Connections close faster than the node reads their statistics from the kernel; the gfe_*_tcp_* metrics undercount."
+
   # Kernel-level network health, from node_exporter (collectors netdev,
   # netstat, softnet and conntrack, all enabled by default).
   - name: gfe-host-network
