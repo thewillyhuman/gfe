@@ -1254,3 +1254,59 @@ async fn access_log_and_metrics_report_the_grpc_status() {
         "missing {expected} in:\n{metrics}"
     );
 }
+
+#[tokio::test]
+async fn reports_why_the_upstream_could_not_be_reached() {
+    let (logs, _guard) = CapturedLogs::start();
+    // Bind and drop: nothing listens on the port, so connecting is refused.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead = closed.local_addr().unwrap();
+    drop(closed);
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&forwarding_config(dead), shared.clone()).await;
+
+    let (status, _) = http_get(proxy, "a.example.org", "/").await;
+    let event = logs.access_event().await;
+
+    assert_eq!(status, 502);
+    assert_eq!(event["error"], "upstream_connect_refused");
+    // A bodyless GET is retried once, here against the only backend there is.
+    assert_eq!(event["attempts"], 2);
+    let metrics = shared.metrics.encode();
+    for expected in [
+        format!(
+            r#"gfe_upstream_errors_total{{pool="pool",backend="{dead}",kind="connect_refused"}} 2"#
+        ),
+        r#"gfe_upstream_retries_total{pool="pool"} 1"#.to_string(),
+        format!(r#"gfe_upstream_requests_in_flight{{pool="pool",backend="{dead}"}} 0"#),
+    ] {
+        assert!(
+            metrics.contains(&expected),
+            "missing {expected} in:\n{metrics}"
+        );
+    }
+}
+
+/// A backend is busy with a request until its response has been relayed to
+/// the end, not merely until the response headers arrive.
+#[tokio::test]
+async fn backend_stays_in_flight_for_the_whole_response() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_grpc_upstream().await;
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&grpc_config(upstream), shared.clone()).await;
+    let in_flight = |n: u8| {
+        format!(r#"gfe_upstream_requests_in_flight{{pool="grpc",backend="{upstream}"}} {n}"#)
+    };
+
+    let mut call = GrpcCall::open(proxy).await;
+    call.send("one").await;
+    call.next_frame().await;
+    let during = shared.metrics.encode();
+    call.finish().await;
+    logs.access_event().await;
+    let after = shared.metrics.encode();
+
+    assert!(during.contains(&in_flight(1)), "{during}");
+    assert!(after.contains(&in_flight(0)), "{after}");
+}

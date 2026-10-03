@@ -8,6 +8,7 @@
 //! with prior knowledge for `h2c`. The last one needs a client of its own,
 //! as cleartext offers no way to negotiate the version per connection.
 
+use crate::failure::UpstreamFailure;
 use bytes::Bytes;
 use gfe_types::{GfeError, Scheme};
 use http_body_util::combinators::BoxBody;
@@ -129,7 +130,7 @@ impl UpstreamClient {
         scheme: Scheme,
         authority: &str,
         mut req: Request<ReqBody>,
-    ) -> Result<Response<Incoming>, BoxError> {
+    ) -> Result<Response<Incoming>, UpstreamFailure> {
         let path_and_query = req
             .uri()
             .path_and_query()
@@ -140,13 +141,15 @@ impl UpstreamClient {
             Scheme::Https => (&self.negotiating, "https"),
             Scheme::H2c => (&self.http2_prior_knowledge, "http"),
         };
-        let uri: hyper::Uri = format!("{uri_scheme}://{authority}{path_and_query}").parse()?;
+        let uri: hyper::Uri = format!("{uri_scheme}://{authority}{path_and_query}")
+            .parse()
+            .map_err(|e| UpstreamFailure::other(Box::new(e)))?;
         *req.uri_mut() = uri;
 
         client
             .request(req)
             .await
-            .map_err(|e| Box::new(e) as BoxError)
+            .map_err(UpstreamFailure::from_client)
     }
 }
 
@@ -171,6 +174,7 @@ fn read_key(pem: &[u8]) -> Result<rustls::pki_types::PrivateKeyDer<'static>, Gfe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::failure::FailureKind;
 
     #[test]
     fn builds_client() {
@@ -216,11 +220,46 @@ mod tests {
         let start = Instant::now();
         let result = client.send(Scheme::Http, "192.0.2.1:80", req).await;
 
-        assert!(result.is_err());
+        let failure = result.expect_err("an unroutable backend cannot answer");
         assert!(
             start.elapsed() < Duration::from_secs(5),
             "{:?}",
             start.elapsed()
         );
+        // Without a route to TEST-NET-1 at all, the connect fails at once.
+        assert!(
+            matches!(
+                failure.kind,
+                FailureKind::ConnectTimeout | FailureKind::ConnectError
+            ),
+            "{failure}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_a_closed_port_as_connect_refused() {
+        use http_body_util::{BodyExt, Empty};
+
+        // Bind and drop: the port is free, so connecting to it is refused.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let authority = closed.local_addr().unwrap().to_string();
+        drop(closed);
+        let client = UpstreamClient::new(1).unwrap();
+        let req = Request::builder()
+            .uri("/")
+            .body(
+                Empty::<Bytes>::new()
+                    .map_err(|e| Box::new(e) as BoxError)
+                    .boxed(),
+            )
+            .unwrap();
+
+        let failure = client
+            .send(Scheme::Http, &authority, req)
+            .await
+            .err()
+            .unwrap();
+
+        assert_eq!(failure.kind, FailureKind::ConnectRefused, "{failure}");
     }
 }

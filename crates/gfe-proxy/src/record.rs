@@ -16,6 +16,7 @@ use gfe_metrics::{AbortLabels, GrpcLabels, RequestLabels, RouteLabels};
 use gfe_upstream::BoxError;
 use hyper::body::{Body, Frame, SizeHint};
 use hyper::{Request, Response, StatusCode};
+use std::any::Any;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -76,6 +77,9 @@ struct UpstreamLeg {
     attempts: u32,
     /// Time from the first attempt until response headers arrived.
     time_to_first_byte: Option<Duration>,
+    /// Whatever marks the backend as busy with this request. Held until the
+    /// response ends, the attempt fails, or the next attempt replaces it.
+    busy: Option<Box<dyn Any + Send + Sync>>,
 }
 
 /// One request, from its parsed head to the end of its exchange.
@@ -151,6 +155,9 @@ impl RequestRecord {
     /// GFE is answering the request itself, because of `reason`.
     pub fn failed(&mut self, reason: &'static str) {
         self.error = Some(reason);
+        if let Some(upstream) = &mut self.upstream {
+            upstream.busy = None;
+        }
     }
 
     /// The request is being forwarded to `pool`.
@@ -160,14 +167,18 @@ impl RequestRecord {
             backend: None,
             attempts: 0,
             time_to_first_byte: None,
+            busy: None,
         });
     }
 
-    /// An attempt is being made against `backend`.
-    pub fn attempting(&mut self, backend: String) {
+    /// An attempt is being made against `backend`. `busy` is dropped when
+    /// the backend is done with the request: when the response ends, the
+    /// attempt fails, or another attempt is made.
+    pub fn attempting(&mut self, backend: String, busy: impl Any + Send + Sync) {
         if let Some(upstream) = &mut self.upstream {
             upstream.backend = Some(backend);
             upstream.attempts += 1;
+            upstream.busy = Some(Box::new(busy));
         }
     }
 

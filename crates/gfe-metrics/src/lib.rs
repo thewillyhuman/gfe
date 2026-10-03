@@ -4,12 +4,13 @@ pub mod control_metrics;
 pub mod proxy_metrics;
 
 pub use control_metrics::{BackendLabels, ControlMetrics, SniLabel};
-/// A counter handle, for callers that hold one series of a family.
+/// Counter and gauge handles, for callers that hold one series of a family.
 pub use prometheus_client::metrics::counter::Counter;
+pub use prometheus_client::metrics::gauge::Gauge;
 pub use proxy_metrics::{
-    AbortLabels, CloseLabels, GrpcLabels, ListenerLabel, ProxyMetrics, RejectLabel, RequestLabels,
-    RouteLabels, TlsFailureLabel, TlsLabels, TlsResultLabel, UpstreamDurationLabels,
-    UpstreamLabels,
+    AbortLabels, CloseLabels, GrpcLabels, ListenerLabel, PoolLabel, ProxyMetrics, RejectLabel,
+    RequestLabels, RouteLabels, TlsFailureLabel, TlsLabels, TlsResultLabel, UpstreamDurationLabels,
+    UpstreamErrorLabels, UpstreamLabels,
 };
 
 use prometheus_client::registry::Registry;

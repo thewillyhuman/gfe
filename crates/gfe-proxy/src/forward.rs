@@ -5,8 +5,8 @@ use crate::errors::{full_body, incoming_body, synthetic, RespBody};
 use crate::record::{CountedBody, RequestRecord};
 use crate::ConnCtx;
 use bytes::Bytes;
-use gfe_metrics::{UpstreamDurationLabels, UpstreamLabels};
-use gfe_upstream::{BoxError, Pool};
+use gfe_metrics::{Gauge, PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels};
+use gfe_upstream::{BoxError, FailureKind, InflightGuard, Pool};
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
@@ -177,9 +177,36 @@ pub async fn forward(
                 );
             }
         };
-        let _inflight = selection.guard;
         let authority = selection.upstream.authority();
-        record.attempting(authority.clone());
+        let backend = UpstreamDurationLabels {
+            pool: pool.id.to_string(),
+            backend: authority.clone(),
+        };
+        let in_flight = shared
+            .metrics
+            .proxy
+            .upstream_requests_in_flight
+            .get_or_create(&backend)
+            .clone();
+        in_flight.inc();
+        record.attempting(
+            authority.clone(),
+            BackendBusy {
+                _least_request: selection.guard,
+                in_flight,
+            },
+        );
+        if attempt > 0 {
+            let pool = PoolLabel {
+                pool: pool.id.to_string(),
+            };
+            shared
+                .metrics
+                .proxy
+                .upstream_retries
+                .get_or_create(&pool)
+                .inc();
+        }
 
         // Build this attempt's upstream request.
         let upstream_req = if retryable {
@@ -211,10 +238,7 @@ pub async fn forward(
             .metrics
             .proxy
             .upstream_request_duration_seconds
-            .get_or_create(&UpstreamDurationLabels {
-                pool: pool.id.to_string(),
-                backend: authority.clone(),
-            })
+            .get_or_create(&backend)
             .observe(start.elapsed().as_secs_f64());
 
         match result {
@@ -225,13 +249,14 @@ pub async fn forward(
             }
             Ok(Err(e)) => {
                 shared.metrics.proxy.upstream_connect_errors.inc();
+                record_upstream_error(shared, pool, &authority, e.kind.as_str());
                 record_upstream(shared, pool, &authority, 502);
                 if attempt + 1 < max_attempts {
                     tracing::debug!(error = %e, backend = %authority, "upstream failed, retrying");
                     continue;
                 }
                 tracing::debug!(error = %e, backend = %authority, "upstream request failed");
-                record.failed("upstream_error");
+                record.failed(failure_reason(e.kind));
                 return synthetic(
                     StatusCode::BAD_GATEWAY,
                     "upstream error",
@@ -240,6 +265,7 @@ pub async fn forward(
             }
             Err(_) => {
                 // Timeouts are not retried.
+                record_upstream_error(shared, pool, &authority, "timeout");
                 record_upstream(shared, pool, &authority, 504);
                 tracing::debug!(backend = %authority, "upstream request timed out");
                 record.failed("upstream_timeout");
@@ -260,6 +286,44 @@ pub async fn forward(
         "upstream error",
         record.request_id(),
     )
+}
+
+/// Marks a backend as busy with one request, for least-request selection and
+/// for the in-flight gauge, until dropped.
+struct BackendBusy {
+    _least_request: InflightGuard,
+    in_flight: Gauge,
+}
+
+impl Drop for BackendBusy {
+    fn drop(&mut self) {
+        self.in_flight.dec();
+    }
+}
+
+/// The access-log `error` for a request that failed with `kind`.
+fn failure_reason(kind: FailureKind) -> &'static str {
+    match kind {
+        FailureKind::ConnectTimeout => "upstream_connect_timeout",
+        FailureKind::ConnectRefused => "upstream_connect_refused",
+        FailureKind::ConnectError => "upstream_connect_error",
+        FailureKind::Tls => "upstream_tls",
+        FailureKind::Reset => "upstream_reset",
+        FailureKind::Other => "upstream_error",
+    }
+}
+
+fn record_upstream_error(shared: &crate::ProxyShared, pool: &Pool, backend: &str, kind: &str) {
+    shared
+        .metrics
+        .proxy
+        .upstream_errors
+        .get_or_create(&UpstreamErrorLabels {
+            pool: pool.id.to_string(),
+            backend: backend.to_string(),
+            kind: kind.to_string(),
+        })
+        .inc();
 }
 
 fn record_upstream(shared: &crate::ProxyShared, pool: &Pool, backend: &str, status: u16) {

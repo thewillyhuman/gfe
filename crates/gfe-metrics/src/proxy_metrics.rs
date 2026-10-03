@@ -92,6 +92,22 @@ pub struct UpstreamLabels {
     pub status: String,
 }
 
+/// Labels for upstream requests that failed before any response. `kind` is
+/// what went wrong (connect_timeout, connect_refused, connect_error, tls,
+/// reset, timeout, other).
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct UpstreamErrorLabels {
+    pub pool: String,
+    pub backend: String,
+    pub kind: String,
+}
+
+/// `pool` label for per-pool upstream metrics.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct PoolLabel {
+    pub pool: String,
+}
+
 /// Labels for the upstream-latency histogram (per pool and backend).
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct UpstreamDurationLabels {
@@ -125,6 +141,9 @@ pub struct ProxyMetrics {
     pub upstream_requests: Family<UpstreamLabels, Counter>,
     pub upstream_request_duration_seconds: Family<UpstreamDurationLabels, Histogram>,
     pub upstream_connect_errors: Counter,
+    pub upstream_errors: Family<UpstreamErrorLabels, Counter>,
+    pub upstream_retries: Family<PoolLabel, Counter>,
+    pub upstream_requests_in_flight: Family<UpstreamDurationLabels, Gauge>,
     pub bytes_in: Family<ListenerLabel, Counter>,
     pub bytes_out: Family<ListenerLabel, Counter>,
 }
@@ -174,6 +193,9 @@ impl ProxyMetrics {
             upstream_requests: Family::default(),
             upstream_request_duration_seconds: Family::new_with_constructor(latency_histogram),
             upstream_connect_errors: Counter::default(),
+            upstream_errors: Family::default(),
+            upstream_retries: Family::default(),
+            upstream_requests_in_flight: Family::default(),
             bytes_in: Family::default(),
             bytes_out: Family::default(),
         };
@@ -290,8 +312,23 @@ impl ProxyMetrics {
         );
         registry.register(
             "gfe_upstream_connect_errors",
-            "Failures opening an upstream connection",
+            "Upstream requests that failed before any response (all kinds)",
             m.upstream_connect_errors.clone(),
+        );
+        registry.register(
+            "gfe_upstream_errors",
+            "Upstream requests that failed before any response, by kind",
+            m.upstream_errors.clone(),
+        );
+        registry.register(
+            "gfe_upstream_retries",
+            "Requests retried against another backend selection",
+            m.upstream_retries.clone(),
+        );
+        registry.register(
+            "gfe_upstream_requests_in_flight",
+            "Requests a backend is currently working on, until the response ends",
+            m.upstream_requests_in_flight.clone(),
         );
         registry.register(
             "gfe_bytes_in",

@@ -791,8 +791,10 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_no_healthy_upstream_total` | Counter | Requests with no healthy upstream (503) |
 | `gfe_upstream_requests_total` | Counter | Upstream requests (labels: pool, backend, status) |
 | `gfe_upstream_request_duration_seconds` | Histogram | Upstream round-trip latency |
-| `gfe_upstream_connect_errors_total` | Counter | Failures opening an upstream connection |
-| `gfe_upstream_pool_connections` | Gauge | Upstream connections (labels: pool, backend, state ∈ {idle, active}) |
+| `gfe_upstream_errors_total` | Counter | Upstream requests that failed before any response (labels: pool, backend, kind ∈ {connect_timeout, connect_refused, connect_error, tls, reset, timeout, other}) |
+| `gfe_upstream_connect_errors_total` | Counter | The same, all kinds together (kept for existing dashboards) |
+| `gfe_upstream_retries_total` | Counter | Requests retried against a new backend selection (label: pool) |
+| `gfe_upstream_requests_in_flight` | Gauge | Requests a backend is working on, until the response has been relayed to its end (labels: pool, backend) |
 
 **Control-plane metrics (`control_metrics.rs`):**
 
@@ -832,7 +834,7 @@ It prints which listener/route matched, which pool and which backend would be se
   | `status` | Response status; `499` when the client left before a response existed |
   | `grpc_status` | For gRPC calls (`content-type: application/grpc*`), the numeric status the call ended with, read from the response trailers (or headers, for calls that fail before any message). A gRPC call is HTTP `200` whatever its outcome, so this is the field that tells success from failure |
   | `route`, `pool`, `backend`, `attempts` | Routing decision, the backend of the last attempt, and how many attempts were made |
-  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_error`, `upstream_timeout`, `unknown_acme_challenge` |
+  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_error`, `upstream_timeout`, `unknown_acme_challenge` |
   | `termination` | `complete`, `client_abort` (client left before or during the response) or `upstream_abort` (upstream failed mid-body) |
   | `request_bytes`, `response_bytes` | Body bytes actually read from / written to the client |
   | `duration_ms` | Request head to last response byte, microsecond resolution |
