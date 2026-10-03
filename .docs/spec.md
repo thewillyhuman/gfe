@@ -590,8 +590,10 @@ This lets teams deploy without resetting live requests.
 
 1. Fails its own `/readyz` so the L4 LB's health check withdraws it from the GFE pool, and the L4 LB stops Maglev-selecting it for **new** connections.
 2. Stops accepting new client connections.
-3. Continues serving in-flight requests until they complete or a drain deadline elapses (default 30s).
-4. Closes idle upstream connections and exits.
+3. Asks the clients of its open connections to leave, in a way that loses no request:
+   - a connection with a request in flight is shut down gracefully at once: the request is answered, an HTTP/2 client is sent a `GOAWAY`, and an HTTP/1 response carries `Connection: close`;
+   - a connection with no request in flight is given half the drain deadline to send one more, which is answered the same way. Closing it at once would race with a request the client has already sent. If none comes it is closed, as an idle timeout would close it.
+4. Exits when no connection is left, or when the drain deadline elapses (`drain_deadline`, default 30s). What is still open then, a long download or a gRPC stream, is cut.
 
 Because GFE is stateless and the L4 LB consistent-hashes, draining one GFE node only resets the connections that were live on it; clients reconnect and land on a healthy node.
 
@@ -791,7 +793,7 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_connections_active` | Gauge | Currently open client connections |
 | `gfe_listener_connections_active` | Gauge | Currently open client connections (label: listener) |
 | `gfe_connections_rejected_total` | Counter | Connections rejected (label: reason ∈ {limit, handshake_timeout}) |
-| `gfe_connections_closed_total` | Counter | Closed connections (labels: listener, reason ∈ {closed, client_abort, idle_timeout, header_timeout, protocol_error, tls_handshake_failed, tls_handshake_timeout, error, shutdown}) |
+| `gfe_connections_closed_total` | Counter | Closed connections (labels: listener, reason ∈ {closed, client_abort, idle_timeout, header_timeout, drain, protocol_error, tls_handshake_failed, tls_handshake_timeout, error, shutdown}) |
 | `gfe_connection_duration_seconds` | Histogram | Lifetime of client connections (label: listener) |
 | `gfe_bytes_in_total` / `gfe_bytes_out_total` | Counter | Bytes read from / written to client sockets, on the wire (TLS included), counted as they flow (label: listener) |
 | `gfe_tls_handshakes_total` | Counter | TLS handshakes (label: result ∈ {ok, failed}) |

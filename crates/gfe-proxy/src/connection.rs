@@ -1,37 +1,52 @@
 //! Per-connection handling: optional TLS handshake (with SNI capture), then
 //! HTTP serving via hyper's protocol-auto-detecting server, bounded by the
-//! client-side timeouts and limits.
+//! client-side timeouts and limits, and ended in an orderly way when the node
+//! drains.
 
 use crate::activity::{ConnActivity, InFlightBody, Verdict};
 use crate::conn_record::{ConnRecord, TlsInfo};
 use crate::service::handle_request;
 use crate::{ConnCtx, ProxyShared};
 use gfe_metrics::RejectLabel;
-use gfe_types::Listener;
+use gfe_types::{Listener, TimeoutsConfig};
+use hyper::header::{HeaderValue, CONNECTION};
 use hyper::service::service_fn;
+use hyper::Version;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use rustls::ServerConfig;
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
+use tokio::sync::watch;
 use tokio_rustls::TlsAcceptor;
 
 /// How long a connection that was asked to shut down gracefully may take to
 /// finish before it is closed outright.
 const CLOSE_GRACE: Duration = Duration::from_secs(5);
 
-/// Serve a single accepted TCP connection. The connection is accounted for
-/// by a [`ConnRecord`], which reports it when this function returns.
+/// How long a draining node waits for one more request on a connection that
+/// has none in flight: half the drain deadline, which leaves the other half
+/// for that request to be answered.
+fn idle_grace(timeouts: &TimeoutsConfig) -> Duration {
+    timeouts.drain_deadline / 2
+}
+
+/// Serve a single accepted TCP connection until it ends or, once `drain`
+/// flips to `true`, until the client has been asked to leave. The connection
+/// is accounted for by a [`ConnRecord`], which reports it when this function
+/// returns.
 pub async fn serve(
     stream: TcpStream,
     peer: SocketAddr,
     listener: Arc<Listener>,
     shared: Arc<ProxyShared>,
     tls: Option<Arc<ServerConfig>>,
+    drain: watch::Receiver<bool>,
 ) {
     let _ = stream.set_nodelay(true);
     let mut record = ConnRecord::open(shared.clone(), &listener, stream.local_addr().ok(), peer);
@@ -60,7 +75,7 @@ pub async fn serve(
                         ctx.sni.clone(),
                         handshake_started.elapsed(),
                     );
-                    serve_io(tls_stream, Arc::new(ctx)).await
+                    serve_io(tls_stream, Arc::new(ctx), drain).await
                 }
                 Ok(Err(e)) => {
                     tracing::debug!(error = %e, "tls handshake failed");
@@ -81,7 +96,7 @@ pub async fn serve(
                 }
             }
         }
-        None => serve_io(stream, Arc::new(ctx)).await,
+        None => serve_io(stream, Arc::new(ctx), drain).await,
     };
     record.closed(closed.reason, closed.requests, closed.error);
 }
@@ -94,27 +109,46 @@ struct Closed {
 }
 
 /// Run the HTTP server (h1/h2 auto-detected) over the given IO until the
-/// connection ends or a client-side timeout closes it:
+/// connection ends, a client-side timeout closes it, or the node drains:
 ///
 /// * `request_header` — the first request head must arrive within this long
 ///   of the connection being established, else the connection is dropped.
 /// * `client_idle` — a connection with no request in flight for this long is
 ///   shut down gracefully (HTTP/2 clients get a `GOAWAY`).
-async fn serve_io<S>(stream: S, ctx: Arc<ConnCtx>) -> Closed
+/// * drain — once `drain` flips to `true` the client is asked to leave, in a
+///   way that loses no request. A connection with a request in flight is shut
+///   down gracefully at once: the request is answered, and HTTP/2 clients get
+///   a `GOAWAY`. A connection with none is given [`idle_grace`] to send one
+///   more, because closing it right away would race with a request already
+///   on its way; an HTTP/1 request is then answered with `Connection: close`.
+async fn serve_io<S>(stream: S, ctx: Arc<ConnCtx>, mut drain: watch::Receiver<bool>) -> Closed
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let shared = ctx.shared.clone();
     let activity = ConnActivity::new(Instant::now());
+    // Set once a response has told an HTTP/1 client to close the connection.
+    let told_to_close = Arc::new(AtomicBool::new(false));
 
     let io = TokioIo::new(stream);
     let svc = service_fn({
         let activity = activity.clone();
+        let shared = shared.clone();
+        let told_to_close = told_to_close.clone();
         move |req| {
             let ctx = ctx.clone();
             let in_flight = activity.begin_request();
+            let shared = shared.clone();
+            let told_to_close = told_to_close.clone();
+            // HTTP/2 has no header for it: its clients are sent a GOAWAY.
+            let http1 = req.version() < Version::HTTP_2;
             async move {
-                let resp = handle_request(ctx, req).await?;
+                let mut resp = handle_request(ctx, req).await?;
+                if http1 && shared.draining.load(Ordering::Relaxed) {
+                    resp.headers_mut()
+                        .insert(CONNECTION, HeaderValue::from_static("close"));
+                    told_to_close.store(true, Ordering::Relaxed);
+                }
                 Ok::<_, Infallible>(resp.map(|body| InFlightBody::new(body, in_flight)))
             }
         }
@@ -125,29 +159,58 @@ where
 
     let watchdog = tokio::time::sleep(shared.timeouts.request_header);
     tokio::pin!(watchdog);
-    let mut idle_shutdown = false;
+    // Why the connection was shut down gracefully, once it has been.
+    let mut shut_down_for: Option<&'static str> = None;
+    let mut draining = false;
+    // While draining with no request in flight: until when one more is
+    // waited for.
+    let mut leave_by: Option<Instant> = None;
 
     let (reason, error) = loop {
         tokio::select! {
             result = conn.as_mut() => break match result {
-                Ok(()) if idle_shutdown => ("idle_timeout", None),
-                Ok(()) => ("closed", None),
+                Ok(()) if told_to_close.load(Ordering::Relaxed) => ("drain", None),
+                Ok(()) => (shut_down_for.unwrap_or("closed"), None),
                 Err(e) => {
                     tracing::debug!(error = %e, "connection closed with error");
                     (error_close_reason(e.as_ref()), Some(e.to_string()))
                 }
             },
+            changed = drain.changed(), if !draining => {
+                // The sender going away means the node is going away, too.
+                draining = changed.is_err() || *drain.borrow();
+                if draining && shut_down_for.is_none() {
+                    if activity.has_request_in_flight() {
+                        conn.as_mut().graceful_shutdown();
+                        shut_down_for = Some("drain");
+                    } else {
+                        let deadline = Instant::now() + idle_grace(&shared.timeouts);
+                        leave_by = Some(deadline);
+                        if tokio::time::Instant::from_std(deadline) < watchdog.deadline() {
+                            watchdog.as_mut().reset(deadline.into());
+                        }
+                    }
+                }
+            }
             _ = watchdog.as_mut() => {
                 let now = Instant::now();
+                if shut_down_for.is_none() && leave_by.is_some_and(|deadline| now >= deadline) {
+                    conn.as_mut().graceful_shutdown();
+                    shut_down_for = Some("drain");
+                }
                 let next_check = match activity.verdict(now, &shared.timeouts) {
                     Verdict::CheckAgainAt(at) => at,
-                    Verdict::IdleTimeout if !idle_shutdown => {
+                    Verdict::IdleTimeout if shut_down_for.is_none() => {
                         conn.as_mut().graceful_shutdown();
-                        idle_shutdown = true;
+                        shut_down_for = Some("idle_timeout");
                         now + CLOSE_GRACE
                     }
                     Verdict::IdleTimeout => break ("idle_timeout", None),
                     Verdict::HeaderTimeout => break ("header_timeout", None),
+                };
+                let next_check = match leave_by {
+                    Some(deadline) if shut_down_for.is_none() => next_check.min(deadline),
+                    _ => next_check,
                 };
                 watchdog.as_mut().reset(next_check.into());
             }

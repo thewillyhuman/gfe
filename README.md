@@ -46,7 +46,8 @@ spread connections across a fleet with no coordination.
   pre-response failures, against a freshly selected backend; never after any
   response byte is forwarded.
 - **Graceful drain** — `SIGTERM` fails `/readyz` (so the L4 LB withdraws the
-  node), stops accepting, and drains in-flight requests up to a deadline.
+  node), stops accepting, and asks clients to leave without losing a request
+  (`GOAWAY` on HTTP/2, `Connection: close` on HTTP/1), up to a deadline.
 - **ACME http-01** — serves `/.well-known/acme-challenge/*` from a challenge
   store (the CA-ordering driver is a documented integration point).
 - **Observability** — Prometheus metrics for requests, latency, status and gRPC

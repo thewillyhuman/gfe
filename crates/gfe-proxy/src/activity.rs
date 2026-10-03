@@ -68,6 +68,11 @@ impl ConnActivity {
         self.requests.load(Ordering::Relaxed)
     }
 
+    /// Whether a request is in flight right now.
+    pub fn has_request_in_flight(&self) -> bool {
+        self.in_flight.load(Ordering::Relaxed) > 0
+    }
+
     /// Decide what the watchdog must do at `now`.
     pub fn verdict(&self, now: Instant, timeouts: &TimeoutsConfig) -> Verdict {
         let deadline = if self.requests() == 0 {

@@ -1573,3 +1573,136 @@ async fn tells_which_listener_a_local_address_belongs_to() {
     );
     assert_eq!(listeners.listener_at(elsewhere), None);
 }
+
+/// Begin draining, as the node does when it is told to stop.
+fn drain(shared: &ProxyShared, shutdown: &watch::Sender<bool>) {
+    shared
+        .draining
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    shutdown.send(true).unwrap();
+}
+
+/// A request that leaves the connection open for the next one.
+const KEEP_ALIVE_GET: &[u8] = b"GET / HTTP/1.1\r\nhost: a.example.org\r\n\r\n";
+
+/// Read one response of [`fixed_response_config`] from a connection that is
+/// expected to stay open.
+async fn read_fixed_response(stream: &mut TcpStream) -> String {
+    let mut received = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while !received.ends_with(b"\r\n\r\nok") {
+        let read = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut chunk))
+            .await
+            .expect("a response should arrive")
+            .unwrap();
+        assert!(
+            read > 0,
+            "the connection was closed in the middle of a response"
+        );
+        received.extend_from_slice(&chunk[..read]);
+    }
+    String::from_utf8_lossy(&received).to_string()
+}
+
+#[tokio::test]
+async fn draining_node_answers_one_more_request_and_closes_the_connection() {
+    let shared = build_shared();
+    let (proxy, shutdown) = start_proxy(&fixed_response_config(), shared.clone()).await;
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream.write_all(KEEP_ALIVE_GET).await.unwrap();
+    read_fixed_response(&mut stream).await;
+
+    drain(&shared, &shutdown);
+    stream.write_all(KEEP_ALIVE_GET).await.unwrap();
+    let last = read_until_closed(&mut stream).await;
+
+    assert!(last.starts_with("HTTP/1.1 200"), "{last}");
+    assert!(
+        last.to_ascii_lowercase().contains("connection: close"),
+        "{last}"
+    );
+}
+
+#[tokio::test]
+async fn draining_node_finishes_the_request_in_flight_and_closes_the_connection() {
+    let upstream = spawn_upstream_answering_after(Duration::from_millis(300)).await;
+    let shared = build_shared();
+    let (proxy, shutdown) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream.write_all(KEEP_ALIVE_GET).await.unwrap();
+    // By now the request is with the backend.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    drain(&shared, &shutdown);
+    let response = read_until_closed(&mut stream).await;
+
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.contains("upstream-ok"), "{response}");
+}
+
+#[tokio::test]
+async fn draining_node_closes_a_connection_that_stays_idle() {
+    let timeouts = TimeoutsConfig {
+        drain_deadline: Duration::from_millis(400),
+        ..Default::default()
+    };
+    let shared = build_shared_with(timeouts, LimitsConfig::default());
+    let (proxy, shutdown) = start_proxy(&fixed_response_config(), shared.clone()).await;
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream.write_all(KEEP_ALIVE_GET).await.unwrap();
+    read_fixed_response(&mut stream).await;
+
+    drain(&shared, &shutdown);
+    let rest = read_until_closed(&mut stream).await;
+
+    assert_eq!(rest, "");
+}
+
+#[tokio::test]
+async fn draining_node_finishes_an_http2_request_and_ends_the_connection() {
+    let upstream = spawn_upstream_answering_after(Duration::from_millis(300)).await;
+    let shared = build_shared();
+    let (proxy, shutdown) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+    let stream = TcpStream::connect(proxy).await.unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .unwrap();
+    let connection = tokio::spawn(conn);
+    // The client keeps its side open: only the node can end the connection.
+    let _client = sender.clone();
+    let request = Request::builder()
+        .uri("http://a.example.org/")
+        .body(Empty::<Bytes>::new())
+        .unwrap();
+    let response = tokio::spawn(async move { sender.send_request(request).await });
+    // By now the request is with the backend.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    drain(&shared, &shutdown);
+    let response = response.await.unwrap().unwrap();
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let ended = tokio::time::timeout(Duration::from_secs(5), connection).await;
+
+    assert_eq!(status, 200);
+    assert!(body.starts_with(b"upstream-ok"), "{body:?}");
+    assert!(ended.is_ok(), "the node did not end the connection");
+}
+
+#[tokio::test]
+async fn connection_log_tells_a_connection_closed_by_a_drain() {
+    let (logs, _guard) = CapturedLogs::start();
+    let shared = build_shared();
+    let (proxy, shutdown) = start_proxy(&fixed_response_config(), shared.clone()).await;
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+    stream.write_all(KEEP_ALIVE_GET).await.unwrap();
+    read_fixed_response(&mut stream).await;
+
+    drain(&shared, &shutdown);
+    stream.write_all(KEEP_ALIVE_GET).await.unwrap();
+    read_until_closed(&mut stream).await;
+    let event = logs.connection_event().await;
+
+    assert_eq!(event["reason"], "drain");
+}

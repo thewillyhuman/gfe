@@ -10,7 +10,9 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{watch, Semaphore};
 
-/// Accept connections on one socket until `shutdown` flips to `true`.
+/// Accept connections on one socket until `shutdown` flips to `true`. The
+/// connections accepted until then watch the same signal, to leave in an
+/// orderly way.
 ///
 /// `config` is the listener as currently configured; it is read for every
 /// accepted connection, so its id and protocol can change while the socket
@@ -64,10 +66,11 @@ pub async fn run_listener(
 
                 let shared = shared.clone();
                 let tls = listener.is_tls().then(|| server_config.clone());
+                let drain = shutdown.clone();
                 tokio::spawn(async move {
                     let _g = global_permit;
                     let _l = listener_permit;
-                    connection::serve(stream, peer, listener, shared, tls).await;
+                    connection::serve(stream, peer, listener, shared, tls, drain).await;
                 });
             }
         }
