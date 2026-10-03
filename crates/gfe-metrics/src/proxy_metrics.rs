@@ -74,6 +74,16 @@ pub struct AbortLabels {
     pub by: String,
 }
 
+/// Labels for finished gRPC calls. `grpc_status` is the numeric status code
+/// the call ended with (0 is OK), bounded to the codes gRPC defines.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+pub struct GrpcLabels {
+    pub listener: String,
+    pub host: String,
+    pub route: String,
+    pub grpc_status: String,
+}
+
 /// Labels for upstream requests.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct UpstreamLabels {
@@ -109,6 +119,7 @@ pub struct ProxyMetrics {
     pub request_duration_seconds: Family<RouteLabels, Histogram>,
     pub request_body_bytes: Family<RouteLabels, Counter>,
     pub response_body_bytes: Family<RouteLabels, Counter>,
+    pub grpc_responses: Family<GrpcLabels, Counter>,
     pub no_route: Counter,
     pub no_healthy_upstream: Counter,
     pub upstream_requests: Family<UpstreamLabels, Counter>,
@@ -157,6 +168,7 @@ impl ProxyMetrics {
             request_duration_seconds: Family::new_with_constructor(latency_histogram),
             request_body_bytes: Family::default(),
             response_body_bytes: Family::default(),
+            grpc_responses: Family::default(),
             no_route: Counter::default(),
             no_healthy_upstream: Counter::default(),
             upstream_requests: Family::default(),
@@ -250,6 +262,11 @@ impl ProxyMetrics {
             "gfe_response_body_bytes",
             "Response body bytes sent to clients",
             m.response_body_bytes.clone(),
+        );
+        registry.register(
+            "gfe_grpc_responses",
+            "Finished gRPC calls by gRPC status code (0 is OK)",
+            m.grpc_responses.clone(),
         );
         registry.register(
             "gfe_no_route",

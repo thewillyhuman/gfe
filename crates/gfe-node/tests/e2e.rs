@@ -1230,3 +1230,27 @@ async fn failed_tls_handshake_is_logged_and_counted_by_reason() {
         "missing {expected} in:\n{metrics}"
     );
 }
+
+#[tokio::test]
+async fn access_log_and_metrics_report_the_grpc_status() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_grpc_upstream().await;
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&grpc_config(upstream), shared.clone()).await;
+
+    let mut call = GrpcCall::open(proxy).await;
+    call.send("ping").await;
+    call.next_frame().await;
+    call.finish().await;
+    let event = logs.access_event().await;
+
+    assert_eq!(event["grpc_status"], 0);
+    assert_eq!(event["termination"], "complete");
+    let metrics = shared.metrics.encode();
+    let expected =
+        r#"gfe_grpc_responses_total{listener="grpc",host="*",route="grpc",grpc_status="0"} 1"#;
+    assert!(
+        metrics.contains(expected),
+        "missing {expected} in:\n{metrics}"
+    );
+}

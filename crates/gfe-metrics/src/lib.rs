@@ -7,8 +7,9 @@ pub use control_metrics::{BackendLabels, ControlMetrics, SniLabel};
 /// A counter handle, for callers that hold one series of a family.
 pub use prometheus_client::metrics::counter::Counter;
 pub use proxy_metrics::{
-    AbortLabels, CloseLabels, ListenerLabel, ProxyMetrics, RejectLabel, RequestLabels, RouteLabels,
-    TlsFailureLabel, TlsLabels, TlsResultLabel, UpstreamDurationLabels, UpstreamLabels,
+    AbortLabels, CloseLabels, GrpcLabels, ListenerLabel, ProxyMetrics, RejectLabel, RequestLabels,
+    RouteLabels, TlsFailureLabel, TlsLabels, TlsResultLabel, UpstreamDurationLabels,
+    UpstreamLabels,
 };
 
 use prometheus_client::registry::Registry;

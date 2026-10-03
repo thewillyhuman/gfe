@@ -12,7 +12,7 @@
 use crate::errors::RespBody;
 use crate::ConnCtx;
 use bytes::{Buf, Bytes};
-use gfe_metrics::{AbortLabels, RequestLabels, RouteLabels};
+use gfe_metrics::{AbortLabels, GrpcLabels, RequestLabels, RouteLabels};
 use gfe_upstream::BoxError;
 use hyper::body::{Body, Frame, SizeHint};
 use hyper::{Request, Response, StatusCode};
@@ -25,6 +25,23 @@ use std::time::{Duration, Instant};
 /// Logged as the status of a request the client abandoned before GFE had a
 /// response for it. Not a real HTTP status: the convention nginx established.
 const CLIENT_CLOSED_REQUEST: u16 = 499;
+
+/// The highest status code gRPC defines (`UNAUTHENTICATED`). Anything above
+/// it is not reported, which keeps the metric label bounded.
+const MAX_GRPC_STATUS: u8 = 16;
+
+/// The `grpc-status` in a set of response headers or trailers, if valid.
+fn grpc_status(headers: &http::HeaderMap) -> Option<u8> {
+    let status: u8 = headers.get("grpc-status")?.to_str().ok()?.parse().ok()?;
+    (status <= MAX_GRPC_STATUS).then_some(status)
+}
+
+/// Whether `req` is a gRPC call, going by its content type.
+fn is_grpc<B>(req: &Request<B>) -> bool {
+    req.headers()
+        .get(http::header::CONTENT_TYPE)
+        .is_some_and(|value| value.as_bytes().starts_with(b"application/grpc"))
+}
 
 /// Label value for requests that matched no route.
 const NO_ROUTE: &str = "none";
@@ -80,6 +97,10 @@ pub struct RequestRecord {
     request_bytes: Arc<AtomicU64>,
     response_bytes: u64,
     termination: Termination,
+    is_grpc: bool,
+    /// The status a gRPC call ended with. It arrives in the trailers, or in
+    /// the headers when the call fails before sending any message.
+    grpc_status: Option<u8>,
 }
 
 impl RequestRecord {
@@ -107,6 +128,8 @@ impl RequestRecord {
             // Until a response body says otherwise, the only way the record
             // can end is the client abandoning the request.
             termination: Termination::ClientAbort,
+            is_grpc: is_grpc(req),
+            grpc_status: None,
             ctx,
         }
     }
@@ -165,6 +188,9 @@ impl RequestRecord {
     /// response body has been written out or abandoned.
     pub fn respond(mut self, resp: Response<RespBody>) -> Response<RespBody> {
         self.status = Some(resp.status());
+        if self.is_grpc {
+            self.grpc_status = grpc_status(resp.headers());
+        }
         resp.map(|body| {
             let mut observed = ObservedBody {
                 inner: body,
@@ -225,6 +251,17 @@ impl Drop for RequestRecord {
             Termination::ClientAbort => Some("client"),
             Termination::UpstreamAbort => Some("upstream"),
         };
+        if let Some(grpc_status) = self.grpc_status {
+            metrics
+                .grpc_responses
+                .get_or_create(&GrpcLabels {
+                    listener: listener.clone(),
+                    host: host_pattern.clone(),
+                    route: route.clone(),
+                    grpc_status: grpc_status.to_string(),
+                })
+                .inc();
+        }
         if let Some(by) = aborted_by {
             metrics
                 .requests_aborted
@@ -256,6 +293,7 @@ impl Drop for RequestRecord {
             path = %self.path,
             user_agent = self.user_agent.as_deref(),
             status,
+            grpc_status = self.grpc_status,
             route = %route,
             pool = upstream.map(|u| u.pool.as_str()),
             backend = upstream.and_then(|u| u.backend.as_deref()),
@@ -307,6 +345,9 @@ impl Body for ObservedBody {
             Some(Ok(frame)) => {
                 if let Some(data) = frame.data_ref() {
                     this.record.response_bytes += data.remaining() as u64;
+                }
+                if let (true, Some(trailers)) = (this.record.is_grpc, frame.trailers_ref()) {
+                    this.record.grpc_status = grpc_status(trailers);
                 }
                 this.note_if_ended();
             }
@@ -365,5 +406,42 @@ where
 
     fn size_hint(&self) -> SizeHint {
         self.inner.size_hint()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(grpc_status: &'static str) -> http::HeaderMap {
+        let mut map = http::HeaderMap::new();
+        map.insert("grpc-status", http::HeaderValue::from_static(grpc_status));
+        map
+    }
+
+    #[test]
+    fn reads_a_defined_grpc_status() {
+        assert_eq!(grpc_status(&headers("0")), Some(0));
+        assert_eq!(grpc_status(&headers("14")), Some(14));
+    }
+
+    #[test]
+    fn ignores_missing_or_undefined_grpc_status() {
+        assert_eq!(grpc_status(&http::HeaderMap::new()), None);
+        assert_eq!(grpc_status(&headers("17")), None);
+        assert_eq!(grpc_status(&headers("ok")), None);
+    }
+
+    #[test]
+    fn recognises_grpc_by_content_type() {
+        let request = |content_type: &'static str| {
+            Request::builder()
+                .header("content-type", content_type)
+                .body(())
+                .unwrap()
+        };
+        assert!(is_grpc(&request("application/grpc")));
+        assert!(is_grpc(&request("application/grpc+proto")));
+        assert!(!is_grpc(&request("application/json")));
     }
 }

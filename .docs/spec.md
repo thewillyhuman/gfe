@@ -786,6 +786,7 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_requests_aborted_total` | Counter | Requests broken off before completion (labels: listener, host, route, by ∈ {client, upstream}) |
 | `gfe_request_duration_seconds` | Histogram | Time from the request head to the last byte of the response (labels: listener, host, route) |
 | `gfe_request_body_bytes_total` / `gfe_response_body_bytes_total` | Counter | Body bytes received from / sent to clients (labels: listener, host, route) |
+| `gfe_grpc_responses_total` | Counter | Finished gRPC calls (labels: listener, host, route, grpc_status = the numeric gRPC status code, 0 is OK) |
 | `gfe_no_route_total` | Counter | Requests matching no route (404) |
 | `gfe_no_healthy_upstream_total` | Counter | Requests with no healthy upstream (503) |
 | `gfe_upstream_requests_total` | Counter | Upstream requests (labels: pool, backend, status) |
@@ -829,6 +830,7 @@ It prints which listener/route matched, which pool and which backend would be se
   | `listener`, `proto`, `http_version`, `sni` | Where and how the request arrived |
   | `method`, `host`, `path`, `user_agent` | The request (no query string, no other headers) |
   | `status` | Response status; `499` when the client left before a response existed |
+  | `grpc_status` | For gRPC calls (`content-type: application/grpc*`), the numeric status the call ended with, read from the response trailers (or headers, for calls that fail before any message). A gRPC call is HTTP `200` whatever its outcome, so this is the field that tells success from failure |
   | `route`, `pool`, `backend`, `attempts` | Routing decision, the backend of the last attempt, and how many attempts were made |
   | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_error`, `upstream_timeout`, `unknown_acme_challenge` |
   | `termination` | `complete`, `client_abort` (client left before or during the response) or `upstream_abort` (upstream failed mid-body) |
