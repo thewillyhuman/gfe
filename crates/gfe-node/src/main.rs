@@ -41,7 +41,6 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Load and validate config before doing anything else.
     let node = args
         .config
         .as_deref()
@@ -50,29 +49,19 @@ fn main() -> Result<()> {
                 .with_context(|| format!("loading node config {}", path.display()))
         })
         .transpose()?;
-    let dynamic_path = args
-        .dynamic_config
-        .as_ref()
-        .or(node.as_ref().map(|node| &node.control_plane.config_file))
-        .context("either --config or --dynamic-config is required")?;
-    let dynamic = gfe_config::load_dynamic_config(dynamic_path)
-        .with_context(|| format!("loading dynamic config {}", dynamic_path.display()))?;
-    gfe_config::validate(&dynamic).context("validating dynamic config")?;
 
     if args.check_config {
-        // Loading the certificates is part of applying a config, so a config
-        // whose certificates cannot be loaded is not "OK".
-        CertStore::build(&dynamic.certificates).context("loading certificates")?;
-        println!(
-            "config OK: {} listeners, {} routes, {} pools, {} certificates",
-            dynamic.listeners.len(),
-            dynamic.routes.len(),
-            dynamic.pools.len(),
-            dynamic.certificates.len()
-        );
-        return Ok(());
+        let dynamic_path = args
+            .dynamic_config
+            .as_ref()
+            .or(node.as_ref().map(|node| &node.control_plane.config_file))
+            .context("either --config or --dynamic-config is required")?;
+        return check_dynamic_config(dynamic_path);
     }
 
+    // A node being started does not read the dynamic config here: the
+    // controller does, and falls back to the last-known-good cache if the
+    // deployed file cannot be used.
     let node = node.context("--config is required to run a node")?;
     init_tracing();
 
@@ -83,6 +72,23 @@ fn main() -> Result<()> {
     }
     let rt = rt.build().context("building tokio runtime")?;
     rt.block_on(run(node))
+}
+
+/// Check a dynamic config the way a node would before applying it: parse,
+/// validate, and load the certificates it names.
+fn check_dynamic_config(path: &Path) -> Result<()> {
+    let dynamic = gfe_config::load_dynamic_config(path)
+        .with_context(|| format!("loading dynamic config {}", path.display()))?;
+    gfe_config::validate(&dynamic).context("validating dynamic config")?;
+    CertStore::build(&dynamic.certificates).context("loading certificates")?;
+    println!(
+        "config OK: {} listeners, {} routes, {} pools, {} certificates",
+        dynamic.listeners.len(),
+        dynamic.routes.len(),
+        dynamic.pools.len(),
+        dynamic.certificates.len()
+    );
+    Ok(())
 }
 
 fn init_tracing() {

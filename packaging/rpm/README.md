@@ -79,7 +79,10 @@ Notes:
   no change to the dynamic config and no notify.
 - The dynamic config is checked on its own, so it can be written before the
   bootstrap TOML exists; that ordering is what lets a fresh node converge in
-  one run. The service unit re-checks both files before starting.
+  one run.
+- A node restarted while the dynamic config is missing or broken starts from
+  its last-known-good cache (`local_cache`) and reports
+  `gfe_config_from_cache = 1`; it does not stay down.
 - Listeners, routes, pools and certificates are all in the dynamic config
   and are reconciled on reload, including binding and releasing listening
   sockets. Only the bootstrap TOML requires a restart.

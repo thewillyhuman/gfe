@@ -13,9 +13,12 @@ Type=simple
 User=gfe-node
 Group=gfe-node
 
-# Validate config before starting, then run. /usr/bin is where the RPM
-# installs the binary; adjust both lines if it lives elsewhere.
-ExecStartPre=/usr/bin/gfe-node --config /etc/gfe/gfe.toml --check-config
+# /usr/bin is where the RPM installs the binary; adjust if it lives elsewhere.
+#
+# There is deliberately no ExecStartPre running --check-config: the node
+# validates its config when it starts, and if the deployed dynamic config is
+# missing or broken it starts from its last-known-good cache instead of not
+# starting at all. A pre-start check would turn that into an outage.
 ExecStart=/usr/bin/gfe-node --config /etc/gfe/gfe.toml
 
 # Reload semantics: GFE hot-reloads the dynamic config on file change, so a

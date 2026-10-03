@@ -4,7 +4,7 @@
 use gfe_controller::Controller;
 use gfe_metrics::GfeMetrics;
 use gfe_proxy::{ListenerSet, ProxyShared};
-use gfe_types::{LimitsConfig, MinVersion, TimeoutsConfig, TlsConfig};
+use gfe_types::{GfeError, LimitsConfig, MinVersion, TimeoutsConfig, TlsConfig};
 use gfe_upstream::UpstreamClient;
 use rustls::pki_types::CertificateDer;
 use std::net::SocketAddr;
@@ -23,20 +23,34 @@ struct Node {
 }
 
 impl Node {
-    /// Start a controller on a fresh scratch directory. `dynamic` builds the
+    /// Start a controller on a fresh scratch directory. `prepare` builds the
     /// initial dynamic config (JSON) given that directory.
     fn start(test: &str, prepare: impl FnOnce(&Path) -> String) -> Node {
+        let dir = Node::scratch(test);
+        std::fs::write(dir.join("gfe-dynamic.json"), prepare(&dir)).unwrap();
+        Node::boot(dir).unwrap()
+    }
+
+    /// A fresh scratch directory for one test.
+    fn scratch(test: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("gfe-reload-{}-{test}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("gfe-dynamic.json"), prepare(&dir)).unwrap();
+        dir
+    }
+
+    /// Start a controller on whatever `dir` holds: `gfe-dynamic.json` is the
+    /// deployed dynamic config and `config-cache.json` the last-known-good
+    /// cache. Either may be absent.
+    fn boot(dir: PathBuf) -> Result<Node, GfeError> {
         let bootstrap = dir.join("gfe.toml");
         std::fs::write(
             &bootstrap,
             format!(
                 "[node]\nid = \"t\"\nloopback_vip = \"127.0.0.1\"\n\n\
-                 [control_plane]\nconfig_file = \"{}\"\nreload_debounce = \"50ms\"\n\n\
+                 [control_plane]\nconfig_file = \"{0}/gfe-dynamic.json\"\n\
+                 local_cache = \"{0}/config-cache.json\"\nreload_debounce = \"50ms\"\n\n\
                  [health_check_defaults]\n",
-                dir.join("gfe-dynamic.json").display()
+                dir.display()
             ),
         )
         .unwrap();
@@ -56,13 +70,22 @@ impl Node {
 
         let mut controller = Controller::new(shared.clone(), listeners, &node)
             .cert_poll_interval(Duration::from_millis(50));
-        controller.start().unwrap();
-        Node {
+        controller.start()?;
+        Ok(Node {
             dir,
             shared,
             controller,
             _shutdown: shutdown,
-        }
+        })
+    }
+
+    /// Whether the node reports running on its last-known-good cache.
+    fn runs_from_cache(&self) -> bool {
+        self.shared
+            .metrics
+            .encode()
+            .lines()
+            .any(|line| line == "gfe_config_from_cache 1")
     }
 
     /// Replace the dynamic config the way deploy tooling does: write a
@@ -146,5 +169,70 @@ async fn binds_listener_added_to_the_dynamic_config() {
 
     let bound = eventually(async || TcpStream::connect(added).await.is_ok()).await;
     assert!(bound, "added listener was never bound");
+    node.controller.shutdown();
+}
+
+/// A dynamic config whose only content is one plaintext listener on `addr`:
+/// connecting to `addr` shows whether this config is the one being served.
+fn config_listening_on(addr: SocketAddr) -> String {
+    format!(r#"{{"listeners":[{}]}}"#, listener_json("only", addr))
+}
+
+#[tokio::test]
+async fn starts_from_the_cache_when_the_dynamic_config_is_missing() {
+    let dir = Node::scratch("cache-missing");
+    let cached = free_addr();
+    std::fs::write(dir.join("config-cache.json"), config_listening_on(cached)).unwrap();
+
+    let node = Node::boot(dir).unwrap();
+
+    assert!(TcpStream::connect(cached).await.is_ok());
+    assert!(node.runs_from_cache());
+    node.controller.shutdown();
+}
+
+#[tokio::test]
+async fn starts_from_the_cache_when_the_dynamic_config_is_invalid() {
+    let dir = Node::scratch("cache-invalid");
+    let cached = free_addr();
+    std::fs::write(dir.join("config-cache.json"), config_listening_on(cached)).unwrap();
+    // A route on a listener that does not exist.
+    let invalid =
+        r#"{"routes":[{"id":"r","listener":"nope","host":"a","action":{"fixed":{"status":200}}}]}"#;
+    std::fs::write(dir.join("gfe-dynamic.json"), invalid).unwrap();
+
+    let node = Node::boot(dir).unwrap();
+
+    assert!(TcpStream::connect(cached).await.is_ok());
+    assert!(node.runs_from_cache());
+    node.controller.shutdown();
+}
+
+#[tokio::test]
+async fn refuses_to_start_with_neither_a_dynamic_config_nor_a_cache() {
+    let dir = Node::scratch("cache-none");
+
+    let result = Node::boot(dir);
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn leaves_the_cache_once_a_usable_dynamic_config_is_deployed() {
+    let dir = Node::scratch("cache-recover");
+    std::fs::write(
+        dir.join("config-cache.json"),
+        config_listening_on(free_addr()),
+    )
+    .unwrap();
+    let node = Node::boot(dir).unwrap();
+    assert!(node.runs_from_cache());
+
+    let deployed = free_addr();
+    node.deploy_dynamic(&config_listening_on(deployed));
+
+    let serving = eventually(async || TcpStream::connect(deployed).await.is_ok()).await;
+    assert!(serving, "the deployed config was never applied");
+    assert!(!node.runs_from_cache());
     node.controller.shutdown();
 }

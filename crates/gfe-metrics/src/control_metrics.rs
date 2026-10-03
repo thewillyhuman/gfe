@@ -26,6 +26,7 @@ pub struct ControlMetrics {
     pub health_check_duration_seconds: Histogram,
     pub config_last_reload_timestamp: Gauge,
     pub config_reload_errors: Counter,
+    pub config_from_cache: Gauge,
     pub cert_expiry_timestamp: Family<SniLabel, Gauge>,
     pub active_routes: Gauge,
     pub active_pools: Gauge,
@@ -41,6 +42,7 @@ impl ControlMetrics {
             ]),
             config_last_reload_timestamp: Gauge::default(),
             config_reload_errors: Counter::default(),
+            config_from_cache: Gauge::default(),
             cert_expiry_timestamp: Family::default(),
             active_routes: Gauge::default(),
             active_pools: Gauge::default(),
@@ -70,6 +72,11 @@ impl ControlMetrics {
             "gfe_config_reload_errors",
             "Failed reloads (old snapshot kept)",
             m.config_reload_errors.clone(),
+        );
+        registry.register(
+            "gfe_config_from_cache",
+            "Whether the node serves its last-known-good cache (1) because the deployed dynamic config was unusable at startup",
+            m.config_from_cache.clone(),
         );
         registry.register(
             "gfe_cert_expiry_timestamp",

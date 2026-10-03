@@ -2,7 +2,7 @@
 //! reconciliation, the health checker, the last-known-good cache, the
 //! hot-reload watcher, and the certificate file poller.
 
-use gfe_config::{apply, cache, load_dynamic_config, spawn_watcher, validate, CertFiles};
+use gfe_config::{apply, cache, load_dynamic_config, spawn_watcher, CertFiles};
 use gfe_health::HealthChecker;
 use gfe_proxy::{ListenerSet, ProxyShared};
 use gfe_types::{DynamicConfig, GfeError, HealthCheckConfig, NodeConfig};
@@ -55,24 +55,18 @@ impl Controller {
         self
     }
 
-    /// Load and apply the initial config (with cache fallback), bind its
-    /// listeners, start health probes, write the cache, and begin watching
-    /// for changes to the dynamic config and to the certificate files it
-    /// names.
+    /// Apply the initial config and bind its listeners, start health probes,
+    /// and begin watching for changes to the dynamic config and to the
+    /// certificate files it names.
     ///
-    /// Fails, with nothing serving, if the config is invalid or a listener
-    /// cannot be bound. Must be called from within a Tokio runtime.
+    /// The initial config is the deployed dynamic config or, if that cannot
+    /// be used, the last-known-good cache. Fails, with nothing serving, if
+    /// neither can be applied. Must be called from within a Tokio runtime.
     pub fn start(&mut self) -> Result<(), GfeError> {
-        let cfg = self.reloader.load_initial()?;
-        {
-            let mut cert_files = self.reloader.lock_cert_files();
-            *cert_files = CertFiles::snapshot(&cfg.certificates);
-            self.reloader.apply_with_listeners(&cfg)?;
-        }
+        let cfg = self.reloader.apply_initial()?;
         self.reloader
             .checker
             .reconcile(&cfg.pools, &self.reloader.defaults);
-        self.reloader.write_cache(&cfg);
 
         let reloader = self.reloader.clone();
         let watcher = spawn_watcher(
@@ -131,27 +125,54 @@ impl Reloader {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn load_initial(&self) -> Result<DynamicConfig, GfeError> {
-        match load_dynamic_config(&self.config_file) {
+    /// Apply the config a starting node serves: the deployed dynamic config
+    /// or, if that cannot be loaded, is invalid or cannot be applied, the
+    /// last-known-good cache. A node that restarts while its config is
+    /// missing or broken thus keeps serving what it served before, exactly as
+    /// a running node does when it rejects a reload.
+    fn apply_initial(&self) -> Result<DynamicConfig, GfeError> {
+        let mut cert_files = self.lock_cert_files();
+
+        let deployed = load_dynamic_config(&self.config_file)
+            .and_then(|cfg| self.apply_tracked(&cfg, &mut cert_files).map(|()| cfg));
+        let unusable = match deployed {
             Ok(cfg) => {
-                validate(&cfg)?;
-                Ok(cfg)
+                self.write_cache(&cfg);
+                return Ok(cfg);
             }
-            Err(e) => {
-                if let Some(cache) = &self.cache_file {
-                    tracing::warn!(
-                        error = %e,
-                        cache = %cache.display(),
-                        "config unavailable, falling back to cached config"
-                    );
-                    let cfg = cache::read(cache)?;
-                    validate(&cfg)?;
-                    Ok(cfg)
-                } else {
-                    Err(e)
-                }
-            }
-        }
+            Err(e) => e,
+        };
+
+        let Some(cache) = &self.cache_file else {
+            return Err(unusable);
+        };
+        tracing::warn!(
+            error = %unusable,
+            cache = %cache.display(),
+            "deployed dynamic config unusable, starting from the last-known-good cache"
+        );
+        let cached = cache::read(cache)
+            .and_then(|cfg| self.apply_tracked(&cfg, &mut cert_files).map(|()| cfg))
+            .map_err(|cache_error| {
+                GfeError::Config(format!(
+                    "{unusable}; and the last-known-good cache is unusable too: {cache_error}"
+                ))
+            })?;
+        self.shared.metrics.control.config_reload_errors.inc();
+        self.shared.metrics.control.config_from_cache.set(1);
+        Ok(cached)
+    }
+
+    /// Apply `cfg` with its listeners, remembering how its certificate files
+    /// look on disk. The snapshot is taken before the files are read, so a
+    /// file replaced in between is seen as changed by the next poll.
+    fn apply_tracked(
+        &self,
+        cfg: &DynamicConfig,
+        cert_files: &mut CertFiles,
+    ) -> Result<(), GfeError> {
+        *cert_files = CertFiles::snapshot(&cfg.certificates);
+        self.apply_with_listeners(cfg)
     }
 
     /// Apply `cfg` and make its listeners the running set, all or nothing:
@@ -207,13 +228,11 @@ impl Reloader {
                 return;
             }
         };
-        // Snapshot before `apply` reads the files: a file replaced in between
-        // is then seen as changed by the next poll.
-        *cert_files = CertFiles::snapshot(&cfg.certificates);
-        match self.apply_with_listeners(&cfg) {
+        match self.apply_tracked(&cfg, cert_files) {
             Ok(()) => {
                 self.checker.reconcile(&cfg.pools, &self.defaults);
                 self.write_cache(&cfg);
+                self.shared.metrics.control.config_from_cache.set(0);
                 tracing::info!("hot-reloaded dynamic config");
             }
             Err(e) => {

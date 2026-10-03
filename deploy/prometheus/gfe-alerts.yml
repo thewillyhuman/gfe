@@ -162,6 +162,14 @@ groups:
           summary: "{{ $labels.instance }} rejected a config reload and keeps serving the previous config"
           description: "The node log has the reason. The fleet is now inconsistent if other nodes accepted the same config."
 
+      - alert: GfeRunningFromCachedConfig
+        expr: gfe_config_from_cache == 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} started from its last-known-good config cache"
+          description: "The deployed dynamic config was missing or unusable when the node started, so it serves what it served before the restart. It leaves the cache as soon as a usable config is deployed."
+
       - alert: GfeCertificateExpiresSoon
         expr: gfe_cert_expiry_timestamp - time() < 14 * 86400
         for: 1h

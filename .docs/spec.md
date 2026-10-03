@@ -542,7 +542,7 @@ Responsibilities:
 2. **Validate** (`validator.rs`) before applying: every route references an existing pool; every listener/route references a loadable certificate (for HTTPS); no duplicate listener binds; host/path patterns well-formed; ports in range; cert and key files parse and match. Invalid config is **rejected wholesale** — the running snapshot is kept.
 3. **Apply atomically** (`applier.rs`): compile a new `RouteTable` + cert store off the hot path, then swap both via `ArcSwap`. In-flight requests finish on the old snapshot; new requests use the new one. Listener add/remove is reconciled around the swap by the controller (Section 6.1).
 4. **Watch** (`watcher.rs`, `cert_files.rs`): `notify` (inotify on Linux) on the dynamic config file, with a debounce window that coalesces rapid successive writes (e.g. an editor writing in chunks) into a single reload. The certificate and key files the config names are **polled every 10 s** by `stat` (inode, size, mtime, ctime) rather than watched: their set changes with every reload and they are commonly swapped via rename or symlink, which a poll handles uniformly. A change triggers the same validated reload.
-5. **Cache** (`cache.rs`): persist the last-known-good dynamic config locally so a restarted node serves traffic immediately even if the source of the config file is briefly unavailable.
+5. **Cache** (`cache.rs`): persist the last-known-good dynamic config locally. A node that starts while the deployed dynamic config is missing, invalid or cannot be applied (e.g. a listener that cannot be bound) starts from the cache instead, so a restart behaves like a rejected reload: what was served before keeps being served. It reports this as `gfe_config_from_cache = 1` and leaves the cache with the next successful reload. Without a cache, or with an unusable one, the node refuses to start.
 
 The file-based model and its rationale are inherited verbatim from `lb`'s ADR-001: no central API, no shared runtime state, deployment of the file is the orchestration layer's job (Puppet/Ansible/git), and all nodes converge by being given the same file.
 
@@ -805,6 +805,7 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_health_check_duration_seconds` | Histogram | Probe round-trip time |
 | `gfe_config_last_reload_timestamp` | Gauge | Unix time of last successful dynamic-config reload |
 | `gfe_config_reload_errors_total` | Counter | Failed reloads (kept old snapshot) |
+| `gfe_config_from_cache` | Gauge | 1 while the node serves its last-known-good cache because the deployed dynamic config was unusable at startup |
 | `gfe_cert_expiry_timestamp` | Gauge | not-after Unix time (label: sni) — alert before expiry |
 | `gfe_active_routes` / `gfe_active_pools` | Gauge | Sizes of the current snapshot |
 
@@ -892,6 +893,7 @@ GET /metrics   → Prometheus exposition
 
 - The dynamic config and certs are local files; GFE never makes a runtime call to fetch them. If the deployment tooling cannot push an update, GFE keeps serving the last-loaded (and locally cached) config indefinitely.
 - A malformed reload is rejected wholesale; the running snapshot is retained and `gfe_config_reload_errors_total` increments.
+- A node restarted while its dynamic config is missing or broken starts from the last-known-good cache (Section 7.2) and sets `gfe_config_from_cache`.
 
 ### Certificate Expiry
 
