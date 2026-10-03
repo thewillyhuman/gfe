@@ -9,7 +9,7 @@ use gfe_controller::Controller;
 use gfe_metrics::GfeMetrics;
 use gfe_proxy::{DrainController, ListenerSet, ProxyShared};
 use gfe_tls::CertStore;
-use gfe_upstream::{UpstreamClient, UpstreamClientOptions};
+use gfe_upstream::{KeepAlive, UpstreamClient, UpstreamClientOptions};
 use ops::OpsState;
 use std::path::Path;
 use std::path::PathBuf;
@@ -195,6 +195,13 @@ fn build_upstream_client(
         extra_ca_pem: cfg.extra_ca_file.as_deref().map(read).transpose()?,
         connect_timeout: Some(timeouts.upstream_connect),
         max_connections: Some(limits.max_upstream_connections),
+        // A backend that has been silent for as long as it may take to start
+        // responding is asked for a sign of life, and has as long to give it
+        // as it has to accept a connection.
+        http2_keep_alive: Some(KeepAlive {
+            idle: timeouts.upstream_first_byte,
+            timeout: timeouts.upstream_connect,
+        }),
     };
     UpstreamClient::with_options(opts).map_err(|e| anyhow::anyhow!("building upstream client: {e}"))
 }

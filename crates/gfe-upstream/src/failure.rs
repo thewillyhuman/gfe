@@ -20,7 +20,8 @@ pub enum FailureKind {
     /// The TLS handshake with the backend failed, e.g. an untrusted
     /// certificate.
     Tls,
-    /// The backend closed or reset the connection instead of responding.
+    /// The connection to the backend broke before it responded: closed,
+    /// reset, or no longer answering HTTP/2 keep-alive pings.
     Reset,
     /// The node already holds as many upstream connections as it may
     /// (`max_upstream_connections`), so none was opened for this request.
@@ -75,7 +76,10 @@ impl FailureKind {
                 }
             }
             if let Some(http) = current.downcast_ref::<hyper::Error>() {
-                if http.is_incomplete_message() || http.is_canceled() || http.is_closed() {
+                // Once connected, the only timer on the client is the
+                // HTTP/2 keep-alive: a timeout is a peer that went silent.
+                let died = !connecting && http.is_timeout();
+                if died || http.is_incomplete_message() || http.is_canceled() || http.is_closed() {
                     return FailureKind::Reset;
                 }
             }

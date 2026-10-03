@@ -721,6 +721,12 @@ impl hyper::body::Body for ChannelBody {
 /// `grpc-status: 0` trailers. The `x-seen-te` response header reports the
 /// `te` request header the upstream received.
 async fn spawn_grpc_upstream() -> SocketAddr {
+    spawn_grpc_upstream_answering_after(Duration::ZERO).await
+}
+
+/// Like [`spawn_grpc_upstream`], but the response (headers included) only
+/// starts after `delay`: a stream that has nothing to say yet.
+async fn spawn_grpc_upstream_answering_after(delay: Duration) -> SocketAddr {
     use hyper::body::Frame;
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -729,7 +735,8 @@ async fn spawn_grpc_upstream() -> SocketAddr {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
             tokio::spawn(async move {
-                let svc = service_fn(|req: Request<Incoming>| async move {
+                let svc = service_fn(move |req: Request<Incoming>| async move {
+                    tokio::time::sleep(delay).await;
                     let seen_te = req
                         .headers()
                         .get("te")
@@ -1441,4 +1448,21 @@ async fn answers_503_at_the_upstream_connection_limit() {
     // A node-wide limit is not something another backend selection can fix.
     assert_eq!(refused["attempts"], 1);
     assert_eq!(shared.upstream.open_connections(), 1);
+}
+
+/// A streaming call may legitimately have nothing to send, not even headers,
+/// for a long time. It is bounded by the deadline its client sets, not by the
+/// timeouts meant for request/response exchanges.
+#[tokio::test]
+async fn grpc_call_outlives_upstream_first_byte() {
+    let upstream = spawn_grpc_upstream_answering_after(Duration::from_millis(700)).await;
+    let shared = build_shared_with_first_byte(Duration::from_millis(200));
+    let (proxy, _tx) = start_proxy(&grpc_config(upstream), shared).await;
+
+    let mut call = GrpcCall::open(proxy).await;
+    call.send("late").await;
+
+    assert_eq!(call.response.status(), 200);
+    assert_eq!(call.response.headers()["content-type"], "application/grpc");
+    assert_eq!(call.next_frame().await.into_data().unwrap(), "late");
 }

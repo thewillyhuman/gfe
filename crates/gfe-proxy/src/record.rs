@@ -143,6 +143,11 @@ impl RequestRecord {
         &self.request_id
     }
 
+    /// Whether the request is a gRPC call.
+    pub fn is_grpc(&self) -> bool {
+        self.is_grpc
+    }
+
     /// The request's host, as used for routing.
     pub fn host(&self) -> &str {
         &self.host

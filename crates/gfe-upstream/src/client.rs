@@ -18,7 +18,7 @@ use hyper::{Request, Response};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
-use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::{TokioExecutor, TokioTimer};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,9 +43,22 @@ pub struct UpstreamClientOptions {
     /// Upper bound on establishing the TCP connection to a backend. `None`
     /// leaves it to the operating system, which can take minutes.
     pub connect_timeout: Option<Duration>,
+    /// Liveness checking of HTTP/2 connections to backends. `None`: a
+    /// connection that dies silently is never noticed while it has nothing
+    /// to send.
+    pub http2_keep_alive: Option<KeepAlive>,
     /// Upper bound on the upstream connections held open, over all backends.
     /// A request that would need one more fails at once. `None`: no bound.
     pub max_connections: Option<usize>,
+}
+
+/// HTTP/2 keep-alive: a connection with requests in flight that has been
+/// silent for `idle` is pinged, and closed, failing those requests, if the
+/// ping is not answered within `timeout`.
+#[derive(Debug, Clone, Copy)]
+pub struct KeepAlive {
+    pub idle: Duration,
+    pub timeout: Duration,
 }
 
 /// A cloneable, pooled client for forwarding requests to upstreams.
@@ -119,13 +132,17 @@ impl UpstreamClient {
         let connections = ConnectionLimit::new(opts.max_connections);
         let https = LimitedConnector::new(https, connections.clone());
 
-        let negotiating = Client::builder(TokioExecutor::new())
+        let mut builder = Client::builder(TokioExecutor::new());
+        builder
             .pool_max_idle_per_host(idle)
-            .build(https.clone());
-        let http2_prior_knowledge = Client::builder(TokioExecutor::new())
-            .pool_max_idle_per_host(idle)
-            .http2_only(true)
-            .build(https);
+            .timer(TokioTimer::new());
+        if let Some(keep_alive) = opts.http2_keep_alive {
+            builder
+                .http2_keep_alive_interval(keep_alive.idle)
+                .http2_keep_alive_timeout(keep_alive.timeout);
+        }
+        let negotiating = builder.build(https.clone());
+        let http2_prior_knowledge = builder.http2_only(true).build(https);
 
         Ok(UpstreamClient {
             negotiating,
@@ -361,5 +378,64 @@ mod tests {
         assert!(first.is_ok() && second.is_ok());
         assert_eq!(client.open_connections(), 1);
         assert_eq!(client.max_connections(), Some(1));
+    }
+
+    /// A backend that completes the HTTP/2 handshake, takes a request and
+    /// then goes silent without closing the connection, as a host that lost
+    /// power does.
+    async fn spawn_backend_dying_after_the_request() -> String {
+        use http_body_util::Empty;
+        use hyper::service::service_fn;
+        use hyper_util::rt::TokioIo;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let authority = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let request_seen = Arc::new(tokio::sync::Notify::new());
+            let svc = service_fn({
+                let request_seen = request_seen.clone();
+                move |_req| {
+                    request_seen.notify_one();
+                    std::future::pending::<Result<Response<Empty<Bytes>>, std::convert::Infallible>>(
+                    )
+                }
+            });
+            let conn = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                .serve_connection(TokioIo::new(stream), svc);
+            tokio::pin!(conn);
+            tokio::select! {
+                _ = &mut conn => {}
+                _ = request_seen.notified() => {}
+            }
+            // Stop driving the connection but keep its socket open: pings
+            // go unanswered and nothing tells the client.
+            std::future::pending::<()>().await;
+        });
+        authority
+    }
+
+    #[tokio::test]
+    async fn notices_a_dead_http2_backend_through_keep_alive() {
+        let backend = spawn_backend_dying_after_the_request().await;
+        let client = UpstreamClient::with_options(UpstreamClientOptions {
+            http2_keep_alive: Some(KeepAlive {
+                idle: Duration::from_millis(100),
+                timeout: Duration::from_millis(100),
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.send(Scheme::H2c, &backend, get()),
+        )
+        .await;
+
+        let failure = outcome
+            .expect("the dead connection should be noticed")
+            .expect_err("a dead backend cannot answer");
+        assert_eq!(failure.kind, FailureKind::Reset, "{failure}");
     }
 }

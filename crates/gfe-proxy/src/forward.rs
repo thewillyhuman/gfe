@@ -232,9 +232,18 @@ pub async fn forward(
 
         let start = Instant::now();
         progress.attempt_started(start);
-        let result = tokio::select! {
-            result = shared.upstream.send(pool.scheme, &authority, upstream_req) => Ok(result),
-            _ = progress.overdue(&shared.timeouts) => Err(()),
+        let sending = shared.upstream.send(pool.scheme, &authority, upstream_req);
+        let result = if record.is_grpc() {
+            // A gRPC stream may have nothing to say, not even headers, for
+            // as long as it likes: how long a call may take is the deadline
+            // its client sets and enforces, not a proxy timeout. A backend
+            // that died is noticed by the HTTP/2 keep-alive instead.
+            Ok(sending.await)
+        } else {
+            tokio::select! {
+                result = sending => Ok(result),
+                _ = progress.overdue(&shared.timeouts) => Err(()),
+            }
         };
         shared
             .metrics
