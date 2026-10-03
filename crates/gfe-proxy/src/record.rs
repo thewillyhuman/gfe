@@ -5,8 +5,8 @@
 //! "Over" means the response body was written to the last byte, or the
 //! exchange was abandoned. A [`RequestRecord`] reports itself when dropped, so
 //! whoever holds it decides when that is: the request handler while the
-//! response is being produced, then the [`ObservedBody`] wrapped around the
-//! response body. A request whose handler is cancelled, because the client
+//! response is being produced, then the wrapper put around the response
+//! body. A request whose handler is cancelled, because the client
 //! went away before any response, is therefore still reported.
 
 use crate::errors::RespBody;
