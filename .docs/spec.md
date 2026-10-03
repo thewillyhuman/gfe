@@ -637,8 +637,9 @@ max_connections_listener = 50000        # per listener
 max_header_bytes         = 65536
 max_h2_concurrent_streams = 256
 max_upstream_connections = 20000        # global, across all pools
+                                        # every limit must be > 0: 0 is not "unlimited"
 
-[timeouts]
+[timeouts]                              # every timeout must be > 0s
 tls_handshake     = "10s"
 request_header    = "10s"
 upstream_connect  = "3s"

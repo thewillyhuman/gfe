@@ -21,6 +21,8 @@ min_version = "1.2"                     # "1.2" or "1.3"
 hsts        = "max-age=31536000; includeSubDomains"
 # ticket_key_file = "/etc/gfe/tls-ticket-keys"   # fleet-shared resumption keys (Phase 3)
 
+# Every limit must be greater than 0: 0 is not "unlimited", it refuses
+# everything. Leave a setting out to use its default.
 [limits]
 max_connections           = 100000
 max_connections_listener  = 50000
@@ -28,6 +30,7 @@ max_header_bytes          = 65536    # request head limit (431 above it); minimu
 max_h2_concurrent_streams = 256
 max_upstream_connections  = 20000    # open upstream connections, all backends together (503 above it)
 
+# Every timeout must be greater than "0s", which would expire at once.
 [timeouts]
 tls_handshake       = "10s"
 request_header      = "10s"   # first request head must arrive within this of connecting

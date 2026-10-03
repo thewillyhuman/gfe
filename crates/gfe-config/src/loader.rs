@@ -1,7 +1,7 @@
 //! Read and deserialize the bootstrap (TOML) and dynamic (JSON) configs.
 
 use crate::validator::validate_health_check;
-use gfe_types::{DynamicConfig, GfeError, NodeConfig};
+use gfe_types::{DynamicConfig, GfeError, NodeConfig, UpstreamConfig};
 use std::path::Path;
 
 /// The smallest `limits.max_header_bytes` the HTTP server can be given: it
@@ -23,7 +23,68 @@ pub fn load_node_config(path: &Path) -> Result<NodeConfig, GfeError> {
     }
     validate_health_check(&config.health_check_defaults)
         .map_err(|e| GfeError::Config(format!("{}: health_check_defaults.{e}", path.display())))?;
+    validate_limits_and_timeouts(&config)
+        .and_then(|()| validate_upstream_client_identity(&config.upstream))
+        .map_err(|e| GfeError::Config(format!("{}: {e}", path.display())))?;
     Ok(config)
+}
+
+/// Reject a limit or timeout of zero. None of them means "unlimited": a
+/// zero limit refuses everything and a zero timeout expires at once.
+fn validate_limits_and_timeouts(config: &NodeConfig) -> Result<(), String> {
+    let l = &config.limits;
+    let limits = [
+        ("max_connections", l.max_connections),
+        ("max_connections_listener", l.max_connections_listener),
+        (
+            "max_h2_concurrent_streams",
+            l.max_h2_concurrent_streams as usize,
+        ),
+        ("max_upstream_connections", l.max_upstream_connections),
+    ];
+    if let Some((name, _)) = limits.iter().find(|(_, value)| *value == 0) {
+        return Err(format!(
+            "limits.{name} must be greater than 0 (0 is not \"unlimited\": \
+             it refuses everything); remove it to use the default"
+        ));
+    }
+
+    let t = &config.timeouts;
+    let timeouts = [
+        ("tls_handshake", t.tls_handshake),
+        ("request_header", t.request_header),
+        ("upstream_connect", t.upstream_connect),
+        ("upstream_first_byte", t.upstream_first_byte),
+        ("request_total", t.request_total),
+        ("client_idle", t.client_idle),
+        ("drain_deadline", t.drain_deadline),
+    ];
+    if let Some((name, _)) = timeouts.iter().find(|(_, value)| value.is_zero()) {
+        return Err(format!(
+            "timeouts.{name} must be greater than 0s (a zero timeout expires \
+             at once); remove it to use the default"
+        ));
+    }
+    Ok(())
+}
+
+/// Reject half a client identity: without both its certificate and its key
+/// the node would silently not present one, and backends requiring mutual
+/// TLS would refuse every connection.
+fn validate_upstream_client_identity(upstream: &UpstreamConfig) -> Result<(), String> {
+    match (&upstream.client_cert_file, &upstream.client_key_file) {
+        (Some(_), None) => Err(
+            "upstream.client_cert_file is set but upstream.client_key_file is not: \
+             set both for mutual TLS, or neither"
+                .into(),
+        ),
+        (None, Some(_)) => Err(
+            "upstream.client_key_file is set but upstream.client_cert_file is not: \
+             set both for mutual TLS, or neither"
+                .into(),
+        ),
+        _ => Ok(()),
+    }
 }
 
 /// Load the dynamic config (listeners/routes/pools/certs) from a JSON file.
@@ -125,6 +186,85 @@ mod tests {
                 .contains("health_check_defaults.expected_status"),
             "{err}"
         );
+    }
+
+    /// Write a minimal bootstrap config with `section` (a TOML table, header
+    /// included) added, and load it.
+    fn load_with_section(test: &str, section: &str) -> Result<NodeConfig, GfeError> {
+        load_with_check_defaults(test, &format!("\n{section}"))
+    }
+
+    #[test]
+    fn rejects_a_zero_limit() {
+        for limit in [
+            "max_connections",
+            "max_connections_listener",
+            "max_h2_concurrent_streams",
+            "max_upstream_connections",
+        ] {
+            let section = format!("[limits]\n{limit} = 0");
+
+            let err = load_with_section(&format!("limit-{limit}"), &section).unwrap_err();
+
+            assert!(
+                err.to_string().contains(&format!("limits.{limit}")),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_zero_timeout() {
+        for timeout in [
+            "tls_handshake",
+            "request_header",
+            "upstream_connect",
+            "upstream_first_byte",
+            "request_total",
+            "client_idle",
+            "drain_deadline",
+        ] {
+            let section = format!("[timeouts]\n{timeout} = \"0s\"");
+
+            let err = load_with_section(&format!("timeout-{timeout}"), &section).unwrap_err();
+
+            assert!(
+                err.to_string().contains(&format!("timeouts.{timeout}")),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_an_upstream_client_certificate_without_its_key() {
+        let section = "[upstream]\nclient_cert_file = \"/etc/gfe/client.crt\"";
+
+        let err = load_with_section("client-cert", section).unwrap_err();
+
+        assert!(
+            err.to_string().contains("upstream.client_key_file"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_an_upstream_client_key_without_its_certificate() {
+        let section = "[upstream]\nclient_key_file = \"/etc/gfe/client.key\"";
+
+        let err = load_with_section("client-key", section).unwrap_err();
+
+        assert!(
+            err.to_string().contains("upstream.client_cert_file"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn accepts_an_upstream_client_certificate_with_its_key() {
+        let section = "[upstream]\nclient_cert_file = \"/etc/gfe/client.crt\"\n\
+                       client_key_file = \"/etc/gfe/client.key\"";
+
+        assert!(load_with_section("client-pair", section).is_ok());
     }
 
     #[test]
