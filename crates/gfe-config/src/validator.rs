@@ -6,6 +6,7 @@ use gfe_types::{
 };
 use gfe_upstream::policy::RING_REPLICAS;
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::ops::RangeInclusive;
 use std::time::Duration;
 
@@ -69,6 +70,21 @@ pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
                 return Err(GfeError::Validation(format!(
                     "pool {} has an invalid upstream {}:{}",
                     p.id, u.host, u.port
+                )));
+            }
+            if u.host.contains(['[', ']']) {
+                return Err(GfeError::Validation(format!(
+                    "pool {}: upstream host {:?} has brackets; write an IPv6 address \
+                     without brackets, e.g. \"2001:db8::1\"",
+                    p.id, u.host
+                )));
+            }
+            if u.host.parse::<IpAddr>().is_err() && !is_hostname(&u.host) {
+                return Err(GfeError::Validation(format!(
+                    "pool {}: upstream host {:?} is neither a hostname nor an IP address \
+                     (the port goes in \"port\"; an IPv6 address is written without \
+                     brackets, e.g. \"2001:db8::1\")",
+                    p.id, u.host
                 )));
             }
             if u.weight > MAX_UPSTREAM_WEIGHT {
@@ -183,6 +199,22 @@ pub fn validate_health_check(check: &HealthCheckConfig) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Whether `host` is a DNS hostname: dot-separated labels of 1 to 63
+/// letters, digits, hyphens and underscores, not starting or ending with a
+/// hyphen, 253 characters at most. Underscores are not in RFC 1123 but
+/// resolvers accept them and internal names use them.
+fn is_hostname(host: &str) -> bool {
+    host.len() <= 253
+        && host.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        })
 }
 
 /// The status codes a backend can answer with.
@@ -365,6 +397,50 @@ mod tests {
             .collect();
 
         assert!(validate(&config_with_pool(p)).is_ok());
+    }
+
+    /// What `validate` says about a pool whose only upstream is `host`.
+    fn validate_upstream_host(host: &str) -> Result<(), GfeError> {
+        let mut p = pool("p");
+        p.upstreams = vec![backend(host, 1)];
+        validate(&config_with_pool(p))
+    }
+
+    #[test]
+    fn upstream_hostnames_and_ip_literals_pass() {
+        for host in [
+            "app.example.org",
+            "backend-1",
+            "10.0.0.1",
+            "2001:db8::1",
+            "::1",
+        ] {
+            assert!(validate_upstream_host(host).is_ok(), "{host}");
+        }
+    }
+
+    #[test]
+    fn bracketed_ipv6_upstream_fails_with_how_to_write_it() {
+        let err = validate_upstream_host("[2001:db8::1]")
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("without brackets"), "{err}");
+    }
+
+    #[test]
+    fn upstream_host_that_is_neither_a_hostname_nor_an_ip_fails() {
+        for host in [
+            "app example.org",
+            "app/x",
+            "-app.example.org",
+            "app..example.org",
+            "10.0.0.1:80",
+        ] {
+            let err = validate_upstream_host(host).unwrap_err().to_string();
+
+            assert!(err.contains("pool p"), "{host}: {err}");
+        }
     }
 
     /// The error `validate` gives for a pool `p` with the check `check`.

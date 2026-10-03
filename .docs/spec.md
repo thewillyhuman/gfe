@@ -323,7 +323,7 @@ A **route** maps an incoming request to an action.
 
 An **upstream pool** is a named set of application backends serving the same role.
 
-- Each **upstream** is `host:port` plus optional `weight` (relative, default 1, at most 1000). A `ring_hash` pool places 160 ring points per unit of weight and may hold at most 1,000,000 of them (sum of its weights at most 6250); a config beyond either limit is rejected.
+- Each **upstream** is `host:port` plus optional `weight` (relative, default 1, at most 1000). `host` is a hostname or an IP literal, an IPv6 address written without brackets (`"2001:db8::1"`); GFE brackets it where a URI needs it. A `ring_hash` pool places 160 ring points per unit of weight and may hold at most 1,000,000 of them (sum of its weights at most 6250); a config beyond either limit is rejected.
 - `scheme`: how GFE talks to the pool's backends, independent of the client-facing protocol: `http` (cleartext HTTP/1.1), `https` (TLS; HTTP/2 or HTTP/1.1 by ALPN) or `h2c` (cleartext HTTP/2 with prior knowledge, for backends that speak only HTTP/2 without TLS, typically gRPC servers).
 - `lb_policy`: how requests are distributed across healthy upstreams (Section 6.5).
 - `health_check`: L7 probe config (Section 7.1).

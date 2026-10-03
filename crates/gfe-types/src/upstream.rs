@@ -43,6 +43,7 @@ pub enum LbPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Upstream {
+    /// A hostname or an IP literal; an IPv6 address without brackets.
     pub host: String,
     pub port: u16,
     #[serde(default = "default_weight")]
@@ -55,9 +56,15 @@ fn default_weight() -> u32 {
 
 impl Upstream {
     /// `host:port` authority string, used as the connection-pool key and for
-    /// the upstream request `Host` header.
+    /// the upstream request `Host` header. An IPv6 literal, written without
+    /// brackets in the config, is bracketed (`[2001:db8::1]:443`) as a URI
+    /// authority requires.
     pub fn authority(&self) -> String {
-        format!("{}:{}", self.host, self.port)
+        if self.host.parse::<std::net::Ipv6Addr>().is_ok() {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
     }
 }
 
@@ -112,6 +119,27 @@ mod tests {
         assert_eq!(p.lb_policy, LbPolicy::RoundRobin);
         assert_eq!(p.upstreams[0].weight, 1);
         assert_eq!(p.upstreams[0].authority(), "10.0.0.1:8443");
+    }
+
+    fn upstream(host: &str) -> Upstream {
+        Upstream {
+            host: host.into(),
+            port: 8443,
+            weight: 1,
+        }
+    }
+
+    #[test]
+    fn authority_of_a_hostname_is_host_colon_port() {
+        assert_eq!(
+            upstream("app.example.org").authority(),
+            "app.example.org:8443"
+        );
+    }
+
+    #[test]
+    fn authority_of_an_ipv6_literal_is_bracketed() {
+        assert_eq!(upstream("2001:db8::1").authority(), "[2001:db8::1]:8443");
     }
 
     #[test]
