@@ -170,6 +170,13 @@ groups:
           summary: "{{ $labels.instance }} rejected a config reload and keeps serving the previous config"
           description: "The node log has the reason. The fleet is now inconsistent if other nodes accepted the same config."
 
+      - alert: GfeUpgradeFailed
+        expr: increase(gfe_upgrade_failures_total[15m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} could not be upgraded in place"
+          description: "The node was told to replace itself (systemctl reload gfe-node) and its successor did not take over, so it still runs the binary and the bootstrap config it had. The reason is in `systemctl status gfe-node` and in the journal, where the successor logged why it could not start."
+
       - alert: GfeRunningFromCachedConfig
         expr: gfe_config_from_cache == 1
         for: 5m
