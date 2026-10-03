@@ -48,6 +48,19 @@ fn strip_hop_by_hop(headers: &mut HeaderMap) {
     }
 }
 
+/// Whether the request asks to switch protocols (RFC 9110 §7.8), as a
+/// WebSocket handshake does: it names `upgrade` among its `Connection`
+/// options and says to what in an `Upgrade` header.
+fn asks_for_upgrade(headers: &HeaderMap) -> bool {
+    let names_upgrade = headers
+        .get_all(http::header::CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|option| option.trim().eq_ignore_ascii_case("upgrade"));
+    names_upgrade && headers.contains_key(http::header::UPGRADE)
+}
+
 /// Whether the request carries `te: trailers`, and nothing else in `te`.
 ///
 /// `TE` is a hop-by-hop header, but `trailers` is the one value HTTP/2
@@ -139,6 +152,17 @@ pub async fn forward(
         return synthetic(
             StatusCode::BAD_REQUEST,
             "unsupported request target",
+            record.request_id(),
+        );
+    }
+    if asks_for_upgrade(req.headers()) {
+        // GFE cannot relay an upgraded connection. Forwarded without its
+        // hop-by-hop `Connection: upgrade`, the handshake would reach the
+        // backend as a plain request; refusing it says what happened.
+        record.failed("upgrade_not_supported");
+        return synthetic(
+            StatusCode::NOT_IMPLEMENTED,
+            "protocol upgrade not supported",
             record.request_id(),
         );
     }
@@ -506,6 +530,29 @@ mod tests {
         assert!(!asks_for_trailers(&headers(&[])));
         assert!(!asks_for_trailers(&headers(&[("te", "gzip")])));
         assert!(!asks_for_trailers(&headers(&[("te", "trailers, gzip")])));
+    }
+
+    #[test]
+    fn websocket_handshake_asks_for_upgrade() {
+        assert!(asks_for_upgrade(&headers(&[
+            ("connection", "Upgrade"),
+            ("upgrade", "websocket"),
+        ])));
+        assert!(asks_for_upgrade(&headers(&[
+            ("connection", "keep-alive, UPGRADE"),
+            ("upgrade", "websocket"),
+        ])));
+    }
+
+    #[test]
+    fn upgrade_needs_both_connection_option_and_upgrade_header() {
+        assert!(!asks_for_upgrade(&headers(&[("connection", "keep-alive")])));
+        assert!(!asks_for_upgrade(&headers(&[("connection", "upgrade")])));
+        assert!(!asks_for_upgrade(&headers(&[("upgrade", "websocket")])));
+        assert!(!asks_for_upgrade(&headers(&[
+            ("connection", "upgrades"),
+            ("upgrade", "websocket"),
+        ])));
     }
 
     #[test]

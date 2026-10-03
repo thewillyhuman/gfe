@@ -2252,6 +2252,97 @@ async fn fails_grpc_call_to_a_pool_with_max_in_flight_calls_as_unavailable() {
     assert!(message.contains("upstream_pool_full"), "{message}");
 }
 
+/// Spawn a backend answering every request with `200`, and counting them.
+async fn spawn_counting_upstream() -> (SocketAddr, Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = requests.clone();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let counted = counted.clone();
+            tokio::spawn(async move {
+                let svc = service_fn(move |_req: Request<Incoming>| {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async { Ok::<_, Infallible>(Response::new(Empty::<Bytes>::new())) }
+                });
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), svc)
+                    .await;
+            });
+        }
+    });
+    (addr, requests)
+}
+
+/// Send a `GET /chat` for `a.example.org` with `headers` over HTTP/1.1 and
+/// return the response status.
+async fn http_get_with(proxy: SocketAddr, headers: &[(&str, &str)]) -> u16 {
+    let stream = TcpStream::connect(proxy).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    let mut req = Request::builder()
+        .uri("/chat")
+        .header("host", "a.example.org");
+    for (name, value) in headers {
+        req = req.header(*name, *value);
+    }
+    let resp = sender
+        .send_request(req.body(Empty::<Bytes>::new()).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status().as_u16();
+    resp.into_body().collect().await.unwrap();
+    status
+}
+
+/// GFE does not relay protocol upgrades. Forwarding the handshake without
+/// its hop-by-hop `Connection: Upgrade` would turn it into a plain request,
+/// so it is refused instead, where operators can see it.
+#[tokio::test]
+async fn refuses_a_websocket_handshake_with_501() {
+    let (logs, _guard) = CapturedLogs::start();
+    let (upstream, requests) = spawn_counting_upstream().await;
+    let shared = build_shared();
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
+
+    let status = http_get_with(
+        proxy,
+        &[
+            ("connection", "keep-alive, Upgrade"),
+            ("upgrade", "websocket"),
+            ("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ=="),
+            ("sec-websocket-version", "13"),
+        ],
+    )
+    .await;
+    let event = logs.access_event().await;
+
+    assert_eq!(status, 501);
+    assert_eq!(event["error"], "upgrade_not_supported");
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let metrics = shared.metrics.encode();
+    let counted =
+        r#"gfe_requests_total{listener="http",host="a.example.org",route="web",status="501"} 1"#;
+    assert!(metrics.contains(counted), "{metrics}");
+}
+
+#[tokio::test]
+async fn forwards_a_keep_alive_request() {
+    let (upstream, requests) = spawn_counting_upstream().await;
+    let (proxy, _tx) = start_proxy(&forwarding_config(upstream), build_shared()).await;
+
+    let status = http_get_with(proxy, &[("connection", "keep-alive")]).await;
+
+    assert_eq!(status, 200);
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
 /// A streaming call may legitimately have nothing to send, not even headers,
 /// for a long time. It is bounded by the deadline its client sets, not by the
 /// timeouts meant for request/response exchanges.
