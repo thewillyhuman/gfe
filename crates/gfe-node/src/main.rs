@@ -3,6 +3,7 @@
 
 mod kernel;
 mod ops;
+mod upgrade;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -16,6 +17,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use upgrade::{Inherited, Predecessor};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -37,6 +39,12 @@ struct Args {
     /// file is checked.
     #[arg(long, requires = "check_config", value_name = "FILE")]
     dynamic_config: Option<PathBuf>,
+    /// Take over from the running node that started this process: listen on
+    /// the sockets it passes on standard input instead of binding them, and
+    /// tell it when it may stop. Passed by a node that upgrades itself, not
+    /// by hand.
+    #[arg(long, conflicts_with = "check_config")]
+    upgrade: bool,
 }
 
 fn main() -> Result<()> {
@@ -65,6 +73,12 @@ fn main() -> Result<()> {
     // deployed file cannot be used.
     let node = node.context("--config is required to run a node")?;
     init_tracing();
+    let (predecessor, inherited) = if args.upgrade {
+        let (predecessor, inherited) = upgrade::take_over()?;
+        (Some(predecessor), inherited)
+    } else {
+        (None, Inherited::default())
+    };
 
     let mut rt = tokio::runtime::Builder::new_multi_thread();
     rt.enable_all();
@@ -72,7 +86,7 @@ fn main() -> Result<()> {
         rt.worker_threads(node.node.worker_threads);
     }
     let rt = rt.build().context("building tokio runtime")?;
-    rt.block_on(run(node))
+    rt.block_on(run(node, predecessor, inherited))
 }
 
 /// Check a dynamic config the way a node would before applying it: parse,
@@ -102,7 +116,13 @@ fn init_tracing() {
         .init();
 }
 
-async fn run(node: gfe_types::NodeConfig) -> Result<()> {
+/// Run a node until it is told to stop. `inherited` are the listening sockets
+/// it starts with, and `predecessor` the node it took them from, if any.
+async fn run(
+    node: gfe_types::NodeConfig,
+    predecessor: Option<Predecessor>,
+    inherited: Inherited,
+) -> Result<()> {
     tracing::info!(node = %node.node.id, vip = %node.node.loopback_vip, "starting gfe-node");
 
     let metrics = Arc::new(GfeMetrics::new());
@@ -140,6 +160,13 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
         server_config,
         drain.subscribe(),
     ));
+    if predecessor.is_some() {
+        tracing::info!(
+            listeners = inherited.listeners.len(),
+            "taking over the listening sockets of the running node"
+        );
+    }
+    listeners.adopt(inherited.listeners);
 
     // Ops server.
     let ops_state = Arc::new(OpsState {
@@ -154,8 +181,9 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
     {
         let addr = node.node.metrics_addr;
         let st = ops_state.clone();
+        let inherited = inherited.ops;
         tokio::spawn(async move {
-            if let Err(e) = ops::run(addr, st).await {
+            if let Err(e) = ops::run(addr, inherited, st).await {
                 tracing::error!(error = %e, "ops server failed");
             }
         });
@@ -181,6 +209,13 @@ async fn run(node: gfe_types::NodeConfig) -> Result<()> {
 
     ready.store(true, Ordering::SeqCst);
     tracing::info!("gfe-node ready");
+    if let Some(predecessor) = predecessor {
+        // Without this the predecessor does not stop: it gives up on this
+        // node and goes on serving next to it.
+        predecessor
+            .release()
+            .context("telling the running node that this one has taken over")?;
+    }
 
     listeners.serve_until_drained().await;
 

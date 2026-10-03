@@ -29,8 +29,12 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+gfe-handover = { workspace = true }
+
 [dev-dependencies]
 serde_json = { workspace = true }
+gfe-handover = { workspace = true }
 gfe-health = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }

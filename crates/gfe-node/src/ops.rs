@@ -24,9 +24,23 @@ pub struct OpsState {
     pub kernel: Option<Arc<KernelView>>,
 }
 
-/// Run the ops server until the process exits.
-pub async fn run(addr: SocketAddr, state: Arc<OpsState>) -> std::io::Result<()> {
-    let listener = TcpListener::bind(addr).await?;
+/// Run the ops server on `addr` until the process exits.
+///
+/// `inherited` is a socket that already listens, with the address it is
+/// configured on: it is used instead of binding one if that address is
+/// `addr`, and closed otherwise.
+pub async fn run(
+    addr: SocketAddr,
+    inherited: Option<(SocketAddr, std::net::TcpListener)>,
+    state: Arc<OpsState>,
+) -> std::io::Result<()> {
+    let listener = match inherited {
+        Some((configured_on, socket)) if configured_on == addr => {
+            socket.set_nonblocking(true)?;
+            TcpListener::from_std(socket)?
+        }
+        _ => TcpListener::bind(addr).await?,
+    };
     tracing::info!(%addr, "ops server listening (/healthz /readyz /metrics)");
     loop {
         let (stream, _peer) = match listener.accept().await {
