@@ -2,6 +2,7 @@
   "annotations": { "list": [] },
   "editable": true,
   "schemaVersion": 39,
+  "uid": "gfe",
   "title": "GFE — General Front End",
   "tags": ["gfe", "proxy", "tls"],
   "timezone": "browser",
@@ -9,12 +10,20 @@
   "templating": {
     "list": [
       {
+        "name": "DS_PROMETHEUS",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus"
+      },
+      {
         "name": "instance",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "query": "label_values(gfe_connections_active, instance)",
         "refresh": 2,
-        "includeAll": true
+        "includeAll": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" }
       },
       {
         "name": "host",
@@ -23,6 +32,7 @@
         "query": "label_values(gfe_requests_total{instance=~\"$instance\"}, host)",
         "refresh": 2,
         "includeAll": true,
+        "allValue": ".*",
         "current": { "text": "All", "value": "$__all" }
       },
       {
@@ -32,6 +42,7 @@
         "query": "label_values(gfe_upstream_requests_total{instance=~\"$instance\"}, pool)",
         "refresh": 2,
         "includeAll": true,
+        "allValue": ".*",
         "current": { "text": "All", "value": "$__all" }
       }
     ]
@@ -133,13 +144,13 @@
     },
     {
       "id": 13, "title": "Config reload errors (total)", "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 40 },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 40 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [ { "expr": "sum(gfe_config_reload_errors_total{instance=~\"$instance\"})" } ]
     },
     {
       "id": 14, "title": "Draining backends", "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 40 },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 40 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [ { "expr": "sum(gfe_backend_draining{instance=~\"$instance\"})" } ]
     },
@@ -184,7 +195,7 @@
       "fieldConfig": { "defaults": { "unit": "percentunit" } },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "process_open_fds{instance=~\"$instance\"} / process_max_fds{instance=~\"$instance\"}", "legendFormat": "{{instance}}" }
+        { "expr": "(process_open_fds{instance=~\"$instance\"} / process_max_fds{instance=~\"$instance\"}) and on (instance) gfe_build_info", "legendFormat": "{{instance}}" }
       ]
     },
     {
@@ -192,7 +203,7 @@
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 56 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "rate(process_cpu_seconds_total{instance=~\"$instance\"}[5m])", "legendFormat": "cores · {{instance}}" },
+        { "expr": "rate(process_cpu_seconds_total{instance=~\"$instance\"}[5m]) and on (instance) gfe_build_info", "legendFormat": "cores · {{instance}}" },
         { "expr": "gfe_runtime_global_queue_depth{instance=~\"$instance\"}", "legendFormat": "queued tasks · {{instance}}" }
       ]
     },
