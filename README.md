@@ -16,7 +16,8 @@ spread connections across a fleet with no coordination.
 
 - **Centralized TLS termination** — SNI-based certificate selection from a
   hot-swappable cert store; uniform fleet TLS policy (min version, ALPN, HSTS);
-  session resumption tickets. Teams never manage certificates.
+  session resumption tickets. Teams never manage certificates. A certificate
+  rotated in place on disk is picked up within 10 s, no restart needed.
 - **L7 routing** — match by SNI/`Host` (exact + single-label wildcard) and path
   (longest-prefix / exact); forward / redirect / fixed-response actions.
 - **Upstream load balancing** — `round_robin`, `least_request` (fewest in-flight),

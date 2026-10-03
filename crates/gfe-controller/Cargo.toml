@@ -14,4 +14,12 @@ gfe-proxy = { workspace = true }
 gfe-upstream = { workspace = true }
 gfe-metrics = { workspace = true }
 notify = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+gfe-router = { workspace = true }
+gfe-tls = { workspace = true }
+arc-swap = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }

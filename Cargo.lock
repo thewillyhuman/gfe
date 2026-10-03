@@ -559,13 +559,19 @@ dependencies = [
 name = "gfe-controller"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "gfe-config",
  "gfe-health",
  "gfe-metrics",
  "gfe-proxy",
+ "gfe-router",
+ "gfe-tls",
  "gfe-types",
  "gfe-upstream",
  "notify",
+ "rcgen",
+ "rustls",
+ "tokio",
  "tracing",
 ]
 

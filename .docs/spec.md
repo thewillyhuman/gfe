@@ -532,7 +532,7 @@ Responsibilities:
 1. **Load** (`loader.rs`) the bootstrap node config (TOML) once at startup, and the dynamic config (JSON: listeners, routes, pools, certificates) at startup and on every change.
 2. **Validate** (`validator.rs`) before applying: every route references an existing pool; every listener/route references a loadable certificate (for HTTPS); no duplicate listener binds; host/path patterns well-formed; ports in range; cert and key files parse and match. Invalid config is **rejected wholesale** — the running snapshot is kept.
 3. **Apply atomically** (`applier.rs`): compile a new `RouteTable` + cert store off the hot path, then swap both via `ArcSwap`. In-flight requests finish on the old snapshot; new requests use the new one. Listener add/remove is reconciled (Section 6.1).
-4. **Watch** (`watcher.rs`): `notify` (inotify on Linux) on the dynamic config file and the certificate files. A debounce window coalesces rapid successive writes (e.g. an editor writing in chunks) into a single reload.
+4. **Watch** (`watcher.rs`, `cert_files.rs`): `notify` (inotify on Linux) on the dynamic config file, with a debounce window that coalesces rapid successive writes (e.g. an editor writing in chunks) into a single reload. The certificate and key files the config names are **polled every 10 s** by `stat` (inode, size, mtime, ctime) rather than watched: their set changes with every reload and they are commonly swapped via rename or symlink, which a poll handles uniformly. A change triggers the same validated reload.
 5. **Cache** (`cache.rs`): persist the last-known-good dynamic config locally so a restarted node serves traffic immediately even if the source of the config file is briefly unavailable.
 
 The file-based model and its rationale are inherited verbatim from `lb`'s ADR-001: no central API, no shared runtime state, deployment of the file is the orchestration layer's job (Puppet/Ansible/git), and all nodes converge by being given the same file.
@@ -543,7 +543,7 @@ The file-based model and its rationale are inherited verbatim from `lb`'s ADR-00
 
 - On config load and on cert-file change, the manager parses each certificate entry (`loader.rs`), builds an updated cert store, and swaps it in atomically.
 - It records each certificate's **not-after** time and exposes `gfe_cert_expiry_timestamp{sni}` so monitoring can alert well before expiry.
-- A certificate that fails to parse or whose key does not match is rejected without disturbing the currently served store; the failure is logged and counted.
+- A certificate that fails to parse or whose key does not match is rejected without disturbing the currently served store; the failure is logged and counted. A rotation caught between the two file writes is therefore harmless: the old certificate keeps being served until the matching key lands, which triggers the next reload.
 
 **Automated renewal (ACME) — Phase 3, high value.** Because certificate management is GFE's reason to exist, automated issuance/renewal via ACME (e.g. `instant-acme`) is a planned addition: GFE answers `http-01` (via a built-in `/.well-known/acme-challenge/` route on the HTTP listener) or `tls-alpn-01` challenges, obtains/renews certs ahead of expiry, writes them to the cert store, and hot-swaps — with zero team involvement after initial registration. This is specified as a follow-up so the MVP can ship with operator-provided certificates first.
 
@@ -879,7 +879,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 
 ### Rotating Certificates
 
-- Write the new cert/key files (and update the dynamic config if the path/SNI set changed). The watcher reloads and swaps the cert store atomically. With shared TLS ticket keys, resumption continues to work across the rotation.
+- Write the new cert/key files in place (and update the dynamic config if the path/SNI set changed). The certificate poller notices within 10 s, reloads, and swaps the cert store atomically — no config change or restart needed. With shared TLS ticket keys, resumption continues to work across the rotation.
 
 ### Capacity Planning
 
