@@ -1296,9 +1296,24 @@ async fn relays_grpc_stream_message_by_message() {
 #[derive(Clone, Default)]
 struct CapturedLogs(Arc<std::sync::Mutex<Vec<u8>>>);
 
-impl std::io::Write for CapturedLogs {
+thread_local! {
+    /// Where the log lines emitted on this thread go while a test captures
+    /// them.
+    static CAPTURING: std::cell::RefCell<Option<CapturedLogs>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Hands each log line to the test capturing on the thread that emitted it,
+/// and drops the lines of threads where no test captures.
+struct ToCapturingTest;
+
+impl std::io::Write for ToCapturingTest {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
+        CAPTURING.with(|capturing| {
+            if let Some(logs) = capturing.borrow().as_ref() {
+                logs.0.lock().unwrap().extend_from_slice(buf);
+            }
+        });
         Ok(buf.len())
     }
 
@@ -1307,17 +1322,36 @@ impl std::io::Write for CapturedLogs {
     }
 }
 
+/// Stops capturing on this thread when dropped.
+struct Capturing;
+
+impl Drop for Capturing {
+    fn drop(&mut self) {
+        CAPTURING.with(|capturing| *capturing.borrow_mut() = None);
+    }
+}
+
 impl CapturedLogs {
     /// Capture logs the way the node emits them (JSON). The proxy and the
-    /// test share one thread, so a thread-default subscriber sees them all.
-    fn start() -> (CapturedLogs, tracing::subscriber::DefaultGuard) {
+    /// test share one thread, so what this thread emits is what the test's
+    /// proxy logged.
+    ///
+    /// There is one subscriber for the whole test binary, not one per test.
+    /// `tracing` caches, per callsite and for every thread, whether anybody
+    /// is interested in it: with subscribers that come and go per thread, a
+    /// test that captures nothing could cache "nobody" a moment before a
+    /// capturing test needed the event, and the event was lost.
+    fn start() -> (CapturedLogs, Capturing) {
+        static SUBSCRIBER: std::sync::Once = std::sync::Once::new();
+        SUBSCRIBER.call_once(|| {
+            tracing_subscriber::fmt()
+                .json()
+                .with_writer(|| ToCapturingTest)
+                .init();
+        });
         let logs = CapturedLogs::default();
-        let writer = logs.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .json()
-            .with_writer(move || writer.clone())
-            .finish();
-        (logs, tracing::subscriber::set_default(subscriber))
+        CAPTURING.with(|capturing| *capturing.borrow_mut() = Some(logs.clone()));
+        (logs, Capturing)
     }
 
     /// The fields of the single access-log event of the test, waiting for it
