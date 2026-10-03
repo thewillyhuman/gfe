@@ -89,6 +89,26 @@ Notes:
 - A node restarted while the dynamic config is missing or broken starts from
   its last-known-good cache (`local_cache`) and reports
   `gfe_config_from_cache = 1`; it does not stay down.
+- With `[log] file = "/var/log/gfe/gfe.log"` in the bootstrap TOML, as in the
+  example config, the access and connection logs go to that file and the
+  journal keeps the node's own log. The unit creates `/var/log/gfe`, owned by
+  `gfe-node` and closed to other users. Nothing rotates the file: without a
+  collector or logrotate it grows until the disk is full, at roughly 500
+  bytes per request and 300 per connection. A minimal logrotate rule, which needs no signal because
+  the node finds a renamed file again by itself:
+
+  ```
+  /var/log/gfe/gfe.log {
+      daily
+      rotate 7
+      compress
+      delaycompress
+      missingok
+      notifempty
+      create 0640 gfe-node gfe-node
+  }
+  ```
+
 - The kernel TCP statistics (`[ebpf] enabled = true`) need two more
   capabilities than the unit grants. `/usr/share/gfe/gfe-node-ebpf.conf` is a
   drop-in for `/etc/systemd/system/gfe-node.service.d/` that grants them. The

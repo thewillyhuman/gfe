@@ -53,9 +53,14 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-# /var/lib/gfe (the last-known-good config cache): created and owned by the
-# service user on start, and the only writable path.
+# /var/lib/gfe (the last-known-good config cache) and /var/log/gfe (the log
+# file, if `[log] file` names one there): created and owned by the service
+# user on start, and the only writable paths. The log holds client addresses
+# and what they asked for, so its directory is closed to other users; give a
+# log collector access through the gfe-node group.
 StateDirectory=gfe
+LogsDirectory=gfe
+LogsDirectoryMode=0750
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

@@ -46,6 +46,18 @@ drain_deadline      = "30s"   # on shutdown: how long open connections get to fi
 [ebpf]
 enabled = false
 
+# Where the log goes. With a file, every line is appended to it and standard
+# output (the journal, under systemd) keeps the node's own log only: the
+# per-request and per-connection events are too many for a journal, which
+# discards what exceeds its rate limit. Without one, everything goes to
+# standard output.
+#
+# Nothing here rotates the file: point a log collector or logrotate at it.
+# It may be renamed, removed or truncated under the node, which goes on at
+# this path within a second. The systemd unit provides /var/log/gfe.
+[log]
+file = "/var/log/gfe/gfe.log"
+
 [health_check_defaults]
 type                = "http"       # http | https | tcp | grpc (grpc.health.v1, for gRPC pools)
 interval            = "5s"
