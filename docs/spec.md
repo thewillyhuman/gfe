@@ -114,11 +114,10 @@ gfe/
 │   ├── spec.md                         # This specification
 │   ├── observability.md                # Metrics, logs, alerts and the dashboard
 │   ├── demo.md                         # The local playground, and what to try in it
-│   └── rpm.md                          # Building the RPM; a node under Puppet
-│
-├── config/
-│   ├── gfe.example.toml                # Reference node (bootstrap) configuration
-│   └── gfe-dynamic.example.json        # Reference dynamic configuration
+│   ├── rpm.md                          # Building the RPM; a node under Puppet
+│   └── examples/
+│       ├── gfe.example.toml            # Reference node (bootstrap) configuration
+│       └── gfe-dynamic.example.json    # Reference dynamic configuration
 │
 ├── src/
 │   ├── rust/                           # The Cargo workspace, detailed below
@@ -1052,7 +1051,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] `gfe-proxy`: loader + validator + applier (atomic swap) for the dynamic config
 - [x] `gfe-node`: binary wiring proxy + config from local file; `--check-config`
 - [x] Integration tests (TLS termination, routing, proxying) against mock upstreams
-- [x] `config/gfe.example.toml`
+- [x] `docs/examples/gfe.example.toml`
 
 ### Phase 2 — Control Plane and Resilience ✅
 

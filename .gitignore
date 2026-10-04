@@ -23,11 +23,9 @@ Thumbs.db
 .env.*
 .claude/
 
-# Local certs & working config — dummy/self-signed material, never commit keys.
-# The committed examples are config/gfe.example.toml + config/gfe-dynamic.example.json.
+# Certificates and keys: dummy or self-signed material, never commit keys.
 *.pem
 *.key
-/config/gfe-dynamic.json
 
 # Local state
 /var

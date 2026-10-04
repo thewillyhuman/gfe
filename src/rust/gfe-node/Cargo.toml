@@ -43,8 +43,8 @@ assets = [
     { source = "../../systemd/gfe-node-ebpf.conf", dest = "/usr/share/gfe/gfe-node-ebpf.conf", mode = "644" },
     { source = "../../grafana/gfe-dashboard.json", dest = "/usr/share/gfe/grafana/gfe-dashboard.json", mode = "644" },
     { source = "../../prometheus/gfe-alerts.yml", dest = "/usr/share/gfe/prometheus/gfe-alerts.yml", mode = "644" },
-    { source = "../../../config/gfe.example.toml", dest = "/usr/share/doc/gfe/gfe.example.toml", mode = "644", doc = true },
-    { source = "../../../config/gfe-dynamic.example.json", dest = "/usr/share/doc/gfe/gfe-dynamic.example.json", mode = "644", doc = true },
+    { source = "../../../docs/examples/gfe.example.toml", dest = "/usr/share/doc/gfe/gfe.example.toml", mode = "644", doc = true },
+    { source = "../../../docs/examples/gfe-dynamic.example.json", dest = "/usr/share/doc/gfe/gfe-dynamic.example.json", mode = "644", doc = true },
     { source = "../../../README.md", dest = "/usr/share/doc/gfe/README.md", mode = "644", doc = true },
     { source = "../../../LICENSE", dest = "/usr/share/licenses/gfe/LICENSE", mode = "644" },
 ]

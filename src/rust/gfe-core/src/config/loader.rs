@@ -268,11 +268,11 @@ mod tests {
         assert!(load_with_section("client-pair", section).is_ok());
     }
 
-    /// A file of the repository's `config/` directory, which the package
-    /// ships as the examples.
+    /// A file of the repository's `docs/examples/` directory, which the
+    /// package ships.
     fn shipped_example(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../config")
+            .join("../../../docs/examples")
             .join(name)
     }
 

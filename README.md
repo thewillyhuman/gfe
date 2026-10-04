@@ -188,14 +188,14 @@ Put differently, **a single GFE instance sustained ~71k fully-terminated HTTPS r
 cargo build --release --manifest-path src/rust/Cargo.toml
 
 # Validate config (with the dynamic config it names, /etc/gfe/gfe-dynamic.json)
-./src/rust/target/release/gfe-node --config config/gfe.example.toml --check-config
+./src/rust/target/release/gfe-node --config docs/examples/gfe.example.toml --check-config
 
 # Validate a candidate dynamic config before it replaces the deployed one
-./src/rust/target/release/gfe-node --config config/gfe.example.toml --check-config \
+./src/rust/target/release/gfe-node --config docs/examples/gfe.example.toml --check-config \
     --dynamic-config /tmp/gfe-dynamic.candidate.json
 
 # Run (binds the listeners in the dynamic config; serves /metrics on metrics_addr)
-./src/rust/target/release/gfe-node --config config/gfe.example.toml
+./src/rust/target/release/gfe-node --config docs/examples/gfe.example.toml
 ```
 
 ## See it running
@@ -235,7 +235,7 @@ src/systemd/
   gfe-node-ebpf.conf    Drop-in granting what the eBPF kernel view needs
 src/grafana/            Prebuilt dashboard
 src/prometheus/         Alerting rules (GFE + host network)
-config/
+docs/examples/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
 hack/

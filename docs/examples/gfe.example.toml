@@ -3,7 +3,7 @@
 #
 # The hot-reloadable part (listeners, routes, pools, certificates) lives in the
 # JSON file referenced by [control_plane].config_file — see
-# config/gfe-dynamic.example.json.
+# gfe-dynamic.example.json, next to this file.
 
 [node]
 id            = "gfe-node-01"
