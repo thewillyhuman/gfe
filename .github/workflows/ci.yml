@@ -63,10 +63,11 @@ jobs:
         run: cargo build --locked --workspace --all-targets --verbose
       # nextest reports the workspace as one result: a line per test and a
       # single total at the end, where `cargo test` prints a result per test
-      # binary and leaves the sum to the reader. Its settings are in
-      # `.config/nextest.toml`.
+      # binary and leaves the sum to the reader. It runs every test and
+      # reports every failure, not only the first one, and prints the output
+      # of a failed test when it fails and again next to the totals.
       - name: cargo nextest run --locked --workspace
-        run: cargo nextest run --locked --workspace --profile ci
+        run: cargo nextest run --locked --workspace --no-fail-fast --failure-output immediate-final
       # nextest does not run doctests.
       - name: cargo test --locked --workspace --doc
         run: cargo test --locked --workspace --doc

@@ -260,8 +260,8 @@ CI runs the tests with [cargo-nextest](https://nexte.st), which reports the
 whole workspace as one result instead of one per test binary:
 
 ```bash
-cargo nextest run --workspace --profile ci   # settings in .config/nextest.toml
-cargo test --workspace --doc                 # doctests, which nextest does not run
+cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+cargo test --workspace --doc    # doctests, which nextest does not run
 ```
 
 ## Documentation

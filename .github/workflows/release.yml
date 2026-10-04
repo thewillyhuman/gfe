@@ -46,7 +46,7 @@ jobs:
           tool: cargo-nextest
       # The same two steps as the test job of ci.yml.
       - name: cargo nextest run --locked --workspace
-        run: cargo nextest run --locked --workspace --profile ci
+        run: cargo nextest run --locked --workspace --no-fail-fast --failure-output immediate-final
       - name: cargo test --locked --workspace --doc
         run: cargo test --locked --workspace --doc
 
