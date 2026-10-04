@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use gfe_core::config::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
 use gfe_health_checking::HealthMap;
-use gfe_upstream::policy::{build_ring, hash64};
-use gfe_upstream::PoolSet;
+use gfe_load_balancing::policy::{build_ring, hash64};
+use gfe_load_balancing::PoolSet;
 
 fn pool(policy: LbPolicy, n: usize, weighted: bool) -> UpstreamPool {
     let upstreams = (0..n)

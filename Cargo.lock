@@ -580,10 +580,10 @@ name = "gfe-config"
 version = "0.1.0"
 dependencies = [
  "gfe-core",
+ "gfe-load-balancing",
  "gfe-observability",
  "gfe-proxy",
  "gfe-router",
- "gfe-upstream",
  "notify",
  "rcgen",
  "serde_json",
@@ -670,6 +670,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gfe-load-balancing"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "gfe-core",
+ "gfe-health-checking",
+ "rand",
+]
+
+[[package]]
 name = "gfe-loadtest"
 version = "0.1.0"
 dependencies = [
@@ -733,9 +743,9 @@ dependencies = [
  "bytes",
  "gfe-core",
  "gfe-health-checking",
+ "gfe-load-balancing",
  "gfe-observability",
  "gfe-router",
- "gfe-upstream",
  "http",
  "http-body-util",
  "hyper",
@@ -755,16 +765,6 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "gfe-core",
-]
-
-[[package]]
-name = "gfe-upstream"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "gfe-core",
- "gfe-health-checking",
- "rand",
 ]
 
 [[package]]

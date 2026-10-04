@@ -7,10 +7,10 @@ use crate::record::{CountedBody, RequestRecord};
 use crate::ConnCtx;
 use bytes::Bytes;
 use gfe_core::upstream::{BoxError, FailureKind};
+use gfe_load_balancing::{InflightGuard, Pool};
 use gfe_observability::{
     Gauge, PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels,
 };
-use gfe_upstream::{InflightGuard, Pool};
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use http_body_util::BodyExt;
 use hyper::body::{Body, Incoming};
@@ -159,7 +159,7 @@ pub async fn forward(
     record: &mut RequestRecord,
 ) -> Response<RespBody> {
     let shared = &ctx.shared;
-    let hash_key = Some(gfe_upstream::policy::hash64(ctx.client_ip));
+    let hash_key = Some(gfe_load_balancing::policy::hash64(ctx.client_ip));
     let proto = if ctx.is_tls { "https" } else { "http" };
     if !names_a_path(req.uri()) {
         record.failed("unsupported_request_target");

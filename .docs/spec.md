@@ -159,7 +159,7 @@ gfe/
 │   │       ├── policy.rs                # ServerConfig builder: versions, ciphers, ALPN
 │   │       └── loader.rs                # PEM cert/key parsing, expiry extraction
 │   │
-│   ├── gfe-upstream/               # Upstream pools, LB policy, connection pooling
+│   ├── gfe-load-balancing/               # Upstream pools, LB policy, connection pooling
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
@@ -268,7 +268,7 @@ gfe/
 
 ### Design Principles Behind the Structure
 
-**Single Responsibility per Crate.** `gfe-router` knows how to match a request to an upstream pool but nothing about TLS or sockets. `gfe-tls` knows how to resolve and present certificates but nothing about routing. `gfe-upstream` knows how to pick and connect to a backend but nothing about how the request arrived.
+**Single Responsibility per Crate.** `gfe-router` knows how to match a request to an upstream pool but nothing about TLS or sockets. `gfe-tls` knows how to resolve and present certificates but nothing about routing. `gfe-load-balancing` knows how to pick and connect to a backend but nothing about how the request arrived.
 
 **Dependency Direction: Inward Only.** Library crates depend only on `gfe-core` and lower-layer libraries. `gfe-node` is the only crate that wires everything together. The graph is a DAG rooted at `gfe-core`.
 
@@ -277,7 +277,7 @@ gfe/
                       /                \
               gfe-proxy            gfe-controller
              /    |    \           /      |       \
-      gfe-tls gfe-router gfe-upstream  gfe-health-checking gfe-config
+      gfe-tls gfe-router gfe-load-balancing  gfe-health-checking gfe-config
             \      |        |    /        |        /
              ──────── gfe-observability ───────
                           |
@@ -356,7 +356,7 @@ A **certificate** entry binds one or more SNI names to a PEM certificate chain +
        - No match → 404 synthetic response (errors.rs).
        - Redirect/fixed action → respond directly.
        - Forward action → continue.
-    b. Upstream selection (gfe-upstream): from the route's pool, pick a healthy
+    b. Upstream selection (gfe-load-balancing): from the route's pool, pick a healthy
        backend via the pool's LB policy.
     c. Connection acquisition (conn_pool.rs): reuse a pooled idle upstream
        connection or open a new one (TLS to upstream if scheme=https).
@@ -374,7 +374,7 @@ A **certificate** entry binds one or more SNI names to a PEM certificate chain +
 
 ## 6. Proxy Design (Data Plane)
 
-> **Code location:** `crates/gfe-proxy/` (engine) + `crates/gfe-core/src/tls/`, `crates/gfe-router/`, `crates/gfe-upstream/`
+> **Code location:** `crates/gfe-proxy/` (engine) + `crates/gfe-core/src/tls/`, `crates/gfe-router/`, `crates/gfe-load-balancing/`
 
 The proxy is a fully asynchronous Tokio service. Unlike `lb`'s forwarder, it terminates TCP and TLS and therefore uses the kernel stack and ordinary `tokio::net` sockets — there is no kernel bypass and no per-packet hot path to keep allocation-free. The performance discipline instead targets **per-request** overhead: zero-copy body streaming, connection reuse, and lock-free config reads.
 
@@ -438,7 +438,7 @@ Routing maps a request to an action using a compiled, immutable snapshot.
 
 ### 6.5 Upstream Selection and Load Balancing
 
-> **Code location:** `crates/gfe-upstream/src/pool.rs`, `crates/gfe-upstream/src/policy.rs`
+> **Code location:** `crates/gfe-load-balancing/src/pool.rs`, `crates/gfe-load-balancing/src/policy.rs`
 
 Once a route resolves to a pool, GFE selects one **healthy** upstream. The pool exposes only the current healthy set (driven by the health checker, Section 7.1); draining upstreams (lame duck, Section 7.4) are excluded from new selection.
 
@@ -1037,7 +1037,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] `gfe-core`: domain types (Listener, Route, UpstreamPool, Upstream, TlsConfig, CertEntry) + bootstrap & dynamic config structs
 - [x] `gfe-core`: cert store, SNI resolver, TLS policy / `ServerConfig` builder, PEM loader
 - [x] `gfe-router`: compiled route table, host (exact + wildcard) and path (prefix/exact) matching
-- [x] `gfe-upstream`: pool handle, round-robin policy, hyper upstream client, connection pooling
+- [x] `gfe-load-balancing`: pool handle, round-robin policy, hyper upstream client, connection pooling
 - [x] `gfe-proxy`: acceptor, per-connection TLS + HTTP serve, routing, forwarding, synthetic errors
 - [x] `gfe-observability`: proxy metrics + Prometheus endpoint
 - [x] `gfe-config`: loader + validator + applier (atomic swap) for the dynamic config
@@ -1050,7 +1050,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] `gfe-health-checking`: HTTP/HTTPS/TCP probes, dedup, state machine, shared health map
 - [x] `gfe-config`: inotify watcher + debounce + last-known-good cache
 - [x] `gfe-controller`: orchestrator wiring config + health + cert lifecycle
-- [x] `gfe-upstream`: `least_request` and `ring_hash` (affinity) policies, upstream TLS validation
+- [x] `gfe-load-balancing`: `least_request` and `ring_hash` (affinity) policies, upstream TLS validation
 - [x] bounded pools — idle connections bounded per host; open upstream connections capped node-wide (`max_upstream_connections`)
 - [x] `gfe-proxy`: graceful drain (deadline), request-total timeout, conservative idempotent retries, connection limits
 - [x] per-stage timeouts — TLS handshake, request header, client idle, upstream connect, upstream first-byte and overall `request_total`
@@ -1080,11 +1080,11 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 |---|---|---|---|
 | Language | Rust | all | Memory safety without GC pauses; strong async ecosystem; matches `lb` |
 | Async runtime | `tokio` | proxy + control plane | The natural model for an L7 proxy |
-| HTTP server + client | `hyper` 1.x + `hyper-util` | `gfe-proxy`, `gfe-upstream` | h1/h2 server and client, streaming bodies, battle-tested |
-| HTTP types / bodies | `http`, `http-body-util` | `gfe-proxy`, `gfe-upstream` | Shared request/response and streaming-body abstractions |
+| HTTP server + client | `hyper` 1.x + `hyper-util` | `gfe-proxy`, `gfe-load-balancing` | h1/h2 server and client, streaming bodies, battle-tested |
+| HTTP types / bodies | `http`, `http-body-util` | `gfe-proxy`, `gfe-load-balancing` | Shared request/response and streaming-body abstractions |
 | TLS | `rustls` + `tokio-rustls` | `gfe-core` | Safe, modern TLS; pluggable `ResolvesServerCert` for SNI |
 | Cert parsing | `rustls-pemfile`, `x509-parser` | `gfe-core` | PEM loading and not-after extraction |
-| Upstream trust roots | `rustls-native-certs` / `webpki-roots` | `gfe-upstream` | Validate upstream TLS |
+| Upstream trust roots | `rustls-native-certs` / `webpki-roots` | `gfe-load-balancing` | Validate upstream TLS |
 | ACME (Phase 3) | `instant-acme` | `gfe-core` | Async, rustls-native certificate automation |
 | Config serialization | `serde` + `toml` + `serde_json` | `gfe-core`, `gfe-config` | TOML bootstrap, JSON dynamic config (mirrors `lb`) |
 | File watching | `notify` | `gfe-config` | inotify-based hot reload (ADR-001) |

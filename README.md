@@ -86,7 +86,7 @@ GRE-decapsulated packets reach GFE's socket and responses return via DSR.
 
 ## Performance
 
-All numbers from `cargo bench` (criterion, release profile, single-threaded, Apple M-series). Reproduce with `cargo bench -p gfe-router --bench routing`, `-p gfe-upstream --bench selection`, `-p gfe-core --bench handshake`.
+All numbers from `cargo bench` (criterion, release profile, single-threaded, Apple M-series). Reproduce with `cargo bench -p gfe-router --bench routing`, `-p gfe-load-balancing --bench selection`, `-p gfe-core --bench handshake`.
 
 **Routing (`gfe-router`)** — match cost is **O(1) in the number of routes** (exact-host hashmap + bounded per-host prefix list):
 
@@ -100,7 +100,7 @@ route_table_compile/100   40.5 µs
 route_table_compile/1000   444 µs      (control plane, on reload only)
 ```
 
-**Load-balancer selection (`gfe-upstream`, 20 backends)**:
+**Load-balancer selection (`gfe-load-balancing`, 20 backends)**:
 
 ```
 select_round_robin/20          849 ns
@@ -216,7 +216,7 @@ crates/
   gfe-core/         Config (types, loading, validation); TLS termination;
                     the pooled client for backends
   gfe-router/       Compiled route table: host (exact/wildcard) + path matching
-  gfe-upstream/     Pools, LB policies
+  gfe-load-balancing/  Pools and selection policies
   gfe-proxy/        Data plane: acceptor, TLS termination, routing, forwarding
   gfe-health-checking/  L7 probes, state machine, checker, health map
   gfe-config/       Load, validate, apply (atomic swap), watch, cache
@@ -247,7 +247,7 @@ deploy/
 cargo test --workspace          # unit + integration tests
 cargo clippy --workspace --all-targets
 cargo bench -p gfe-router --bench routing
-cargo bench -p gfe-upstream --bench selection
+cargo bench -p gfe-load-balancing --bench selection
 cargo bench -p gfe-core --bench handshake
 ./scripts/loadtest.sh 64 6      # end-to-end load test (mock upstream + real node)
 ```
