@@ -112,7 +112,10 @@ jobs:
           cargo generate-rpm -p crates/gfe-node --target ${{ matrix.target }} \
             -s "version = '${version}'"
           rpm=$(ls target/${{ matrix.target }}/generate-rpm/gfe-*.rpm)
-          sha256sum "$rpm" > "$rpm.sha256"
+          # Written from the RPM's directory, so that the checksum names the
+          # file alone: it is checked next to a downloaded RPM, where the
+          # path it has here does not exist.
+          (cd "$(dirname "$rpm")" && sha256sum "$(basename "$rpm")" > "$(basename "$rpm").sha256")
           echo "RPM=$rpm" >> "$GITHUB_ENV"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
