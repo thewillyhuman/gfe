@@ -1,9 +1,8 @@
 //! The operations HTTP server: `/healthz`, `/readyz`, `/metrics`.
 
 use crate::kernel::KernelView;
-use crate::logging::Log;
 use bytes::Bytes;
-use gfe_observability::{GfeMetrics, LogDestinationLabel};
+use gfe_observability::{GfeMetrics, Log, LogDestinationLabel};
 use gfe_proxy::ProxyShared;
 use http_body_util::Full;
 use hyper::header::{HeaderValue, CONNECTION};
@@ -255,7 +254,7 @@ mod tests {
     /// The process has one log, started once for all the tests.
     fn log() -> Arc<Log> {
         static LOG: OnceLock<Arc<Log>> = OnceLock::new();
-        LOG.get_or_init(|| Arc::new(Log::start(&Default::default()).unwrap()))
+        LOG.get_or_init(|| Arc::new(Log::start(None).unwrap()))
             .clone()
     }
 

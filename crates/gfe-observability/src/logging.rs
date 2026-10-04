@@ -15,8 +15,6 @@
 //! per connection, are too many for a service manager's journal and go to the
 //! file alone.
 
-use anyhow::{Context, Result};
-use gfe_types::LogConfig;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -46,8 +44,8 @@ pub struct Log {
 impl Log {
     /// Start logging: from here on events are written as JSON lines,
     /// filtered by `RUST_LOG` (default `info`), to standard output and to
-    /// the file `config` names, if any. Fails if that file cannot be opened.
-    pub fn start(config: &LogConfig) -> Result<Log> {
+    /// `file`, if one is given. Fails if that file cannot be opened.
+    pub fn start(file: Option<&Path>) -> io::Result<Log> {
         use tracing_subscriber::filter::filter_fn;
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
@@ -56,16 +54,16 @@ impl Log {
         let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
         let mut destinations = Vec::new();
 
-        let file = config
-            .file
-            .as_deref()
+        let log_file = file
             .map(|path| {
-                LogFile::open(path, ROTATION_CHECK)
-                    .with_context(|| format!("opening the log file {}", path.display()))
+                LogFile::open(path, ROTATION_CHECK).map_err(|e| {
+                    let reason = format!("opening the log file {}: {e}", path.display());
+                    io::Error::new(e.kind(), reason)
+                })
             })
             .transpose()?;
-        let has_file = file.is_some();
-        let to_file = file.map(|file| {
+        let has_file = log_file.is_some();
+        let to_file = log_file.map(|file| {
             let (writer, destination) = non_blocking("file", file, QUEUE_LINES);
             destinations.push(destination);
             fmt::layer()
@@ -89,7 +87,7 @@ impl Log {
             .with(to_file)
             .with(to_stdout)
             .init();
-        if let Some(path) = &config.file {
+        if let Some(path) = file {
             tracing::info!(
                 file = %path.display(),
                 "requests and connections are logged to the file, not here"

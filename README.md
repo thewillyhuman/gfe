@@ -221,7 +221,7 @@ crates/
   gfe-health/       L7 probes (TCP/HTTP/HTTPS), state machine, checker
   gfe-config/       Load, validate, apply (atomic swap), watch, cache
   gfe-controller/   Orchestrator: config + health + cache + hot-reload
-  gfe-observability/      Prometheus counters/gauges/histograms
+  gfe-observability/  Prometheus metrics; the non-blocking log
   gfe-ebpf/         Optional kernel view of the node's TCP connections (eBPF)
   gfe-handover/     Passing a node's listening sockets to its successor
   gfe-node/         Main binary: proxy + controller + ops server

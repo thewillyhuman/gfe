@@ -213,14 +213,15 @@ gfe/
 │   │  OBSERVABILITY
 │   │  ─────────────────────────────────
 │   │
-│   ├── gfe-observability/                # Metrics registration and exposition
+│   ├── gfe-observability/          # Metrics registration and exposition; the log
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── proxy_metrics.rs         # Connections, requests, latency, bytes
 │   │       ├── control_metrics.rs       # Health, config reload, cert expiry
 │   │       ├── process_metrics.rs       # File descriptors, CPU, memory, runtime
-│   │       └── kernel_metrics.rs        # What the kernel reports (eBPF)
+│   │       ├── kernel_metrics.rs        # What the kernel reports (eBPF)
+│   │       └── logging.rs               # The log: destinations, never blocking
 │   │
 │   ├── gfe-ebpf/                   # Kernel view of the node's TCP connections (optional)
 │   │   ├── build.rs                     # Compiles the kernel program with clang
@@ -911,7 +912,7 @@ How it works, and what it does not assume:
 - **Connection logs** (`conn_record.rs`): one structured event per client connection under the target `gfe::conn`, emitted when the connection is gone. Fields: `client`, `client_port`, `listener`, `proto`, `sni`, `tls_version`, `tls_cipher`, `alpn`, `tls_resumed`, `tls_handshake_ms`, `tls_error` (why a handshake failed), `accept_wait_ms` (time in the accept queue; only with the kernel view), `requests` (served on the connection), `bytes_in` / `bytes_out` (on the wire), `duration_ms`, `reason` (as in `gfe_connections_closed_total`) and `error` (the error text, when there was one). Both targets can be silenced or routed independently, e.g. `RUST_LOG=info,gfe::conn=off`.
 - **TCP logs** (`gfe-node/src/kernel.rs`, only with the kernel view): one event per closed TCP connection under the target `gfe::tcp`. Fields: `side` (`client` or `upstream`), `client` and `client_port` (the same as in the `gfe::conn` event of that connection) or `backend`, `listener`, `ending`, `rtt_ms`, `min_rtt_ms`, `retransmits`, `segments_sent`, `bytes_acked`, `bytes_received`, `lifetime_ms`.
 - **Where the log goes** (`[log]` in the bootstrap config). By default every line goes to standard output, which under systemd is the journal. With `[log] file = "/var/log/gfe/gfe.log"` every line is appended to that file, and standard output keeps the node's own log only: the access, connection and TCP events go to the file alone. A journal is the wrong place for one line per request, and journald silently discards what exceeds its rate limit (10,000 lines per 30 s per service by default). The node does not rotate the file. It may be renamed, removed or truncated under the node, which goes on at the configured path within a second; a file that cannot be opened there fails every line, and counts it as lost, until it can. The file is created with mode `0640`.
-- **Writing the log never holds up a request** (`gfe-node/src/logging.rs`). An event is formatted where it happens and queued; a thread of its own writes the queue out. A destination slower than the node logs fills the queue (128,000 lines), and from then on lines are dropped rather than waited for. Lines dropped, or refused by the destination, are counted in `gfe_log_lost_lines`. What is still queued when the node exits is written out first.
+- **Writing the log never holds up a request** (`gfe-observability/src/logging.rs`). An event is formatted where it happens and queued; a thread of its own writes the queue out. A destination slower than the node logs fills the queue (128,000 lines), and from then on lines are dropped rather than waited for. Lines dropped, or refused by the destination, are counted in `gfe_log_lost_lines`. What is still queued when the node exits is written out first.
 - Log levels: ERROR/WARN always on; INFO/DEBUG adjustable at runtime via an env-filter reload, no restart.
 - **No body logging.** Headers are logged selectively (allowlist) to avoid leaking secrets.
 

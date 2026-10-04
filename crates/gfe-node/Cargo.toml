@@ -26,8 +26,6 @@ http-body-util = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-appender = { workspace = true }
 anyhow = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -36,6 +34,7 @@ rustix = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tracing-subscriber = { workspace = true }
 gfe-handover = { workspace = true }
 gfe-health = { workspace = true }
 rcgen = { workspace = true }

@@ -1,12 +1,15 @@
-//! Metrics registration and Prometheus exposition for GFE.
+//! What a GFE node tells about itself: its metrics, registered here and
+//! exposed in the Prometheus text format, and its log.
 
 pub mod control_metrics;
 pub mod kernel_metrics;
+pub mod logging;
 pub mod process_metrics;
 pub mod proxy_metrics;
 
 pub use control_metrics::{BackendLabels, ControlMetrics, SniLabel};
 pub use kernel_metrics::{BackendLabel, ClientEndingLabels, KernelMetrics, UpstreamEndingLabels};
+pub use logging::Log;
 pub use process_metrics::{LogDestinationLabel, ProcessMetrics};
 /// Counter and gauge handles, for callers that hold one series of a family.
 pub use prometheus_client::metrics::counter::Counter;

@@ -2,7 +2,6 @@
 //! control-plane pieces (config load/apply, ops server) on one box.
 
 mod kernel;
-mod logging;
 mod ops;
 mod signals;
 mod systemd;
@@ -11,10 +10,9 @@ mod upgrade;
 use anyhow::{Context, Result};
 use clap::Parser;
 use gfe_controller::Controller;
-use gfe_observability::GfeMetrics;
+use gfe_observability::{GfeMetrics, Log};
 use gfe_proxy::{DrainController, ListenerSet, ProxyShared};
 use gfe_upstream::{KeepAlive, UpstreamClient, UpstreamClientOptions};
-use logging::Log;
 use ops::OpsState;
 use signals::{Request, Signals};
 use std::path::Path;
@@ -87,7 +85,7 @@ fn main() -> Result<()> {
     // deployed file cannot be used.
     let node = node.context("--config is required to run a node")?;
     // Kept to the end: dropping it writes out the lines still queued.
-    let log = Arc::new(Log::start(&node.log)?);
+    let log = Arc::new(Log::start(node.log.file.as_deref())?);
     let (predecessor, inherited) = if args.upgrade {
         let (predecessor, inherited) = upgrade::take_over()?;
         (Some(predecessor), inherited)

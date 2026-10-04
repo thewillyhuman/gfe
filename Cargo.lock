@@ -691,7 +691,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
- "tracing-appender",
  "tracing-subscriber",
  "webpki-roots 0.26.11",
 ]
@@ -701,6 +700,9 @@ name = "gfe-observability"
 version = "0.1.0"
 dependencies = [
  "prometheus-client",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]

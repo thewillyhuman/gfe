@@ -8,6 +8,9 @@ publish.workspace = true
 
 [dependencies]
 prometheus-client = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
 
 [lints]
 workspace = true
