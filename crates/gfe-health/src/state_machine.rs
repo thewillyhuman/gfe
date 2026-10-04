@@ -1,7 +1,7 @@
 //! Per-backend health state machine with success/failure thresholds.
 
 use crate::probe::ProbeResult;
-use gfe_types::HealthStatus;
+use gfe_core::config::HealthStatus;
 
 /// Tracks consecutive probe outcomes and decides committed state transitions.
 #[derive(Debug, Clone)]

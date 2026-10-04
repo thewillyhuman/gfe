@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/gfe-types",
+    "crates/gfe-core",
     "crates/gfe-observability",
     "crates/gfe-router",
     "crates/gfe-tls",
@@ -39,7 +39,7 @@ unsafe_code = "forbid"
 
 [workspace.dependencies]
 # Workspace crates
-gfe-types = { path = "crates/gfe-types" }
+gfe-core = { path = "crates/gfe-core" }
 gfe-observability = { path = "crates/gfe-observability" }
 gfe-tls = { path = "crates/gfe-tls" }
 gfe-router = { path = "crates/gfe-router" }

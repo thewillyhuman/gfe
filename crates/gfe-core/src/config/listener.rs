@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
-/// Unique identifier for a listener, referenced by [`crate::route::Route`].
+/// Unique identifier for a listener, referenced by [`crate::config::route::Route`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ListenerId(pub String);
 

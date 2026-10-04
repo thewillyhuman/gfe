@@ -3,7 +3,8 @@
 
 use crate::health_map::HealthMap;
 use crate::policy::{build_ring, ring_pick, weighted_pick, MAX_RING_POINTS, RING_REPLICAS};
-use gfe_types::{GfeError, LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
+use gfe_core::config::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
+use gfe_core::GfeError;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -230,7 +231,7 @@ impl PoolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gfe_types::HealthStatus;
+    use gfe_core::config::HealthStatus;
 
     fn pool_with(policy: LbPolicy) -> UpstreamPool {
         UpstreamPool {

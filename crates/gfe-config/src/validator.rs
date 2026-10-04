@@ -1,7 +1,8 @@
 //! Semantic validation of the dynamic config, run before any swap so a bad
 //! config is rejected wholesale and the running snapshot is kept.
 
-use gfe_types::{DynamicConfig, GfeError, HealthCheckConfig, ListenProtocol, RouteAction};
+use gfe_core::config::{DynamicConfig, HealthCheckConfig, ListenProtocol, RouteAction};
+use gfe_core::GfeError;
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::ops::RangeInclusive;
@@ -202,7 +203,7 @@ const HTTP_STATUS: RangeInclusive<u16> = 100..=599;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gfe_types::{
+    use gfe_core::config::{
         CertEntry, HealthCheckConfig, Listener, ListenerId, PoolId, Route, RouteId, Scheme,
         Upstream, UpstreamPool,
     };

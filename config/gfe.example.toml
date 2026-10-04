@@ -1,5 +1,5 @@
 # GFE Node Configuration (bootstrap)
-# Deserialized by gfe-types/src/config.rs (NodeConfig).
+# Deserialized by gfe-core/src/config/mod.rs (NodeConfig).
 #
 # The hot-reloadable part (listeners, routes, pools, certificates) lives in the
 # JSON file referenced by [control_plane].config_file — see

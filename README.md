@@ -213,7 +213,7 @@ cd demo && docker compose up -d --build   # then open http://localhost:13000
 
 ```
 crates/
-  gfe-types/        Domain types + config (bootstrap TOML + dynamic JSON)
+  gfe-core/        Domain types + config (bootstrap TOML + dynamic JSON)
   gfe-router/       Compiled route table: host (exact/wildcard) + path matching
   gfe-tls/          Cert store, SNI resolver, TLS policy, ACME challenge store
   gfe-upstream/     Pools, LB policies, shared health map, pooled hyper client

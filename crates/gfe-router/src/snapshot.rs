@@ -1,7 +1,7 @@
 //! The compiled, immutable routing snapshot built from a [`DynamicConfig`].
 
 use crate::matcher::{host_matches, path_prefix_matches};
-use gfe_types::{DynamicConfig, ListenerId, Route, RouteAction, RouteId};
+use gfe_core::config::{DynamicConfig, ListenerId, Route, RouteAction, RouteId};
 use std::collections::HashMap;
 
 /// A single compiled route entry within a host bucket.
@@ -153,7 +153,7 @@ fn sort_routes(routes: &mut [CompiledRoute]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gfe_types::{ListenProtocol, Listener, RouteAction};
+    use gfe_core::config::{ListenProtocol, Listener, RouteAction};
 
     fn listener(id: &str) -> Listener {
         Listener {

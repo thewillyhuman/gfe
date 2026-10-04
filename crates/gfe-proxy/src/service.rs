@@ -4,7 +4,7 @@ use crate::errors::{grpc_failure, synthetic, GrpcCode, RespBody};
 use crate::forward::{fixed_response, forward, redirect_response};
 use crate::record::RequestRecord;
 use crate::ConnCtx;
-use gfe_types::{PoolId, RouteAction};
+use gfe_core::config::{PoolId, RouteAction};
 use hyper::body::Incoming;
 use hyper::header::HOST;
 use hyper::http::uri::Authority;

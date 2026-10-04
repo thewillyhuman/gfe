@@ -104,7 +104,7 @@ The two communicate only through **atomic pointer swaps** (`ArcSwap`) of the sha
 
 ## 3. Project Structure
 
-The codebase is a Cargo workspace with strict separation of concerns, following the exact conventions of its sibling `lb`. Each crate has a single responsibility; dependencies flow inward, with `gfe-types` at the root of the DAG. Binary crates depend on library crates, never the reverse.
+The codebase is a Cargo workspace with strict separation of concerns, following the exact conventions of its sibling `lb`. Each crate has a single responsibility; dependencies flow inward, with `gfe-core` at the root of the DAG. Binary crates depend on library crates, never the reverse.
 
 ```
 gfe/
@@ -129,7 +129,7 @@ gfe/
 │  ─────────────────────────────────────
 │
 ├── crates/
-│   ├── gfe-types/                  # Canonical domain types
+│   ├── gfe-core/                  # Canonical domain types
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
@@ -270,7 +270,7 @@ gfe/
 
 **Single Responsibility per Crate.** `gfe-router` knows how to match a request to an upstream pool but nothing about TLS or sockets. `gfe-tls` knows how to resolve and present certificates but nothing about routing. `gfe-upstream` knows how to pick and connect to a backend but nothing about how the request arrived.
 
-**Dependency Direction: Inward Only.** Library crates depend only on `gfe-types` and lower-layer libraries. `gfe-node` is the only crate that wires everything together. The graph is a DAG rooted at `gfe-types`.
+**Dependency Direction: Inward Only.** Library crates depend only on `gfe-core` and lower-layer libraries. `gfe-node` is the only crate that wires everything together. The graph is a DAG rooted at `gfe-core`.
 
 ```
                        gfe-node (binary)
@@ -281,7 +281,7 @@ gfe/
             \      |        |    /        |        /
              ──────── gfe-observability ───────
                           |
-                      gfe-types
+                      gfe-core
 ```
 
 **Stateless by Construction.** No GFE crate persists request, session, or connection state across process restarts. The certificate store, route table, and upstream health are all derived from configuration plus live probing. Connection pools are ephemeral, per-node optimizations. This is what makes a GFE node interchangeable with any other.
@@ -611,13 +611,13 @@ Because GFE is stateless and the L4 LB consistent-hashes, draining one GFE node 
 
 ## 8. Configuration Model
 
-Following `lb`, configuration is split into a **bootstrap node config** (TOML, read once at startup) and a **dynamic config** (JSON, watched and hot-reloaded). Both deserialize via `gfe-types/src/config.rs`.
+Following `lb`, configuration is split into a **bootstrap node config** (TOML, read once at startup) and a **dynamic config** (JSON, watched and hot-reloaded). Both deserialize via `gfe-core/src/config/mod.rs`.
 
 ### 8.1 Bootstrap node config (TOML)
 
 ```toml
 # /etc/gfe/gfe.toml
-# Deserialized by gfe-types/src/config.rs (NodeConfig)
+# Deserialized by gfe-core/src/config/mod.rs (NodeConfig)
 
 [node]
 id              = "gfe-node-01"
@@ -1034,7 +1034,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 
 ### Phase 1 — Core Proxy (MVP) ✅
 
-- [x] `gfe-types`: domain types (Listener, Route, UpstreamPool, Upstream, TlsConfig, CertEntry) + bootstrap & dynamic config structs
+- [x] `gfe-core`: domain types (Listener, Route, UpstreamPool, Upstream, TlsConfig, CertEntry) + bootstrap & dynamic config structs
 - [x] `gfe-tls`: cert store, SNI resolver, TLS policy / `ServerConfig` builder, PEM loader
 - [x] `gfe-router`: compiled route table, host (exact + wildcard) and path (prefix/exact) matching
 - [x] `gfe-upstream`: pool handle, round-robin policy, hyper upstream client, connection pooling
@@ -1086,7 +1086,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 | Cert parsing | `rustls-pemfile`, `x509-parser` | `gfe-tls` | PEM loading and not-after extraction |
 | Upstream trust roots | `rustls-native-certs` / `webpki-roots` | `gfe-upstream` | Validate upstream TLS |
 | ACME (Phase 3) | `instant-acme` | `gfe-tls` | Async, rustls-native certificate automation |
-| Config serialization | `serde` + `toml` + `serde_json` | `gfe-types`, `gfe-config` | TOML bootstrap, JSON dynamic config (mirrors `lb`) |
+| Config serialization | `serde` + `toml` + `serde_json` | `gfe-core`, `gfe-config` | TOML bootstrap, JSON dynamic config (mirrors `lb`) |
 | File watching | `notify` | `gfe-config` | inotify-based hot reload (ADR-001) |
 | Atomic config swap | `arc-swap` | `gfe-router`, `gfe-tls`, `gfe-config` | Lock-free snapshot reads on the hot path |
 | Shared health map | `dashmap` | `gfe-health` | Concurrent reads from the data plane |

@@ -1,7 +1,8 @@
 //! Read and deserialize the bootstrap (TOML) and dynamic (JSON) configs.
 
 use crate::validator::validate_health_check;
-use gfe_types::{DynamicConfig, GfeError, NodeConfig, UpstreamConfig};
+use gfe_core::config::{DynamicConfig, NodeConfig, UpstreamConfig};
+use gfe_core::GfeError;
 use std::path::Path;
 
 /// The smallest `limits.max_header_bytes` the HTTP server can be given: it

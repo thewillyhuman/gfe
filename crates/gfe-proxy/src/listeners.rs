@@ -22,7 +22,7 @@
 use crate::acceptor;
 use crate::ProxyShared;
 use arc_swap::ArcSwap;
-use gfe_types::{Listener, ListenerId};
+use gfe_core::config::{Listener, ListenerId};
 use rustls::ServerConfig;
 use std::collections::{HashMap, HashSet};
 use std::io;

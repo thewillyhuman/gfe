@@ -122,7 +122,7 @@ fn check_dynamic_config(path: &Path) -> Result<()> {
 /// Run a node until it is told to stop. `inherited` are the listening sockets
 /// it starts with, and `predecessor` the node it took them from, if any.
 async fn run(
-    node: gfe_types::NodeConfig,
+    node: gfe_core::config::NodeConfig,
     predecessor: Option<Predecessor>,
     inherited: Inherited,
     log: Arc<Log>,
@@ -306,9 +306,9 @@ async fn stop_requested(signals: &mut Signals) {
 /// size, optional extra CA bundle, optional mTLS client certificate) and the
 /// `upstream_connect` timeout and `max_upstream_connections` limit.
 fn build_upstream_client(
-    cfg: &gfe_types::UpstreamConfig,
-    timeouts: &gfe_types::TimeoutsConfig,
-    limits: &gfe_types::LimitsConfig,
+    cfg: &gfe_core::config::UpstreamConfig,
+    timeouts: &gfe_core::config::TimeoutsConfig,
+    limits: &gfe_core::config::LimitsConfig,
 ) -> Result<UpstreamClient> {
     fn read(p: &Path) -> Result<Vec<u8>> {
         std::fs::read(p).with_context(|| format!("reading {}", p.display()))

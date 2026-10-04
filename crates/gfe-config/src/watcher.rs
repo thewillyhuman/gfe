@@ -10,7 +10,7 @@
 //! exactly what a reload does: reacting to those would make every reload
 //! trigger the next one.
 
-use gfe_types::GfeError;
+use gfe_core::GfeError;
 use notify::event::{AccessKind, AccessMode, EventKind, ModifyKind};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;

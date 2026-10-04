@@ -17,7 +17,7 @@
 //! the body, since GFE only asks the client for more once the backend has
 //! taken what came before.
 
-use gfe_types::TimeoutsConfig;
+use gfe_core::config::TimeoutsConfig;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

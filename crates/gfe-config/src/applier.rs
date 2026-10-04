@@ -2,11 +2,12 @@
 //! atomically. In-flight requests finish on the old snapshots.
 
 use crate::validator::validate;
+use gfe_core::config::DynamicConfig;
+use gfe_core::GfeError;
 use gfe_observability::SniLabel;
 use gfe_proxy::ProxyShared;
 use gfe_router::RouteTable;
 use gfe_tls::CertStore;
-use gfe_types::{DynamicConfig, GfeError};
 use gfe_upstream::PoolSet;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -108,7 +109,7 @@ mod tests {
 
     use gfe_observability::GfeMetrics;
 
-    use gfe_types::{
+    use gfe_core::config::{
         CertEntry, LimitsConfig, ListenProtocol, Listener, ListenerId, PoolId, Route, RouteAction,
         RouteId, Scheme, TimeoutsConfig, TlsConfig, Upstream, UpstreamPool,
     };

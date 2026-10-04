@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use gfe_core::config::{CertEntry, MinVersion};
 use gfe_tls::{server_config, CertStore, SniResolver};
-use gfe_types::{CertEntry, MinVersion};
 use std::sync::Arc;
 
 fn temp_cert() -> (std::path::PathBuf, std::path::PathBuf) {

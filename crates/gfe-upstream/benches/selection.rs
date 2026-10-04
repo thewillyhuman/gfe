@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use gfe_types::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
+use gfe_core::config::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
 use gfe_upstream::policy::{build_ring, hash64};
 use gfe_upstream::{HealthMap, PoolSet};
 

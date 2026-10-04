@@ -5,7 +5,7 @@
 //! owns it; the control plane depends on this crate to write it.
 
 use dashmap::DashMap;
-use gfe_types::HealthStatus;
+use gfe_core::config::HealthStatus;
 
 /// A concurrent map of `(host, port)` → [`HealthStatus`].
 pub struct HealthMap {

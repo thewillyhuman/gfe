@@ -5,7 +5,7 @@
 //! controller therefore remembers what those files looked like when it last
 //! loaded them and polls for a difference.
 
-use gfe_types::CertEntry;
+use gfe_core::config::CertEntry;
 use std::path::{Path, PathBuf};
 
 /// What identifies one version of a file on disk without reading it. `None`

@@ -18,7 +18,8 @@
 use crate::failure::UpstreamFailure;
 use crate::limit::{ConnectionLimit, LimitedConnector};
 use bytes::Bytes;
-use gfe_types::{GfeError, Scheme};
+use gfe_core::config::Scheme;
+use gfe_core::GfeError;
 use http::uri::PathAndQuery;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;

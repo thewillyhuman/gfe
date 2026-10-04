@@ -1,4 +1,4 @@
-use crate::listener::ListenerId;
+use super::listener::ListenerId;
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a route.

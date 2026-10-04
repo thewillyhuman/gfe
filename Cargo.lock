@@ -579,11 +579,11 @@ dependencies = [
 name = "gfe-config"
 version = "0.1.0"
 dependencies = [
+ "gfe-core",
  "gfe-observability",
  "gfe-proxy",
  "gfe-router",
  "gfe-tls",
- "gfe-types",
  "gfe-upstream",
  "notify",
  "rcgen",
@@ -598,17 +598,27 @@ name = "gfe-controller"
 version = "0.1.0"
 dependencies = [
  "gfe-config",
+ "gfe-core",
  "gfe-health",
  "gfe-observability",
  "gfe-proxy",
  "gfe-tls",
- "gfe-types",
  "gfe-upstream",
  "notify",
  "rcgen",
  "rustls",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "gfe-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "toml",
 ]
 
 [[package]]
@@ -634,8 +644,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "gfe-core",
  "gfe-observability",
- "gfe-types",
  "gfe-upstream",
  "http-body-util",
  "hyper",
@@ -671,13 +681,13 @@ dependencies = [
  "clap",
  "gfe-config",
  "gfe-controller",
+ "gfe-core",
  "gfe-ebpf",
  "gfe-handover",
  "gfe-health",
  "gfe-observability",
  "gfe-proxy",
  "gfe-tls",
- "gfe-types",
  "gfe-upstream",
  "http",
  "http-body-util",
@@ -711,10 +721,10 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "bytes",
+ "gfe-core",
  "gfe-observability",
  "gfe-router",
  "gfe-tls",
- "gfe-types",
  "gfe-upstream",
  "http",
  "http-body-util",
@@ -734,7 +744,7 @@ name = "gfe-router"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "gfe-types",
+ "gfe-core",
 ]
 
 [[package]]
@@ -744,22 +754,12 @@ dependencies = [
  "arc-swap",
  "criterion",
  "dashmap",
- "gfe-types",
+ "gfe-core",
  "rcgen",
  "rustls",
  "rustls-pemfile",
  "tracing",
  "x509-parser",
-]
-
-[[package]]
-name = "gfe-types"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "toml",
 ]
 
 [[package]]
@@ -769,7 +769,7 @@ dependencies = [
  "bytes",
  "criterion",
  "dashmap",
- "gfe-types",
+ "gfe-core",
  "http",
  "http-body-util",
  "hyper",

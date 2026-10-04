@@ -1,6 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use gfe_core::config::{
+    DynamicConfig, ListenProtocol, Listener, ListenerId, Route, RouteAction, RouteId,
+};
 use gfe_router::RouteTable;
-use gfe_types::{DynamicConfig, ListenProtocol, Listener, ListenerId, Route, RouteAction, RouteId};
 
 fn config_with(n: usize) -> DynamicConfig {
     let listener = Listener {

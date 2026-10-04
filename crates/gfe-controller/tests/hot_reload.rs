@@ -2,9 +2,10 @@
 //! plane without a restart.
 
 use gfe_controller::Controller;
+use gfe_core::config::{LimitsConfig, MinVersion, TimeoutsConfig, TlsConfig};
+use gfe_core::GfeError;
 use gfe_observability::GfeMetrics;
 use gfe_proxy::{ListenerSet, ProxyShared};
-use gfe_types::{GfeError, LimitsConfig, MinVersion, TimeoutsConfig, TlsConfig};
 use gfe_upstream::UpstreamClient;
 use rustls::pki_types::CertificateDer;
 use std::net::SocketAddr;

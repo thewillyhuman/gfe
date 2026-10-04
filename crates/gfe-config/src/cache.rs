@@ -1,7 +1,8 @@
 //! Last-known-good cache of the dynamic config, so a restarted node can serve
 //! traffic immediately even if the source of the config file is unavailable.
 
-use gfe_types::{DynamicConfig, GfeError};
+use gfe_core::config::DynamicConfig;
+use gfe_core::GfeError;
 use std::path::Path;
 
 /// Write the dynamic config to the cache path atomically (temp file + rename).
@@ -27,7 +28,7 @@ pub fn read(path: &Path) -> Result<DynamicConfig, GfeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gfe_types::{ListenProtocol, Listener, ListenerId};
+    use gfe_core::config::{ListenProtocol, Listener, ListenerId};
 
     #[test]
     fn round_trip() {

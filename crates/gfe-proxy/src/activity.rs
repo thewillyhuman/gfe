@@ -8,7 +8,7 @@
 
 use crate::errors::RespBody;
 use bytes::Bytes;
-use gfe_types::TimeoutsConfig;
+use gfe_core::config::TimeoutsConfig;
 use gfe_upstream::BoxError;
 use hyper::body::{Body, Frame, SizeHint};
 use std::pin::Pin;

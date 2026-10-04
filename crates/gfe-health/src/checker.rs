@@ -4,8 +4,8 @@
 
 use crate::probe::make_probe;
 use crate::state_machine::BackendHealth;
+use gfe_core::config::{HealthCheckConfig, HealthStatus, Scheme, UpstreamPool};
 use gfe_observability::{BackendLabels, GfeMetrics};
-use gfe_types::{HealthCheckConfig, HealthStatus, Scheme, UpstreamPool};
 use gfe_upstream::HealthMap;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -171,7 +171,7 @@ impl HealthChecker {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use gfe_types::{LbPolicy, PoolId, ProbeType, Scheme, Upstream};
+    use gfe_core::config::{LbPolicy, PoolId, ProbeType, Scheme, Upstream};
     use http_body_util::Full;
     use hyper::service::service_fn;
     use hyper::Response;

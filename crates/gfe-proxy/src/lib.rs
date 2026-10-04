@@ -23,10 +23,10 @@ pub use errors::RespBody;
 pub use listeners::ListenerSet;
 
 use arc_swap::ArcSwap;
+use gfe_core::config::{LimitsConfig, ListenerId, TimeoutsConfig, TlsConfig};
 use gfe_observability::GfeMetrics;
 use gfe_router::RouteTable;
 use gfe_tls::{CertStore, ChallengeStore, SniResolver};
-use gfe_types::{LimitsConfig, ListenerId, TimeoutsConfig, TlsConfig};
 use gfe_upstream::{HealthMap, PoolSet, UpstreamClient};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::AtomicBool;

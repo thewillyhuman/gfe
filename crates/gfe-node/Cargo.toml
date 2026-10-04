@@ -11,7 +11,7 @@ name = "gfe-node"
 path = "src/main.rs"
 
 [dependencies]
-gfe-types = { workspace = true }
+gfe-core = { workspace = true }
 gfe-config = { workspace = true }
 gfe-controller = { workspace = true }
 gfe-proxy = { workspace = true }

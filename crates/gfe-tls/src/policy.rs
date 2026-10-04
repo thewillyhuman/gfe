@@ -2,7 +2,8 @@
 //! minimum protocol version and ALPN advertisement.
 
 use crate::resolver::SniResolver;
-use gfe_types::{GfeError, MinVersion};
+use gfe_core::config::MinVersion;
+use gfe_core::GfeError;
 use rustls::ServerConfig;
 use std::sync::Arc;
 

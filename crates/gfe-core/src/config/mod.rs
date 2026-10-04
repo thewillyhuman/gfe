@@ -1,8 +1,21 @@
-use crate::duration::{deserialize_duration, serialize_duration};
-use crate::listener::Listener;
-use crate::route::Route;
-use crate::tls::{CertEntry, TlsConfig};
-use crate::upstream::UpstreamPool;
+//! The configuration of a node, as its two files spell it: the bootstrap
+//! config read once at start ([`NodeConfig`], TOML) and the dynamic config
+//! that is reloaded while the node runs ([`DynamicConfig`], JSON).
+//!
+//! Pure data and serde: nothing here reads a file or opens a socket.
+
+pub mod duration;
+pub mod listener;
+pub mod route;
+pub mod tls;
+pub mod upstream;
+
+pub use listener::{ListenProtocol, Listener, ListenerId};
+pub use route::{FixedAction, RedirectAction, Route, RouteAction, RouteId};
+pub use tls::{CertEntry, MinVersion, TlsConfig};
+pub use upstream::{HealthStatus, LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
+
+use duration::{deserialize_duration, serialize_duration};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;

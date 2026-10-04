@@ -3,8 +3,8 @@
 use crate::connection;
 use crate::ProxyShared;
 use arc_swap::ArcSwap;
+use gfe_core::config::Listener;
 use gfe_observability::RejectLabel;
-use gfe_types::Listener;
 use rustls::ServerConfig;
 use std::sync::Arc;
 use std::time::Duration;

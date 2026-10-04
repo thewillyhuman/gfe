@@ -1,6 +1,6 @@
 //! PEM certificate/key loading and not-after extraction.
 
-use gfe_types::GfeError;
+use gfe_core::GfeError;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::sign::CertifiedKey;
 use rustls::InconsistentKeys;

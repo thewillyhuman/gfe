@@ -2,7 +2,8 @@
 //! atomically on reload.
 
 use crate::loader::load_cert_files;
-use gfe_types::{CertEntry, GfeError};
+use gfe_core::config::CertEntry;
+use gfe_core::GfeError;
 use rustls::sign::CertifiedKey;
 use std::collections::HashMap;
 use std::sync::Arc;

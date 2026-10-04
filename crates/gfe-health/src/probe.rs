@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use gfe_types::{HealthCheckConfig, ProbeType, Scheme};
+use gfe_core::config::{HealthCheckConfig, ProbeType, Scheme};
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo};

@@ -6,13 +6,13 @@
 //! It is optional. When it is not enabled, or cannot be attached, the node
 //! runs exactly as it does without it.
 
+use gfe_core::config::NodeConfig;
 use gfe_ebpf::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe};
 use gfe_observability::{
     BackendLabel, ClientEndingLabels, GfeMetrics, KernelMetrics, ListenerLabel,
     UpstreamEndingLabels,
 };
 use gfe_proxy::{AcceptQueue, ListenerSet};
-use gfe_types::NodeConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;

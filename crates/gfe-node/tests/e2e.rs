@@ -2,12 +2,12 @@
 //! upstream, exercised over plaintext HTTP and over TLS.
 
 use bytes::Bytes;
-use gfe_observability::GfeMetrics;
-use gfe_proxy::{ListenerSet, ProxyShared};
-use gfe_types::{
+use gfe_core::config::{
     CertEntry, DynamicConfig, LimitsConfig, ListenProtocol, Listener, ListenerId, PoolId, Route,
     RouteAction, RouteId, Scheme, TimeoutsConfig, TlsConfig, Upstream, UpstreamPool,
 };
+use gfe_observability::GfeMetrics;
+use gfe_proxy::{ListenerSet, ProxyShared};
 use gfe_upstream::UpstreamClient;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
@@ -107,7 +107,8 @@ fn listener_set(
 ) -> (ListenerSet, watch::Sender<bool>) {
     gfe_config::apply(&shared, cfg).expect("apply config");
     let server_config = Arc::new(
-        gfe_tls::server_config(shared.resolver.clone(), gfe_types::MinVersion::Tls12).unwrap(),
+        gfe_tls::server_config(shared.resolver.clone(), gfe_core::config::MinVersion::Tls12)
+            .unwrap(),
     );
     let (tx, rx) = watch::channel(false);
     (ListenerSet::new(shared, server_config, rx), tx)
@@ -241,7 +242,7 @@ async fn http_redirect_action() {
             listener: ListenerId("http".into()),
             host: "*".into(),
             path_prefix: "/".into(),
-            action: RouteAction::Redirect(gfe_types::RedirectAction {
+            action: RouteAction::Redirect(gfe_core::config::RedirectAction {
                 scheme: "https".into(),
                 status: 308,
             }),
@@ -374,7 +375,7 @@ async fn serves_acme_http01_challenge() {
             listener: ListenerId("http".into()),
             host: "*".into(),
             path_prefix: "/".into(),
-            action: RouteAction::Redirect(gfe_types::RedirectAction {
+            action: RouteAction::Redirect(gfe_core::config::RedirectAction {
                 scheme: "https".into(),
                 status: 308,
             }),
@@ -409,8 +410,8 @@ async fn serves_acme_http01_challenge() {
 
 #[tokio::test]
 async fn health_failover_excludes_dead_backend() {
+    use gfe_core::config::{HealthCheckConfig, ProbeType};
     use gfe_health::HealthChecker;
-    use gfe_types::{HealthCheckConfig, ProbeType};
 
     // One healthy upstream, one dead (closed port).
     let good = spawn_upstream().await;
@@ -507,7 +508,7 @@ fn fixed_response_config() -> DynamicConfig {
             listener: ListenerId("http".into()),
             host: "*".into(),
             path_prefix: "/".into(),
-            action: RouteAction::Fixed(gfe_types::FixedAction {
+            action: RouteAction::Fixed(gfe_core::config::FixedAction {
                 status: 200,
                 body: "ok".into(),
             }),
