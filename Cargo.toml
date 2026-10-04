@@ -2,6 +2,7 @@
 members = [
     "crates/gfe-core",
     "crates/gfe-observability",
+    "crates/gfe-limits",
     "crates/gfe-router",
     "crates/gfe-load-balancing",
     "crates/gfe-proxy",
@@ -40,6 +41,7 @@ unsafe_code = "forbid"
 # Workspace crates
 gfe-core = { path = "crates/gfe-core" }
 gfe-observability = { path = "crates/gfe-observability" }
+gfe-limits = { path = "crates/gfe-limits" }
 gfe-router = { path = "crates/gfe-router" }
 gfe-load-balancing = { path = "crates/gfe-load-balancing" }
 gfe-proxy = { path = "crates/gfe-proxy" }

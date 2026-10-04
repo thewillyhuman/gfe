@@ -17,9 +17,10 @@
 
 use crate::config::Scheme;
 use crate::upstream::failure::UpstreamFailure;
-use crate::upstream::limit::{ConnectionLimit, LimitedConnector};
+use crate::upstream::limit::LimitedConnector;
 use crate::GfeError;
 use bytes::Bytes;
+use gfe_limits::ConcurrencyLimit;
 use http::uri::PathAndQuery;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;
@@ -84,7 +85,7 @@ pub struct UpstreamClient {
     /// `h2c` pools.
     http2_prior_knowledge: Client<Connector, ReqBody>,
     /// Counts, and caps, the connections of all clients together.
-    connections: Arc<ConnectionLimit>,
+    connections: Arc<ConcurrencyLimit>,
 }
 
 /// TCP, optionally TLS, under the connection limit.
@@ -139,7 +140,7 @@ impl UpstreamClient {
         http.enforce_http(false);
         http.set_connect_timeout(opts.connect_timeout);
 
-        let connections = ConnectionLimit::new(opts.max_connections);
+        let connections = ConcurrencyLimit::new(opts.max_connections);
         let https_http1 = hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(tls.clone())
             .https_or_http()
@@ -182,7 +183,7 @@ impl UpstreamClient {
     /// Upstream connections currently open (or being opened), over all
     /// backends.
     pub fn open_connections(&self) -> usize {
-        self.connections.open()
+        self.connections.in_use()
     }
 
     /// The cap on open upstream connections, if one is set.

@@ -5,6 +5,7 @@
 //! connection for as long as its socket lives. Requests that find a pooled
 //! connection are unaffected; only opening a new one can be refused.
 
+use gfe_limits::{ConcurrencyLimit, Permit};
 use hyper::rt::{Read, ReadBufCursor, Write};
 use hyper::Uri;
 use hyper_util::client::legacy::connect::{Connected, Connection};
@@ -13,7 +14,6 @@ use std::fmt;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -33,65 +33,24 @@ impl fmt::Display for ConnectionLimitReached {
 
 impl Error for ConnectionLimitReached {}
 
-/// How many upstream connections are open, and how many may be.
-#[derive(Debug)]
-pub struct ConnectionLimit {
-    open: AtomicUsize,
-    max: Option<usize>,
-}
-
-impl ConnectionLimit {
-    /// A limit of `max` connections; `None` counts without limiting.
-    pub fn new(max: Option<usize>) -> Arc<Self> {
-        Arc::new(ConnectionLimit {
-            open: AtomicUsize::new(0),
-            max,
-        })
-    }
-
-    /// Connections currently open or being opened.
-    pub fn open(&self) -> usize {
-        self.open.load(Ordering::Relaxed)
-    }
-
-    /// The configured cap, if any.
-    pub fn max(&self) -> Option<usize> {
-        self.max
-    }
-
-    /// Reserve room for one more connection, held until the slot is dropped.
-    fn reserve(self: &Arc<Self>) -> Result<Slot, ConnectionLimitReached> {
-        let already_open = self.open.fetch_add(1, Ordering::Relaxed);
-        let slot = Slot(self.clone());
-        match self.max {
-            // Dropping the slot gives the reservation back.
-            Some(max) if already_open >= max => Err(ConnectionLimitReached { max }),
-            _ => Ok(slot),
-        }
-    }
-}
-
-/// One connection's share of the limit.
-#[derive(Debug)]
-struct Slot(Arc<ConnectionLimit>);
-
-impl Drop for Slot {
-    fn drop(&mut self) {
-        self.0.open.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
 /// A connector that opens connections through `inner` as long as the limit
 /// allows.
 #[derive(Clone)]
 pub struct LimitedConnector<C> {
     inner: C,
-    limit: Arc<ConnectionLimit>,
+    limit: Arc<ConcurrencyLimit>,
 }
 
 impl<C> LimitedConnector<C> {
-    pub fn new(inner: C, limit: Arc<ConnectionLimit>) -> Self {
+    pub fn new(inner: C, limit: Arc<ConcurrencyLimit>) -> Self {
         LimitedConnector { inner, limit }
+    }
+
+    /// Room for one more connection, held for as long as it lives.
+    fn reserve(&self) -> Result<Permit, ConnectionLimitReached> {
+        self.limit
+            .try_acquire()
+            .map_err(|reached| ConnectionLimitReached { max: reached.max })
     }
 }
 
@@ -110,7 +69,7 @@ where
     }
 
     fn call(&mut self, destination: Uri) -> Self::Future {
-        let slot = match self.limit.reserve() {
+        let slot = match self.reserve() {
             Ok(slot) => slot,
             Err(reached) => return Box::pin(async move { Err(reached.into()) }),
         };
@@ -125,7 +84,7 @@ where
 /// An upstream connection that counts against the limit while it lives.
 pub struct Counted<T> {
     io: T,
-    _slot: Slot,
+    _slot: Permit,
 }
 
 impl<T: Connection> Connection for Counted<T> {
@@ -179,35 +138,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reserves_up_to_the_limit_and_no_further() {
-        let limit = ConnectionLimit::new(Some(2));
+    fn a_connector_at_its_limit_says_what_the_limit_is() {
+        let connector = LimitedConnector::new((), ConcurrencyLimit::new(Some(1)));
+        let _open = connector.reserve().unwrap();
 
-        let first = limit.reserve();
-        let second = limit.reserve();
-        let third = limit.reserve();
+        let refused = connector.reserve().unwrap_err();
 
-        assert!(first.is_ok() && second.is_ok());
-        assert!(third.is_err());
-        assert_eq!(limit.open(), 2);
-    }
-
-    #[test]
-    fn a_closed_connection_makes_room_again() {
-        let limit = ConnectionLimit::new(Some(1));
-        let only = limit.reserve().unwrap();
-
-        drop(only);
-
-        assert_eq!(limit.open(), 0);
-        assert!(limit.reserve().is_ok());
-    }
-
-    #[test]
-    fn without_a_maximum_connections_are_only_counted() {
-        let limit = ConnectionLimit::new(None);
-
-        let slots: Vec<_> = (0..1000).map(|_| limit.reserve().unwrap()).collect();
-
-        assert_eq!(limit.open(), slots.len());
+        assert_eq!(
+            refused.to_string(),
+            "upstream connection limit of 1 reached"
+        );
     }
 }

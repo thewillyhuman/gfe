@@ -217,6 +217,7 @@ crates/
                     the pooled client for backends
   gfe-router/       Compiled route table: host (exact/wildcard) + path matching
   gfe-load-balancing/  Pools and selection policies
+  gfe-limits/       Counting and capping what a node holds at once
   gfe-proxy/        Data plane: acceptor, TLS termination, routing, forwarding
   gfe-health-checking/  L7 probes, state machine, checker, health map
   gfe-config/       Load, validate, apply (atomic swap), watch, cache
