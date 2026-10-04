@@ -10,7 +10,6 @@ members = [
     "crates/gfe-node",
     "crates/gfe-health",
     "crates/gfe-controller",
-    "crates/gfe-trace",
     "crates/gfe-loadtest",
     # Kernel-side view of the node's TCP connections (eBPF, Linux only).
     "crates/gfe-ebpf",
@@ -19,7 +18,7 @@ members = [
     # Crates are added to this list as they are implemented (see roadmap in
     # .docs/spec.md). The full set: gfe-metrics, gfe-tls, gfe-router,
     # gfe-upstream, gfe-proxy, gfe-health, gfe-config, gfe-controller,
-    # gfe-node, gfe-trace.
+    # gfe-node.
 ]
 resolver = "2"
 

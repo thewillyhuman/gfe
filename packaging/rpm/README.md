@@ -1,12 +1,11 @@
 # RPM package
 
 The `gfe` RPM installs a GFE node the way config management expects to find
-it: binaries in `/usr/bin`, a systemd unit, and no configuration.
+it: the binary in `/usr/bin`, a systemd unit, and no configuration.
 
 | Path | Content |
 |---|---|
 | `/usr/bin/gfe-node` | The proxy |
-| `/usr/bin/gfe-trace` | Offline routing tracer and CI assertions |
 | `/usr/lib/systemd/system/gfe-node.service` | Hardened unit (not enabled by the package) |
 | `/usr/share/gfe/` | Deploy helpers and the Grafana dashboard |
 | `/usr/share/doc/gfe/` | README and example configs |
@@ -20,13 +19,13 @@ creates `/var/lib/gfe` (the last-known-good config cache) on start.
 
 The metadata lives in `crates/gfe-node/Cargo.toml` under
 `[package.metadata.generate-rpm]`; the scriptlets are next to this file. The
-package is assembled from already-built release binaries by
+package is assembled from the already-built release binary by
 [`cargo-generate-rpm`](https://github.com/cat-in-136/cargo-generate-rpm), so
 no `rpmbuild` is needed:
 
 ```bash
 cargo install cargo-generate-rpm --locked
-cargo build --release --bin gfe-node --bin gfe-trace
+cargo build --release --bin gfe-node
 cargo generate-rpm -p crates/gfe-node
 ls target/generate-rpm/gfe-*.rpm
 ```

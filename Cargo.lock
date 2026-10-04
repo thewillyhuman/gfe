@@ -751,18 +751,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gfe-trace"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "gfe-config",
- "gfe-router",
- "gfe-types",
- "gfe-upstream",
-]
-
-[[package]]
 name = "gfe-types"
 version = "0.1.0"
 dependencies = [

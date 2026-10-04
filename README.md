@@ -61,8 +61,7 @@ spread connections across a fleet with no coordination.
   saturation; one structured JSON event per request and per connection, logged
   when it is over, to a file or standard output, by a writer that never holds
   up a request and counts what it had to drop; `/healthz` `/readyz`
-  `/metrics`; alert rules, a dashboard
-  and an offline routing tracer (`gfe-trace`). See the
+  `/metrics`; alert rules and a dashboard. See the
   [observability guide](.docs/observability.md).
 - **Kernel view (optional, eBPF)** — accept-queue wait, round-trip time,
   retransmissions and how connections end, per listener and per backend,
@@ -198,9 +197,6 @@ cargo build --release
 
 # Run (binds the listeners in the dynamic config; serves /metrics on metrics_addr)
 ./target/release/gfe-node --config config/gfe.example.toml
-
-# Trace how a request would route, offline
-./target/release/gfe-trace --config config/gfe.example.toml --host atlas.example.org --path /
 ```
 
 ## See it running
@@ -229,7 +225,6 @@ crates/
   gfe-ebpf/         Optional kernel view of the node's TCP connections (eBPF)
   gfe-handover/     Passing a node's listening sockets to its successor
   gfe-node/         Main binary: proxy + controller + ops server
-  gfe-trace/        Offline routing-decision tracer + CI routing assertions
 config/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)

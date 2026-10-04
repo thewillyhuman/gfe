@@ -239,15 +239,10 @@ gfe/
 │   │  BINARIES
 │   │  ─────────────────────────────────
 │   │
-│   ├── gfe-node/                   # Main binary: proxy + controller on one box
-│   │   ├── Cargo.toml
-│   │   └── src/
-│   │       └── main.rs                  # CLI args, config load, spawn proxy & controller
-│   │
-│   └── gfe-trace/                  # Binary: CLI request tracer
+│   └── gfe-node/                   # Main binary: proxy + controller on one box
 │       ├── Cargo.toml
 │       └── src/
-│           └── main.rs                  # Send a marked request, print the routing decision
+│           └── main.rs                  # CLI args, config load, spawn proxy & controller
 │
 ├── tests/
 │   ├── integration/
@@ -797,7 +792,7 @@ GFE is registered as a **backend pool in the `lb` L4 load balancer**. The L4 LB 
 
 ## 12. Observability
 
-> **Code location:** `crates/gfe-metrics/` (registration) + `crates/gfe-trace/` (diagnostics)
+> **Code location:** `crates/gfe-metrics/` (registration)
 
 ### 12.1 Metrics
 
@@ -890,19 +885,7 @@ How it works, and what it does not assume:
 - Statistics are reported once per connection, when it closes. A long-lived connection contributes when it ends.
 - Requirements: Linux ≥ 5.8, a build made with clang available, and `CAP_BPF` + `CAP_NET_ADMIN` (drop-in: `deploy/gfe-node-ebpf.conf`). The kernel program is C, checked by the kernel's verifier before it runs; the Rust side has no `unsafe`. Where any requirement is missing the node logs the reason and runs without the kernel view.
 
-### 12.2 Request Tracer
-
-> **Code location:** `crates/gfe-trace/`
-
-A diagnostic CLI that issues a marked request and reports the routing decision without affecting production:
-
-```
-gfe-trace --host atlas.example.org --path /api/v1/users --method GET
-```
-
-It prints which listener/route matched, which pool and which backend would be selected (under the pool's LB policy), the upstream scheme, and whether a pooled connection would be reused. Essential for debugging misrouted requests.
-
-### 12.3 Logging
+### 12.2 Logging
 
 - **Structured JSON logs** via `tracing` + `tracing-subscriber`.
 - **Access logs** (`record.rs`): one structured event per request under the target `gfe::access`, emitted when the exchange is **over** — the response written to its last byte, or abandoned — so sizes, duration and outcome are final. A request the client gives up on before any response is still logged. Fields:
@@ -932,7 +915,7 @@ It prints which listener/route matched, which pool and which backend would be se
 - Log levels: ERROR/WARN always on; INFO/DEBUG adjustable at runtime via an env-filter reload, no restart.
 - **No body logging.** Headers are logged selectively (allowlist) to avoid leaking secrets.
 
-### 12.4 Health Endpoints
+### 12.3 Health Endpoints
 
 Served on the metrics address:
 
@@ -1071,7 +1054,6 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] `gfe-proxy`: graceful drain (deadline), request-total timeout, conservative idempotent retries, connection limits
 - [x] per-stage timeouts — TLS handshake, request header, client idle, upstream connect, upstream first-byte and overall `request_total`
 - [x] `gfe-metrics`: control-plane metrics; structured access logging (`gfe::access`)
-- [x] `gfe-trace` CLI (offline routing tracer)
 
 ### Phase 3 — Completeness and Operations ✅
 
@@ -1109,7 +1091,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 | Shared health map | `dashmap` | `gfe-health` | Concurrent reads from the data plane |
 | Metrics | `prometheus-client` | `gfe-metrics` | Direct Prometheus exposition (same as `lb`) |
 | Logging / tracing | `tracing` + `tracing-subscriber` | all | Structured, async-aware, runtime-adjustable levels |
-| CLI | `clap` | `gfe-node`, `gfe-trace` | Arg parsing (same as `lb`) |
+| CLI | `clap` | `gfe-node` | Arg parsing (same as `lb`) |
 | Error handling | `thiserror`, `anyhow` | all | Library vs. binary error idioms (same as `lb`) |
 | Testing | `cargo test` + mock upstreams | `tests/` | Socket-level integration without physical backends |
 | Benchmarks | `criterion` | `tests/benchmarks/` | Routing and handshake micro-benchmarks |
