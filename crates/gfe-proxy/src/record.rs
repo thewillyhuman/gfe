@@ -11,6 +11,7 @@
 
 use crate::errors::RespBody;
 use crate::progress::SendProgress;
+use crate::server::millis;
 use crate::ConnCtx;
 use bytes::{Buf, Bytes};
 use gfe_core::upstream::BoxError;
@@ -111,7 +112,7 @@ pub struct RequestRecord {
 impl RequestRecord {
     /// Start accounting for `req`, received on the connection `ctx`.
     pub fn begin<B>(ctx: Arc<ConnCtx>, req: &Request<B>, host: String, request_id: String) -> Self {
-        ctx.shared.metrics.proxy.requests_in_flight.inc();
+        ctx.shared.server.metrics.proxy.requests_in_flight.inc();
         RequestRecord {
             started: Instant::now(),
             request_id,
@@ -228,7 +229,7 @@ impl Drop for RequestRecord {
     /// Report the request: this is the single place a request is counted
     /// and logged.
     fn drop(&mut self) {
-        let metrics = &self.ctx.shared.metrics.proxy;
+        let metrics = &self.ctx.shared.server.metrics.proxy;
         let elapsed = self.started.elapsed();
         let status = self
             .status
@@ -329,11 +330,6 @@ impl Drop for RequestRecord {
             "request"
         );
     }
-}
-
-/// A duration in milliseconds, with microsecond resolution.
-pub(crate) fn millis(duration: Duration) -> f64 {
-    duration.as_micros() as f64 / 1000.0
 }
 
 /// A response body that carries its request's record to the end of the

@@ -6,7 +6,7 @@ use gfe_core::config::{LimitsConfig, MinVersion, TimeoutsConfig, TlsConfig};
 use gfe_core::upstream::UpstreamClient;
 use gfe_core::GfeError;
 use gfe_observability::GfeMetrics;
-use gfe_proxy::{ListenerSet, ProxyShared};
+use gfe_proxy::{ListenerSet, ProxyShared, ServerShared};
 use rustls::pki_types::CertificateDer;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -67,17 +67,24 @@ impl Node {
         let node = gfe_core::config::load_node_config(&bootstrap).unwrap();
 
         let shared = Arc::new(ProxyShared::new(
+            Arc::new(ServerShared::new(
+                Arc::new(GfeMetrics::new()),
+                LimitsConfig::default(),
+                TimeoutsConfig::default(),
+            )),
             UpstreamClient::new(1).unwrap(),
-            Arc::new(GfeMetrics::new()),
-            LimitsConfig::default(),
-            TimeoutsConfig::default(),
             TlsConfig::default(),
         ));
         let server_config = Arc::new(
             gfe_core::tls::server_config(shared.resolver.clone(), MinVersion::Tls12).unwrap(),
         );
         let (shutdown, shutdown_rx) = watch::channel(false);
-        let listeners = Arc::new(ListenerSet::new(shared.clone(), server_config, shutdown_rx));
+        let listeners = Arc::new(ListenerSet::new(
+            shared.server.clone(),
+            shared.clone(),
+            server_config,
+            shutdown_rx,
+        ));
         listeners.adopt(sockets);
 
         let mut controller = Controller::new(shared.clone(), listeners, &node)
@@ -94,6 +101,7 @@ impl Node {
     /// Whether the node reports running on its last-known-good cache.
     fn runs_from_cache(&self) -> bool {
         self.shared
+            .server
             .metrics
             .encode()
             .lines()
@@ -103,6 +111,7 @@ impl Node {
     /// Whether the node reports that its last reload attempt failed.
     fn last_reload_failed(&self) -> bool {
         self.shared
+            .server
             .metrics
             .encode()
             .lines()
@@ -314,7 +323,7 @@ async fn http_get(addr: SocketAddr) -> String {
 async fn reports_a_rejected_reload_until_a_good_one() {
     let first = free_addr();
     let node = Node::start("reload-failed", |_| config_listening_on(first));
-    let clean_start = node.shared.metrics.encode();
+    let clean_start = node.shared.server.metrics.encode();
     assert!(
         clean_start.contains("gfe_config_reload_failed 0"),
         "{clean_start}"

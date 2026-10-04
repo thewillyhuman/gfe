@@ -3,9 +3,9 @@
 //! A watch channel tells the accept loops to stop accepting and the open
 //! connections to ask their clients to leave, and a `draining` flag makes the
 //! ops server fail `/readyz`. The connections get until the drain deadline to
-//! finish ([`ListenerSet::serve_until_drained`](crate::ListenerSet::serve_until_drained)).
+//! finish ([`ListenerSet::serve_until_drained`](crate::listeners::ListenerSet::serve_until_drained)).
 
-use crate::ProxyShared;
+use crate::server::ServerShared;
 use std::sync::atomic::Ordering;
 use tokio::sync::watch;
 
@@ -28,7 +28,7 @@ impl DrainController {
 
     /// Begin draining: fail readiness, tell accept loops to stop and open
     /// connections to wind down.
-    pub fn trigger(&self, shared: &ProxyShared) {
+    pub fn trigger(&self, shared: &ServerShared) {
         shared.draining.store(true, Ordering::SeqCst);
         let _ = self.tx.send(true);
     }

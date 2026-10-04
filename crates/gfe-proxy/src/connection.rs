@@ -5,8 +5,7 @@
 
 use crate::activity::{ConnActivity, InFlightBody, Verdict};
 use crate::conn_record::{ConnRecord, TlsInfo};
-use crate::service::handle_request;
-use crate::{ConnCtx, ProxyShared};
+use crate::server::{ConnInfo, RequestHandler, ServerShared};
 use arc_swap::ArcSwap;
 use gfe_core::config::{Listener, TimeoutsConfig};
 use gfe_observability::RejectLabel;
@@ -77,11 +76,12 @@ fn enable_tcp_keepalive(stream: &TcpStream, timeouts: &TimeoutsConfig) {
 /// `listener` is the accepting socket's listener as currently configured:
 /// each request is routed by the listener's id at the time it arrives, so a
 /// reload that renames the listener does not strand open connections.
-pub async fn serve(
+pub async fn serve<H: RequestHandler>(
     stream: TcpStream,
     peer: SocketAddr,
     listener: Arc<ArcSwap<Listener>>,
-    shared: Arc<ProxyShared>,
+    shared: Arc<ServerShared>,
+    handler: Arc<H>,
     tls: Option<Arc<ServerConfig>>,
     drain: watch::Receiver<bool>,
 ) {
@@ -94,8 +94,7 @@ pub async fn serve(
         peer,
     );
     let stream = record.count_traffic(stream);
-    let mut ctx = ConnCtx {
-        shared: shared.clone(),
+    let mut conn = ConnInfo {
         listener_id: listener.load().id.clone(),
         is_tls: tls.is_some(),
         client_ip: peer.ip(),
@@ -111,14 +110,14 @@ pub async fn serve(
             match tokio::time::timeout(shared.timeouts.tls_handshake, handshake).await {
                 Ok(Ok(tls_stream)) => {
                     let session = tls_stream.get_ref().1;
-                    ctx.sni = session.server_name().map(str::to_string);
-                    ctx.tls = Some(TlsInfo::of(session));
+                    conn.sni = session.server_name().map(str::to_string);
+                    conn.tls = Some(TlsInfo::of(session));
                     record.tls_established(
                         TlsInfo::of(session),
-                        ctx.sni.clone(),
+                        conn.sni.clone(),
                         handshake_started.elapsed(),
                     );
-                    serve_io(tls_stream, ctx, listener, drain).await
+                    serve_io(tls_stream, conn, listener, shared, handler, drain).await
                 }
                 Ok(Err(e)) => {
                     tracing::debug!(error = %e, "tls handshake failed");
@@ -139,7 +138,7 @@ pub async fn serve(
                 }
             }
         }
-        None => serve_io(stream, ctx, listener, drain).await,
+        None => serve_io(stream, conn, listener, shared, handler, drain).await,
     };
     record.closed(closed.reason, closed.requests, closed.error);
 }
@@ -167,18 +166,20 @@ struct Closed {
 ///   more, because closing it right away would race with a request already
 ///   on its way; an HTTP/1 request is then answered with `Connection: close`.
 ///
-/// Each request is handled with a copy of `ctx` naming `listener`'s id as
-/// it is when the request arrives.
-async fn serve_io<S>(
+/// Each request is handed to `handler` with a copy of `conn` naming
+/// `listener`'s id as it is when the request arrives.
+async fn serve_io<S, H>(
     stream: S,
-    ctx: ConnCtx,
+    conn: ConnInfo,
     listener: Arc<ArcSwap<Listener>>,
+    shared: Arc<ServerShared>,
+    handler: Arc<H>,
     mut drain: watch::Receiver<bool>,
 ) -> Closed
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    H: RequestHandler,
 {
-    let shared = ctx.shared.clone();
     let activity = ConnActivity::new(Instant::now());
     // Set once a response has told an HTTP/1 client to close the connection.
     let told_to_close = Arc::new(AtomicBool::new(false));
@@ -192,12 +193,13 @@ where
         let told_to_close = told_to_close.clone();
         let http2 = http2.clone();
         move |req| {
-            let ctx = Arc::new(ConnCtx {
+            let conn = ConnInfo {
                 listener_id: listener.load().id.clone(),
-                ..ctx.clone()
-            });
+                ..conn.clone()
+            };
             let in_flight = activity.begin_request();
             let shared = shared.clone();
+            let handler = handler.clone();
             let told_to_close = told_to_close.clone();
             // HTTP/2 has no header for it: its clients are sent a GOAWAY.
             let http1 = req.version() < Version::HTTP_2;
@@ -205,7 +207,7 @@ where
                 http2.store(true, Ordering::Relaxed);
             }
             async move {
-                let mut resp = handle_request(ctx, req).await?;
+                let mut resp = handler.handle(conn, req).await;
                 if http1 && shared.draining.load(Ordering::Relaxed) {
                     resp.headers_mut()
                         .insert(CONNECTION, HeaderValue::from_static("close"));
@@ -327,7 +329,7 @@ fn error_close_reason(error: &(dyn std::error::Error + 'static), http2: bool) ->
 }
 
 /// The hyper server builder with the configured client-side limits applied.
-fn http_builder(shared: &ProxyShared) -> auto::Builder<TokioExecutor> {
+fn http_builder(shared: &ServerShared) -> auto::Builder<TokioExecutor> {
     let max_header_bytes = shared.limits.max_header_bytes;
     let mut builder = auto::Builder::new(TokioExecutor::new());
     builder

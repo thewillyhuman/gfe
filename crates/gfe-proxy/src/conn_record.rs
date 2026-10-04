@@ -7,7 +7,7 @@
 //! what clients asked for, connections describe how clients reach the node
 //! (TLS parameters, bytes on the wire, why connections end).
 
-use crate::ProxyShared;
+use crate::server::{millis, ServerShared};
 use gfe_core::config::Listener;
 use gfe_observability::{
     CloseLabels, Counter, ListenerLabel, TlsFailureLabel, TlsLabels, TlsResultLabel,
@@ -93,7 +93,7 @@ pub struct Traffic {
 
 /// One client connection, from accept to close.
 pub struct ConnRecord {
-    shared: Arc<ProxyShared>,
+    shared: Arc<ServerShared>,
     listener: String,
     peer: SocketAddr,
     is_tls: bool,
@@ -115,7 +115,7 @@ impl ConnRecord {
     /// Start accounting for a connection just accepted on `listener`, whose
     /// socket is bound to `local` on the node's side (if that could be read).
     pub fn open(
-        shared: Arc<ProxyShared>,
+        shared: Arc<ServerShared>,
         listener: &Listener,
         local: Option<SocketAddr>,
         peer: SocketAddr,
@@ -273,13 +273,13 @@ impl Drop for ConnRecord {
             tls_cipher = tls.map(|t| t.cipher.as_str()),
             alpn = tls.and_then(|t| t.alpn.as_deref()),
             tls_resumed = tls.map(|t| t.resumed),
-            tls_handshake_ms = self.tls_handshake.map(crate::record::millis),
+            tls_handshake_ms = self.tls_handshake.map(millis),
             tls_error = self.tls_error,
-            accept_wait_ms = self.accept_wait.map(crate::record::millis),
+            accept_wait_ms = self.accept_wait.map(millis),
             requests = self.requests,
             bytes_in = self.traffic.read.load(Ordering::Relaxed),
             bytes_out = self.traffic.written.load(Ordering::Relaxed),
-            duration_ms = crate::record::millis(elapsed),
+            duration_ms = millis(elapsed),
             reason = self.reason,
             error = self.error.as_deref(),
             "connection"

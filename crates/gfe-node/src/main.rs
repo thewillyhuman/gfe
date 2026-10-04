@@ -12,7 +12,7 @@ use clap::Parser;
 use gfe_controller::Controller;
 use gfe_core::upstream::{KeepAlive, UpstreamClient, UpstreamClientOptions};
 use gfe_observability::{GfeMetrics, Log};
-use gfe_proxy::{DrainController, ListenerSet, ProxyShared};
+use gfe_proxy::{DrainController, ListenerSet, ProxyShared, ServerShared};
 use ops::OpsState;
 use signals::{Request, Signals};
 use std::path::Path;
@@ -137,18 +137,16 @@ async fn run(
     // The kernel's view of the node's connections, if enabled and available.
     let kernel = kernel::attach(&node, &metrics);
 
-    // The shared data-plane state starts empty; the controller fills it in.
-    let mut shared = ProxyShared::new(
-        build_upstream_client(&node.upstream, &node.timeouts, &node.limits)?,
-        metrics.clone(),
-        node.limits.clone(),
-        node.timeouts.clone(),
-        node.tls.clone(),
-    );
+    let mut server = ServerShared::new(metrics.clone(), node.limits.clone(), node.timeouts.clone());
     if let Some((view, _)) = &kernel {
-        shared = shared.with_accept_queue(view.clone());
+        server = server.with_accept_queue(view.clone());
     }
-    let shared = Arc::new(shared);
+    // The shared data-plane state starts empty; the controller fills it in.
+    let shared = Arc::new(ProxyShared::new(
+        Arc::new(server),
+        build_upstream_client(&node.upstream, &node.timeouts, &node.limits)?,
+        node.tls.clone(),
+    ));
     let resolver = shared.resolver.clone();
 
     // The TLS server config is shared across https listeners. Cert rotation
@@ -163,6 +161,7 @@ async fn run(
     let ready = Arc::new(AtomicBool::new(false));
     let drain = DrainController::new();
     let listeners = Arc::new(ListenerSet::new(
+        shared.server.clone(),
         shared.clone(),
         server_config,
         drain.subscribe(),
@@ -288,7 +287,7 @@ async fn run(
     // would make it listen again.
     controller.shutdown();
     drop(controller);
-    drain.trigger(&shared);
+    drain.trigger(&shared.server);
     listeners.serve_until_drained().await;
     tracing::info!("gfe-node stopped");
     Ok(())

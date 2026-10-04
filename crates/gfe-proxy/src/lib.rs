@@ -16,27 +16,33 @@ pub mod forward;
 pub mod listeners;
 pub mod progress;
 pub mod record;
+pub mod server;
 pub mod service;
 
 pub use drain::DrainController;
 pub use errors::RespBody;
-pub use listeners::ListenerSet;
+pub use server::{AcceptQueue, ConnInfo, RequestHandler, ServerShared};
 
 use arc_swap::ArcSwap;
-use gfe_core::config::{LimitsConfig, ListenerId, TimeoutsConfig, TlsConfig};
+use gfe_core::config::{ListenerId, TlsConfig};
 use gfe_core::tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_core::upstream::UpstreamClient;
 use gfe_health_checking::HealthMap;
 use gfe_load_balancing::PoolSet;
-use gfe_observability::GfeMetrics;
 use gfe_router::RouteTable;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::AtomicBool;
+use hyper::body::Incoming;
+use hyper::{Request, Response};
+use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::Duration;
+
+/// The listeners of a node whose requests the proxy answers.
+pub type ListenerSet = listeners::ListenerSet<ProxyShared>;
 
 /// Shared state read by the data plane and mutated by the control plane.
 pub struct ProxyShared {
+    /// What every connection shares, whatever its requests are: metrics,
+    /// limits, timeouts and whether the node is draining.
+    pub server: Arc<ServerShared>,
     /// Compiled route table, swapped atomically on reload.
     pub routes: ArcSwap<RouteTable>,
     /// Upstream pool set, swapped atomically on reload.
@@ -49,67 +55,44 @@ pub struct ProxyShared {
     pub health: Arc<HealthMap>,
     /// Pooled upstream client.
     pub upstream: UpstreamClient,
-    /// Metrics.
-    pub metrics: Arc<GfeMetrics>,
-    pub limits: LimitsConfig,
-    pub timeouts: TimeoutsConfig,
     pub tls: TlsConfig,
-    /// Set when the node is draining (fails `/readyz`).
-    pub draining: AtomicBool,
-    /// The kernel's view of the accept queue, where one is available.
-    pub accept_queue: Option<Arc<dyn AcceptQueue>>,
-}
-
-/// What only the kernel knows about a connection the node has just accepted.
-/// The proxy does not care where the answer comes from; the node provides an
-/// implementation when it has one (eBPF) and none otherwise.
-pub trait AcceptQueue: Send + Sync {
-    /// How long the connection between `local` and `peer` had been waiting,
-    /// its handshake complete, when `accept` returned it. `None` if unknown.
-    fn waited(&self, local: SocketAddr, peer: SocketAddr) -> Option<Duration>;
 }
 
 impl ProxyShared {
     /// Shared state with nothing configured yet: no routes, pools or
     /// certificates, and every backend presumed healthy until probed. The
     /// control plane fills it in by applying a dynamic config.
-    pub fn new(
-        upstream: UpstreamClient,
-        metrics: Arc<GfeMetrics>,
-        limits: LimitsConfig,
-        timeouts: TimeoutsConfig,
-        tls: TlsConfig,
-    ) -> Self {
-        // Published next to the gauges they bound, so saturation is a ratio
-        // of two series rather than a number hardcoded in a dashboard.
-        metrics
-            .proxy
-            .connections_limit
-            .set(limits.max_connections as i64);
-        metrics
-            .proxy
-            .listener_connections_limit
-            .set(limits.max_connections_listener as i64);
+    pub fn new(server: Arc<ServerShared>, upstream: UpstreamClient, tls: TlsConfig) -> Self {
         ProxyShared {
+            server,
             routes: ArcSwap::from_pointee(RouteTable::default()),
             pools: ArcSwap::from_pointee(PoolSet::default()),
             resolver: Arc::new(SniResolver::new(CertStore::default())),
             challenges: Arc::new(ChallengeStore::new()),
             health: Arc::new(HealthMap::new(true)),
             upstream,
-            metrics,
-            limits,
-            timeouts,
             tls,
-            draining: AtomicBool::new(false),
-            accept_queue: None,
         }
     }
+}
 
-    /// Ask `accept_queue` how long each accepted connection waited.
-    pub fn with_accept_queue(mut self, accept_queue: Arc<dyn AcceptQueue>) -> Self {
-        self.accept_queue = Some(accept_queue);
-        self
+impl RequestHandler for ProxyShared {
+    async fn handle(
+        self: &Arc<Self>,
+        conn: ConnInfo,
+        req: Request<Incoming>,
+    ) -> Response<RespBody> {
+        let ctx = Arc::new(ConnCtx {
+            shared: self.clone(),
+            listener_id: conn.listener_id,
+            is_tls: conn.is_tls,
+            client_ip: conn.client_ip,
+            client_port: conn.client_port,
+            sni: conn.sni,
+            tls: conn.tls,
+        });
+        let Ok(response) = service::handle_request(ctx, req).await;
+        response
     }
 }
 
@@ -127,34 +110,4 @@ pub struct ConnCtx {
     pub sni: Option<String>,
     /// The negotiated TLS parameters, on a TLS connection.
     pub tls: Option<conn_record::TlsInfo>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn publishes_connection_limits_as_gauges() {
-        let metrics = Arc::new(GfeMetrics::new());
-        let limits = LimitsConfig {
-            max_connections: 7,
-            max_connections_listener: 3,
-            ..Default::default()
-        };
-
-        ProxyShared::new(
-            UpstreamClient::new(1).unwrap(),
-            metrics.clone(),
-            limits,
-            TimeoutsConfig::default(),
-            TlsConfig::default(),
-        );
-
-        let exposed = metrics.encode();
-        assert!(exposed.contains("gfe_connections_limit 7"), "{exposed}");
-        assert!(
-            exposed.contains("gfe_listener_connections_limit 3"),
-            "{exposed}"
-        );
-    }
 }

@@ -190,6 +190,7 @@ pub async fn forward(
                 pool: pool.id.to_string(),
             };
             shared
+                .server
                 .metrics
                 .proxy
                 .upstream_pool_full
@@ -261,7 +262,7 @@ pub async fn forward(
         let selection = match pool.select(&shared.health, hash_key) {
             Some(s) => s,
             None => {
-                shared.metrics.proxy.no_healthy_upstream.inc();
+                shared.server.metrics.proxy.no_healthy_upstream.inc();
                 record.failed("no_healthy_upstream");
                 return synthetic(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -276,6 +277,7 @@ pub async fn forward(
             backend: authority.clone(),
         };
         let in_flight = shared
+            .server
             .metrics
             .proxy
             .upstream_requests_in_flight
@@ -295,6 +297,7 @@ pub async fn forward(
                 pool: pool.id.to_string(),
             };
             shared
+                .server
                 .metrics
                 .proxy
                 .upstream_retries
@@ -336,10 +339,11 @@ pub async fn forward(
         } else {
             tokio::select! {
                 result = sending => Ok(result),
-                _ = progress.overdue(&shared.timeouts) => Err(()),
+                _ = progress.overdue(&shared.server.timeouts) => Err(()),
             }
         };
         shared
+            .server
             .metrics
             .proxy
             .upstream_request_duration_seconds
@@ -366,7 +370,7 @@ pub async fn forward(
                 );
             }
             Ok(Err(e)) => {
-                shared.metrics.proxy.upstream_connect_errors.inc();
+                shared.server.metrics.proxy.upstream_connect_errors.inc();
                 record_upstream_error(shared, pool, &authority, e.kind.as_str());
                 record_upstream(shared, pool, &authority, 502);
                 if attempt + 1 < max_attempts {
@@ -449,6 +453,7 @@ fn failure_reason(kind: FailureKind) -> &'static str {
 
 fn record_upstream_error(shared: &crate::ProxyShared, pool: &Pool, backend: &str, kind: &str) {
     shared
+        .server
         .metrics
         .proxy
         .upstream_errors
@@ -462,6 +467,7 @@ fn record_upstream_error(shared: &crate::ProxyShared, pool: &Pool, backend: &str
 
 fn record_upstream(shared: &crate::ProxyShared, pool: &Pool, backend: &str, status: u16) {
     shared
+        .server
         .metrics
         .proxy
         .upstream_requests

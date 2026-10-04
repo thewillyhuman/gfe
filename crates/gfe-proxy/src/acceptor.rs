@@ -1,7 +1,7 @@
 //! Per-socket accept loop with connection-limit enforcement.
 
 use crate::connection;
-use crate::ProxyShared;
+use crate::server::{RequestHandler, ServerShared};
 use arc_swap::ArcSwap;
 use gfe_core::config::Listener;
 use gfe_observability::RejectLabel;
@@ -27,10 +27,11 @@ const ACCEPT_ERROR_PAUSE: Duration = Duration::from_millis(100);
 /// `global_sem` bounds total concurrent connections across all listeners; a
 /// per-listener semaphore bounds this listener. When either is exhausted the
 /// connection is dropped and counted as rejected.
-pub async fn run_listener(
+pub async fn run_listener<H: RequestHandler>(
     config: Arc<ArcSwap<Listener>>,
     tcp: Arc<TcpListener>,
-    shared: Arc<ProxyShared>,
+    shared: Arc<ServerShared>,
+    handler: Arc<H>,
     server_config: Arc<ServerConfig>,
     global_sem: Arc<Semaphore>,
     mut shutdown: watch::Receiver<bool>,
@@ -75,13 +76,14 @@ pub async fn run_listener(
                 };
 
                 let shared = shared.clone();
+                let handler = handler.clone();
                 let tls = listener.is_tls().then(|| server_config.clone());
                 let drain = shutdown.clone();
                 let config = config.clone();
                 tokio::spawn(async move {
                     let _g = global_permit;
                     let _l = listener_permit;
-                    connection::serve(stream, peer, config, shared, tls, drain).await;
+                    connection::serve(stream, peer, config, shared, handler, tls, drain).await;
                 });
             }
         }
@@ -97,7 +99,7 @@ async fn pause_unless_shut_down(shutdown: &mut watch::Receiver<bool>, pause: Dur
     }
 }
 
-fn reject(shared: &ProxyShared, reason: &str) {
+fn reject(shared: &ServerShared, reason: &str) {
     shared
         .metrics
         .proxy

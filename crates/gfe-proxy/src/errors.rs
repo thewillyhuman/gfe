@@ -2,14 +2,12 @@
 
 use bytes::Bytes;
 use gfe_core::upstream::BoxError;
-use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, CONTENT_TYPE};
 use hyper::{Response, StatusCode};
 
-/// The unified response body type the proxy returns to clients.
-pub type RespBody = BoxBody<Bytes, BoxError>;
+pub use crate::server::RespBody;
 
 /// Box a `Full<Bytes>` (infallible) into the unified body type.
 pub fn full_body(bytes: Bytes) -> RespBody {

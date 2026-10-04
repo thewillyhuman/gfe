@@ -6,7 +6,7 @@
 //! tracks the one fact needed to decide both: whether a request is in flight,
 //! and since when none has been.
 
-use crate::errors::RespBody;
+use crate::server::RespBody;
 use bytes::Bytes;
 use gfe_core::config::TimeoutsConfig;
 use gfe_core::upstream::BoxError;

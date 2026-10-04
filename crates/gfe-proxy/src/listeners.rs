@@ -20,7 +20,7 @@
 //! [lends]: ListenerSet::sockets
 
 use crate::acceptor;
-use crate::ProxyShared;
+use crate::server::{RequestHandler, ServerShared};
 use arc_swap::ArcSwap;
 use gfe_core::config::{Listener, ListenerId};
 use rustls::ServerConfig;
@@ -66,8 +66,10 @@ pub struct Staged {
 }
 
 /// The running listeners of a node.
-pub struct ListenerSet {
-    shared: Arc<ProxyShared>,
+pub struct ListenerSet<H> {
+    shared: Arc<ServerShared>,
+    /// Answers the requests of the connections the listeners accept.
+    handler: Arc<H>,
     server_config: Arc<ServerConfig>,
     /// Bounds concurrent connections across all listeners.
     connections: Arc<Semaphore>,
@@ -77,16 +79,20 @@ pub struct ListenerSet {
     adopted: Mutex<HashMap<SocketAddr, std::net::TcpListener>>,
 }
 
-impl ListenerSet {
-    /// An empty set. Listeners stop accepting when `shutdown` turns `true`.
+impl<H: RequestHandler> ListenerSet<H> {
+    /// An empty set, whose connections share `shared` and have their
+    /// requests answered by `handler`. Listeners stop accepting when
+    /// `shutdown` turns `true`.
     pub fn new(
-        shared: Arc<ProxyShared>,
+        shared: Arc<ServerShared>,
+        handler: Arc<H>,
         server_config: Arc<ServerConfig>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
         let connections = Arc::new(Semaphore::new(shared.limits.max_connections));
         ListenerSet {
             shared,
+            handler,
             server_config,
             connections,
             shutdown,
@@ -198,6 +204,7 @@ impl ListenerSet {
                 config.clone(),
                 socket.clone(),
                 self.shared.clone(),
+                self.handler.clone(),
                 self.server_config.clone(),
                 self.connections.clone(),
                 self.shutdown.clone(),

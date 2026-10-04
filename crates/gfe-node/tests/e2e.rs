@@ -8,7 +8,7 @@ use gfe_core::config::{
 };
 use gfe_core::upstream::UpstreamClient;
 use gfe_observability::GfeMetrics;
-use gfe_proxy::{ListenerSet, ProxyShared};
+use gfe_proxy::{ListenerSet, ProxyShared, ServerShared};
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -80,10 +80,12 @@ fn build_shared() -> Arc<ProxyShared> {
 
 fn build_shared_with(timeouts: TimeoutsConfig, limits: LimitsConfig) -> Arc<ProxyShared> {
     Arc::new(ProxyShared::new(
+        Arc::new(ServerShared::new(
+            Arc::new(GfeMetrics::new()),
+            limits,
+            timeouts,
+        )),
         UpstreamClient::new(16).unwrap(),
-        Arc::new(GfeMetrics::new()),
-        limits,
-        timeouts,
         TlsConfig::default(),
     ))
 }
@@ -111,7 +113,10 @@ fn listener_set(
             .unwrap(),
     );
     let (tx, rx) = watch::channel(false);
-    (ListenerSet::new(shared, server_config, rx), tx)
+    (
+        ListenerSet::new(shared.server.clone(), shared, server_config, rx),
+        tx,
+    )
 }
 
 /// Make `desired` the running listeners, as a config reload would.
@@ -468,7 +473,7 @@ async fn health_failover_excludes_dead_backend() {
 
     let shared = build_shared();
     // Run the health checker against the pool.
-    let checker = HealthChecker::new(shared.health.clone(), shared.metrics.clone());
+    let checker = HealthChecker::new(shared.health.clone(), shared.server.metrics.clone());
     checker.reconcile(&cfg.pools, &fast_hc);
 
     let (proxy_addr, _tx) = start_proxy(&cfg, shared.clone()).await;
@@ -920,7 +925,7 @@ async fn closes_an_http2_connection_whose_client_stops_answering_pings() {
         .body(Empty::<Bytes>::new())
         .unwrap();
     let _response = tokio::spawn(sender.send_request(req));
-    while shared.metrics.proxy.requests_in_flight.get() == 0 {
+    while shared.server.metrics.proxy.requests_in_flight.get() == 0 {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
@@ -1474,7 +1479,7 @@ async fn access_log_and_metrics_count_body_bytes() {
     assert_eq!(event["request_bytes"], 1000);
     assert_eq!(event["response_bytes"], body.len());
     let labels = r#"{listener="http",host="a.example.org",route="web"}"#;
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     assert!(
         metrics.contains(&format!("gfe_request_body_bytes_total{labels} 1000")),
         "{metrics}"
@@ -1510,7 +1515,7 @@ async fn logs_request_abandoned_before_the_response_as_499() {
     assert_eq!(event["status"], 499);
     assert_eq!(event["termination"], "client_abort");
     assert_eq!(event["path"], "/slow");
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     assert!(
         metrics.contains(
             r#"gfe_requests_aborted_total{listener="http",host="a.example.org",route="web",by="client"} 1"#
@@ -1573,7 +1578,7 @@ async fn connection_log_reports_a_finished_connection() {
     assert_eq!(event["bytes_in"], request.len());
     assert_eq!(event["bytes_out"], response.len());
     assert!(event["duration_ms"].as_f64().unwrap() > 0.0, "{event}");
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     for expected in [
         r#"gfe_connections_closed_total{listener="http",reason="closed"} 1"#.to_string(),
         format!(r#"gfe_bytes_in_total{{listener="http"}} {}"#, request.len()),
@@ -1610,7 +1615,7 @@ async fn connection_and_access_logs_report_tls_parameters() {
     assert!(cipher.starts_with("TLS13_"), "{cipher}");
     assert_eq!(access["tls_version"], "TLSv1.3");
     assert_eq!(access["tls_cipher"], cipher);
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     let expected = format!(
         r#"gfe_tls_connections_total{{version="TLSv1.3",cipher="{cipher}",alpn="http/1.1",resumed="false"}} 1"#
     );
@@ -1657,7 +1662,7 @@ async fn failed_tls_handshake_is_logged_and_counted_by_reason() {
 
     assert_eq!(event["reason"], "tls_handshake_failed");
     assert_eq!(event["tls_error"], "invalid_message");
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     let expected = r#"gfe_tls_handshake_failures_total{reason="invalid_message"} 1"#;
     assert!(
         metrics.contains(expected),
@@ -1680,7 +1685,7 @@ async fn access_log_and_metrics_report_the_grpc_status() {
 
     assert_eq!(event["grpc_status"], 0);
     assert_eq!(event["termination"], "complete");
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     let expected =
         r#"gfe_grpc_responses_total{listener="grpc",host="*",route="grpc",grpc_status="0"} 1"#;
     assert!(
@@ -1706,7 +1711,7 @@ async fn reports_why_the_upstream_could_not_be_reached() {
     assert_eq!(event["error"], "upstream_connect_refused");
     // A bodyless GET is retried once, here against the only backend there is.
     assert_eq!(event["attempts"], 2);
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     for expected in [
         format!(
             r#"gfe_upstream_errors_total{{pool="pool",backend="{dead}",kind="connect_refused"}} 2"#
@@ -1736,10 +1741,10 @@ async fn backend_stays_in_flight_for_the_whole_response() {
     let mut call = GrpcCall::open(proxy).await;
     call.send("one").await;
     call.next_frame().await;
-    let during = shared.metrics.encode();
+    let during = shared.server.metrics.encode();
     call.finish().await;
     logs.access_event().await;
-    let after = shared.metrics.encode();
+    let after = shared.server.metrics.encode();
 
     assert!(during.contains(&in_flight(1)), "{during}");
     assert!(after.contains(&in_flight(0)), "{after}");
@@ -1836,7 +1841,7 @@ async fn stalled_upload_is_answered_with_408() {
 
     assert!(response.starts_with("HTTP/1.1 408"), "{response}");
     assert_eq!(event["error"], "request_body_timeout");
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     assert!(!metrics.contains(r#"kind="timeout""#), "{metrics}");
 }
 
@@ -1850,10 +1855,12 @@ async fn answers_503_at_the_upstream_connection_limit() {
     })
     .unwrap();
     let shared = Arc::new(ProxyShared::new(
+        Arc::new(ServerShared::new(
+            Arc::new(GfeMetrics::new()),
+            LimitsConfig::default(),
+            TimeoutsConfig::default(),
+        )),
         client,
-        Arc::new(GfeMetrics::new()),
-        LimitsConfig::default(),
-        TimeoutsConfig::default(),
         TlsConfig::default(),
     ));
     let (proxy, _tx) = start_proxy(&forwarding_config(upstream), shared.clone()).await;
@@ -2039,10 +2046,12 @@ fn build_shared_trusting(ca_pem: Vec<u8>) -> Arc<ProxyShared> {
     })
     .unwrap();
     Arc::new(ProxyShared::new(
+        Arc::new(ServerShared::new(
+            Arc::new(GfeMetrics::new()),
+            LimitsConfig::default(),
+            TimeoutsConfig::default(),
+        )),
         client,
-        Arc::new(GfeMetrics::new()),
-        LimitsConfig::default(),
-        TimeoutsConfig::default(),
         TlsConfig::default(),
     ))
 }
@@ -2146,7 +2155,7 @@ async fn refuses_a_request_whose_target_is_not_a_path() {
         assert!(response.starts_with("HTTP/1.1 400"), "{response}");
         assert_eq!(event["error"], "unsupported_request_target");
         assert!(event["backend"].is_null(), "{event}");
-        let metrics = shared.metrics.encode();
+        let metrics = shared.server.metrics.encode();
         assert!(!metrics.contains("gfe_upstream_errors_total{"), "{metrics}");
         assert!(
             !metrics.contains("gfe_upstream_requests_total{"),
@@ -2216,7 +2225,7 @@ async fn backend_that_stops_reading_an_upload_is_answered_with_504() {
 
     assert_eq!(String::from_utf8_lossy(&status_line), "HTTP/1.1 504");
     assert_eq!(event["error"], "upstream_timeout");
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     let timed_out = format!(
         r#"gfe_upstream_errors_total{{pool="pool",backend="{upstream}",kind="timeout"}} 1"#
     );
@@ -2258,7 +2267,7 @@ async fn answers_503_when_a_pool_has_max_in_flight_requests() {
     // The client may have the whole response a moment before GFE is done.
     let idle = format!(r#"gfe_upstream_requests_in_flight{{pool="pool",backend="{slow}"}} 0"#);
     for _ in 0..100 {
-        if shared.metrics.encode().contains(&idle) {
+        if shared.server.metrics.encode().contains(&idle) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -2277,7 +2286,7 @@ async fn answers_503_when_a_pool_has_max_in_flight_requests() {
     assert_eq!(refused["error"], "upstream_pool_full");
     assert_eq!(refused["pool"], "pool");
     assert_eq!(refused["attempts"], 0);
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     let counted = r#"gfe_upstream_pool_full_total{pool="pool"} 1"#;
     assert!(metrics.contains(counted), "{metrics}");
 }
@@ -2374,7 +2383,7 @@ async fn refuses_a_websocket_handshake_with_501() {
     assert_eq!(status, 501);
     assert_eq!(event["error"], "upgrade_not_supported");
     assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     let counted =
         r#"gfe_requests_total{listener="http",host="a.example.org",route="web",status="501"} 1"#;
     assert!(metrics.contains(counted), "{metrics}");
@@ -2477,16 +2486,18 @@ impl gfe_proxy::AcceptQueue for FixedAcceptQueue {
 #[tokio::test]
 async fn reports_how_long_a_connection_waited_to_be_accepted() {
     let (logs, _guard) = CapturedLogs::start();
-    let shared = Arc::new(
-        ProxyShared::new(
-            UpstreamClient::new(1).unwrap(),
-            Arc::new(GfeMetrics::new()),
-            LimitsConfig::default(),
-            TimeoutsConfig::default(),
-            TlsConfig::default(),
-        )
-        .with_accept_queue(Arc::new(FixedAcceptQueue)),
-    );
+    let shared = Arc::new(ProxyShared::new(
+        Arc::new(
+            ServerShared::new(
+                Arc::new(GfeMetrics::new()),
+                LimitsConfig::default(),
+                TimeoutsConfig::default(),
+            )
+            .with_accept_queue(Arc::new(FixedAcceptQueue)),
+        ),
+        UpstreamClient::new(1).unwrap(),
+        TlsConfig::default(),
+    ));
     let (proxy, _tx) = start_proxy(&fixed_response_config(), shared.clone()).await;
 
     let mut stream = TcpStream::connect(proxy).await.unwrap();
@@ -2498,7 +2509,7 @@ async fn reports_how_long_a_connection_waited_to_be_accepted() {
     let event = logs.connection_event().await;
 
     assert_eq!(event["accept_wait_ms"], 5.0);
-    let metrics = shared.metrics.encode();
+    let metrics = shared.server.metrics.encode();
     let expected = r#"gfe_accept_queue_wait_seconds_count{listener="http"} 1"#;
     assert!(
         metrics.contains(expected),
@@ -2539,6 +2550,7 @@ async fn tells_which_listener_a_local_address_belongs_to() {
 /// Begin draining, as the node does when it is told to stop.
 fn drain(shared: &ProxyShared, shutdown: &watch::Sender<bool>) {
     shared
+        .server
         .draining
         .store(true, std::sync::atomic::Ordering::SeqCst);
     shutdown.send(true).unwrap();

@@ -76,7 +76,7 @@ pub fn install(shared: &ProxyShared, prepared: Prepared) {
     shared.health.retain(&backends);
 
     // Update metrics.
-    let m = &shared.metrics.control;
+    let m = &shared.server.metrics.control;
     m.active_routes.set(route_count as i64);
     m.active_pools.set(pool_count as i64);
     for (sni, not_after) in expiries {
@@ -113,6 +113,7 @@ mod tests {
         RouteId, Scheme, TimeoutsConfig, TlsConfig, Upstream, UpstreamPool,
     };
     use gfe_core::upstream::UpstreamClient;
+    use gfe_proxy::ServerShared;
     use std::io::Write;
 
     /// A fresh certificate and key, in files unique to `test`.
@@ -134,10 +135,12 @@ mod tests {
 
     fn shared() -> ProxyShared {
         ProxyShared::new(
+            Arc::new(ServerShared::new(
+                Arc::new(GfeMetrics::new()),
+                LimitsConfig::default(),
+                TimeoutsConfig::default(),
+            )),
             UpstreamClient::new(8).unwrap(),
-            Arc::new(GfeMetrics::new()),
-            LimitsConfig::default(),
-            TimeoutsConfig::default(),
             TlsConfig::default(),
         )
     }
@@ -208,7 +211,7 @@ mod tests {
 
         apply(&s, &config_with_certificate_for("new.example.org")).unwrap();
 
-        let exported = s.metrics.encode();
+        let exported = s.server.metrics.encode();
         assert!(!exported.contains("old.example.org"), "{exported}");
         assert!(exported.contains("new.example.org"), "{exported}");
     }

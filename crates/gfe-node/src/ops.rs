@@ -174,7 +174,7 @@ async fn handle(
         "/readyz" => {
             let ready = handed_over
                 || state.ready.load(Ordering::SeqCst)
-                    && !state.shared.draining.load(Ordering::SeqCst);
+                    && !state.shared.server.draining.load(Ordering::SeqCst);
             if ready {
                 text(StatusCode::OK, "ready")
             } else {
@@ -247,6 +247,7 @@ fn text(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gfe_proxy::ServerShared;
     use std::sync::OnceLock;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -271,10 +272,12 @@ mod tests {
     async fn ops_server_to_hand_over() -> (SocketAddr, Arc<OpsState>, watch::Sender<bool>) {
         let metrics = Arc::new(GfeMetrics::new());
         let shared = ProxyShared::new(
+            Arc::new(ServerShared::new(
+                metrics.clone(),
+                Default::default(),
+                Default::default(),
+            )),
             gfe_core::upstream::UpstreamClient::new(1).unwrap(),
-            metrics.clone(),
-            Default::default(),
-            Default::default(),
             Default::default(),
         );
         let state = Arc::new(OpsState {
@@ -311,7 +314,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         stop.send(true).unwrap();
-        state.shared.draining.store(true, Ordering::SeqCst);
+        state.shared.server.draining.store(true, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(100)).await;
         prober
             .write_all(b"GET /readyz HTTP/1.1\r\nhost: t\r\n\r\n")

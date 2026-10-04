@@ -69,7 +69,7 @@ pub async fn handle_request(
 
     let resp = match matched {
         None => {
-            shared.metrics.proxy.no_route.inc();
+            shared.server.metrics.proxy.no_route.inc();
             record.failed("no_route");
             synthetic(StatusCode::NOT_FOUND, "no route", record.request_id())
         }
