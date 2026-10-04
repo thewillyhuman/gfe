@@ -9,10 +9,10 @@ mod upgrade;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use gfe_controller::Controller;
 use gfe_core::server::{DrainController, ServerShared};
 use gfe_core::upstream::{KeepAlive, UpstreamClient, UpstreamClientOptions};
 use gfe_observability::{GfeMetrics, Log};
+use gfe_proxy::reload::Controller;
 use gfe_proxy::{ListenerSet, ProxyShared};
 use ops::OpsState;
 use signals::{Request, Signals};

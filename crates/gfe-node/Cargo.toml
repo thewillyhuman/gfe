@@ -12,7 +12,6 @@ path = "src/main.rs"
 
 [dependencies]
 gfe-core = { workspace = true }
-gfe-controller = { workspace = true }
 gfe-proxy = { workspace = true }
 gfe-observability = { workspace = true }
 gfe-ebpf = { workspace = true }

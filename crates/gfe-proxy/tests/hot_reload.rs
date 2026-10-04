@@ -1,12 +1,12 @@
 //! Hot reload through the controller: changes on disk must reach the data
 //! plane without a restart.
 
-use gfe_controller::Controller;
 use gfe_core::config::{LimitsConfig, MinVersion, TimeoutsConfig, TlsConfig};
 use gfe_core::server::ServerShared;
 use gfe_core::upstream::UpstreamClient;
 use gfe_core::GfeError;
 use gfe_observability::GfeMetrics;
+use gfe_proxy::reload::Controller;
 use gfe_proxy::{ListenerSet, ProxyShared};
 use rustls::pki_types::CertificateDer;
 use std::net::SocketAddr;

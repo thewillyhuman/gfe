@@ -576,21 +576,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gfe-controller"
-version = "0.1.0"
-dependencies = [
- "gfe-core",
- "gfe-health-checking",
- "gfe-observability",
- "gfe-proxy",
- "notify",
- "rcgen",
- "rustls",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "gfe-core"
 version = "0.1.0"
 dependencies = [
@@ -693,7 +678,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "gfe-controller",
  "gfe-core",
  "gfe-ebpf",
  "gfe-handover",
@@ -743,6 +727,7 @@ dependencies = [
  "notify",
  "rand",
  "rcgen",
+ "rustls",
  "serde_json",
  "tokio",
  "tracing",

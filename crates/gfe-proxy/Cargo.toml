@@ -24,6 +24,7 @@ rand = { workspace = true }
 
 [dev-dependencies]
 rcgen = { workspace = true }
+rustls = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

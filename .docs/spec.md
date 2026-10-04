@@ -505,7 +505,7 @@ Bounded, predictable behaviour under stress:
 
 ## 7. Controller Design (Control Plane)
 
-> **Code location:** `crates/gfe-controller/` (orchestrator) + `crates/gfe-health-checking/`, `crates/gfe-proxy/src/reload/`, `crates/gfe-core/src/tls/`
+> **Code location:** `crates/gfe-proxy/src/reload/` (orchestrator) + `crates/gfe-health-checking/`, `crates/gfe-proxy/src/reload/`, `crates/gfe-core/src/tls/`
 
 The controller runs as Tokio tasks alongside the proxy. It does not handle client requests and shares with the proxy only atomic snapshots (route table, cert store) and the upstream health map.
 
@@ -1049,7 +1049,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 
 - [x] `gfe-health-checking`: HTTP/HTTPS/TCP probes, dedup, state machine, shared health map
 - [x] `gfe-proxy`: inotify watcher + debounce + last-known-good cache
-- [x] `gfe-controller`: orchestrator wiring config + health + cert lifecycle
+- [x] `gfe-proxy`: orchestrator wiring config + health + cert lifecycle
 - [x] `gfe-load-balancing`: `least_request` and `ring_hash` (affinity) policies, upstream TLS validation
 - [x] bounded pools — idle connections bounded per host; open upstream connections capped node-wide (`max_upstream_connections`)
 - [x] `gfe-proxy`: graceful drain (deadline), request-total timeout, conservative idempotent retries, connection limits

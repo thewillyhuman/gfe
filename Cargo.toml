@@ -7,7 +7,6 @@ members = [
     "crates/gfe-proxy",
     "crates/gfe-node",
     "crates/gfe-health-checking",
-    "crates/gfe-controller",
     "crates/gfe-loadtest",
     # Kernel-side view of the node's TCP connections (eBPF, Linux only).
     "crates/gfe-ebpf",
@@ -15,7 +14,7 @@ members = [
     "crates/gfe-handover",
     # Crates are added to this list as they are implemented (see roadmap in
     # .docs/spec.md). The full set: gfe-observability,
-    # gfe-load-balancing, gfe-proxy, gfe-health-checking, gfe-controller,
+    # gfe-load-balancing, gfe-proxy, gfe-health-checking,
     # gfe-node.
 ]
 resolver = "2"
@@ -43,7 +42,6 @@ gfe-limits = { path = "crates/gfe-limits" }
 gfe-load-balancing = { path = "crates/gfe-load-balancing" }
 gfe-proxy = { path = "crates/gfe-proxy" }
 gfe-health-checking = { path = "crates/gfe-health-checking" }
-gfe-controller = { path = "crates/gfe-controller" }
 gfe-ebpf = { path = "crates/gfe-ebpf" }
 gfe-handover = { path = "crates/gfe-handover" }
 
