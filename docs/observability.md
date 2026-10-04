@@ -181,6 +181,24 @@ Reading the two layers together:
 - **Handshake failures with `reason="client_closed"`** — clients giving up
   during the handshake: CPU saturation on the node, or loss on the path.
 
+## Collectors that lose histograms
+
+GFE declares its latency distributions as histograms, which is what the
+format prescribes and what Prometheus expects. A collector that rebuilds a
+scraped histogram in a model of its own can get it wrong. fluent-bit does,
+when it forwards what it scraped as OTLP (seen with 4.1 and 5.1): the buckets
+leave with cumulative counts where OTLP wants one count per bucket, and with
+no aggregation temporality, and the next component that translates them back
+for Prometheus drops them. Every `_bucket` series of the node is then missing
+at the other end, while counters and gauges arrive.
+
+For such a collector, scrape `/metrics?histograms=untyped`. The series are
+the same; only the `# HELP` and `# TYPE` lines of the histograms are left
+out, so the collector takes `_bucket`, `_sum` and `_count` for series of no
+declared type and passes them on as they are. Queries do not change:
+`histogram_quantile` only needs the `le` label. What is lost is the type the
+backend shows for those series. Prometheus itself needs none of this.
+
 ## Alerts and dashboard
 
 - [`src/prometheus/gfe-alerts.yml`](../src/prometheus/gfe-alerts.yml) —

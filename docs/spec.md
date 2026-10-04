@@ -806,7 +806,7 @@ GFE is registered as a **backend pool in the `lb` L4 load balancer**. The L4 LB 
 
 ### 12.1 Metrics
 
-Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
+Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`. With `?histograms=untyped` the histograms are exposed without their `# HELP` and `# TYPE` lines, for collectors that lose a histogram they are told is one (see the [observability guide](observability.md#collectors-that-lose-histograms)); any other value is refused with `400`.
 
 **Proxy / data-plane metrics (`proxy_metrics.rs`):**
 
@@ -933,7 +933,7 @@ Served on the metrics address:
 GET /healthz   → 200 if the proxy is running
 GET /readyz    → 200 if at least one listener is bound and a valid config is loaded;
                  503 while draining — this is what the L4 LB should probe
-GET /metrics   → Prometheus exposition
+GET /metrics   → Prometheus exposition (?histograms=untyped: histograms as plain series)
 ```
 
 The ops server serves at most 64 connections at once and closes any over that at once, so it cannot use up the descriptors the proxy needs. A client has 5 s to send a request head, and a connection it keeps is closed after 5 s without one.

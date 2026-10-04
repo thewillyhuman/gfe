@@ -21,6 +21,7 @@ pub use proxy_metrics::{
 };
 
 use prometheus_client::registry::Registry;
+use std::collections::HashSet;
 use std::sync::Mutex;
 
 /// Global metrics registry shared across the application.
@@ -64,6 +65,36 @@ impl Default for GfeMetrics {
     }
 }
 
+/// `exposition` without the family metadata (`# HELP`, `# TYPE`, `# UNIT`)
+/// of its histograms. Their `_bucket`, `_sum` and `_count` series are then
+/// series of no declared type, which is all a query over them needs.
+///
+/// It is for collectors that rebuild a scraped histogram in a model of
+/// their own and get it wrong, so that it is lost further on. Given series
+/// of no declared type, they pass them on as they are.
+pub fn without_histogram_metadata(exposition: &str) -> String {
+    let histograms: HashSet<&str> = exposition
+        .lines()
+        .filter_map(|line| line.strip_prefix("# TYPE ")?.strip_suffix(" histogram"))
+        .collect();
+    let describes_a_histogram = |line: &str| {
+        ["# HELP ", "# TYPE ", "# UNIT "].iter().any(|prefix| {
+            line.strip_prefix(prefix)
+                .and_then(|rest| rest.split(' ').next())
+                .is_some_and(|family| histograms.contains(family))
+        })
+    };
+    let mut untyped = String::with_capacity(exposition.len());
+    for line in exposition
+        .lines()
+        .filter(|line| !describes_a_histogram(line))
+    {
+        untyped.push_str(line);
+        untyped.push('\n');
+    }
+    untyped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,5 +117,51 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("process_start_time_seconds "), "{out}");
+    }
+
+    #[test]
+    fn drops_the_metadata_of_histograms_and_nothing_else() {
+        let exposition = "\
+# HELP requests Requests.
+# TYPE requests counter
+requests_total 3
+# HELP wait_seconds Wait.
+# TYPE wait_seconds histogram
+# UNIT wait_seconds seconds
+wait_seconds_sum 0.5
+wait_seconds_count 2
+wait_seconds_bucket{le=\"0.1\"} 1
+wait_seconds_bucket{le=\"+Inf\"} 2
+# EOF
+";
+
+        let untyped = without_histogram_metadata(exposition);
+
+        assert_eq!(
+            untyped,
+            "\
+# HELP requests Requests.
+# TYPE requests counter
+requests_total 3
+wait_seconds_sum 0.5
+wait_seconds_count 2
+wait_seconds_bucket{le=\"0.1\"} 1
+wait_seconds_bucket{le=\"+Inf\"} 2
+# EOF
+"
+        );
+    }
+
+    #[test]
+    fn keeps_every_sample_of_the_node_when_dropping_histogram_metadata() {
+        let exposition = GfeMetrics::new().encode();
+        let samples = |text: &str| text.lines().filter(|l| !l.starts_with('#')).count();
+
+        let untyped = without_histogram_metadata(&exposition);
+
+        assert!(exposition.contains(" histogram\n"), "{exposition}");
+        assert!(!untyped.contains(" histogram\n"), "{untyped}");
+        assert_eq!(samples(&untyped), samples(&exposition));
+        assert!(untyped.ends_with("# EOF\n"), "{untyped}");
     }
 }

@@ -2,12 +2,12 @@
 
 use crate::kernel::KernelView;
 use bytes::Bytes;
-use gfe_observability::{GfeMetrics, Log, LogDestinationLabel};
+use gfe_observability::{without_histogram_metadata, GfeMetrics, Log, LogDestinationLabel};
 use gfe_proxy::ProxyShared;
 use http_body_util::Full;
 use hyper::header::{HeaderValue, CONNECTION};
 use hyper::service::service_fn;
-use hyper::{Response, StatusCode, Version};
+use hyper::{Response, StatusCode, Uri, Version};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use std::convert::Infallible;
@@ -30,6 +30,34 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long to wait after `accept` fails before trying again. It fails
 /// again at once while its cause (no file descriptor left) lasts.
 const ACCEPT_ERROR_PAUSE: Duration = Duration::from_millis(100);
+
+/// How `/metrics` exposes the histograms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Histograms {
+    /// Declared as histograms, which is the format's own way.
+    Typed,
+    /// Without their family metadata, as series of no declared type: what
+    /// `/metrics?histograms=untyped` asks for.
+    Untyped,
+}
+
+impl Histograms {
+    /// What the query string of a scrape asks for. Parameters other than
+    /// `histograms` are not this server's and are ignored. A value it does
+    /// not know is returned as the error: a scraper with a typo in its
+    /// configuration is told, not served the default.
+    fn asked_by(query: Option<&str>) -> Result<Self, String> {
+        let value = query
+            .unwrap_or_default()
+            .split('&')
+            .find_map(|parameter| parameter.strip_prefix("histograms="));
+        match value {
+            None => Ok(Self::Typed),
+            Some("untyped") => Ok(Self::Untyped),
+            Some(unknown) => Err(unknown.to_string()),
+        }
+    }
+}
 
 /// Shared readiness state for the ops server.
 pub struct OpsState {
@@ -123,7 +151,7 @@ pub async fn serve(
                     // HTTP/2 has no such header: its clients get a GOAWAY.
                     let http1 = req.version() < Version::HTTP_2;
                     async move {
-                        let mut resp = handle(state, req.uri().path(), handed_over).await?;
+                        let mut resp = handle(state, req.uri(), handed_over).await?;
                         if handed_over && http1 {
                             resp.headers_mut()
                                 .insert(CONNECTION, HeaderValue::from_static("close"));
@@ -161,15 +189,15 @@ async fn stopped(stop: &mut watch::Receiver<bool>) {
     let _ = stop.wait_for(|stopped| *stopped).await;
 }
 
-/// Answer a request for `path`. `handed_over` is whether another process has
+/// Answer a request for `uri`. `handed_over` is whether another process has
 /// taken the ops socket over, which it does only once it is ready: the
 /// address is then ready whatever this process is doing.
 async fn handle(
     state: Arc<OpsState>,
-    path: &str,
+    uri: &Uri,
     handed_over: bool,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let resp = match path {
+    let resp = match uri.path() {
         "/healthz" => text(StatusCode::OK, "ok"),
         "/readyz" => {
             let ready = handed_over
@@ -182,6 +210,15 @@ async fn handle(
             }
         }
         "/metrics" => {
+            let histograms = match Histograms::asked_by(uri.query()) {
+                Ok(histograms) => histograms,
+                Err(unknown) => {
+                    return Ok(text(
+                        StatusCode::BAD_REQUEST,
+                        &format!("unknown value for histograms: {unknown} (known: untyped)"),
+                    ));
+                }
+            };
             let runtime = tokio::runtime::Handle::current().metrics();
             let process = &state.metrics.process;
             process.runtime_workers.set(runtime.num_workers() as i64);
@@ -218,7 +255,11 @@ async fn handle(
             // grows with the connections the proxy holds, kept off the
             // threads that serve them.
             let metrics = state.metrics.clone();
-            let Ok(body) = tokio::task::spawn_blocking(move || metrics.encode()).await else {
+            let encode = move || match histograms {
+                Histograms::Typed => metrics.encode(),
+                Histograms::Untyped => without_histogram_metadata(&metrics.encode()),
+            };
+            let Ok(body) = tokio::task::spawn_blocking(encode).await else {
                 return Ok(text(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "metrics unavailable",
@@ -302,6 +343,52 @@ mod tests {
             Ok(_) => Some(String::from_utf8_lossy(&received).to_string()),
             Err(_) => None,
         }
+    }
+
+    /// The answer of the ops server at `addr` to `GET target`.
+    async fn get(addr: SocketAddr, target: &str) -> String {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let request = format!("GET {target} HTTP/1.1\r\nhost: t\r\nconnection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).await.unwrap();
+        read_until_closed(&mut stream, Duration::from_secs(5))
+            .await
+            .expect("the server closes the connection")
+    }
+
+    const HANDSHAKE_TYPE: &str = "# TYPE gfe_tls_handshake_duration_seconds histogram";
+    const HANDSHAKE_BUCKET: &str = "gfe_tls_handshake_duration_seconds_bucket{le=\"+Inf\"}";
+
+    #[tokio::test]
+    async fn metrics_declare_their_histograms() {
+        let answer = get(ops_server().await, "/metrics").await;
+
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        assert!(answer.contains(HANDSHAKE_TYPE), "{answer}");
+        assert!(answer.contains(HANDSHAKE_BUCKET), "{answer}");
+    }
+
+    #[tokio::test]
+    async fn metrics_leave_histograms_untyped_when_asked() {
+        let answer = get(ops_server().await, "/metrics?histograms=untyped").await;
+
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        assert!(!answer.contains(HANDSHAKE_TYPE), "{answer}");
+        assert!(answer.contains(HANDSHAKE_BUCKET), "{answer}");
+    }
+
+    #[tokio::test]
+    async fn metrics_refuse_an_unknown_way_to_expose_histograms() {
+        let answer = get(ops_server().await, "/metrics?histograms=native").await;
+
+        assert!(answer.starts_with("HTTP/1.1 400"), "{answer}");
+    }
+
+    #[tokio::test]
+    async fn metrics_ignore_parameters_they_do_not_know() {
+        let answer = get(ops_server().await, "/metrics?collect=all").await;
+
+        assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+        assert!(answer.contains(HANDSHAKE_TYPE), "{answer}");
     }
 
     /// A prober whose connection the outgoing node accepted just before
