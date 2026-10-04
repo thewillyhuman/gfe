@@ -345,7 +345,7 @@ A **certificate** entry binds one or more SNI names to a PEM certificate chain +
  4. GFE node's GRE interface decapsulates → packet enters the kernel addressed
     to the VIP on the GFE's loopback. The kernel TCP stack accepts it.
  5. GFE acceptor (acceptor.rs) accepts the TCP connection (subject to limits).
- 6. TLS handshake (connection.rs → gfe-tls):
+ 6. TLS handshake (connection.rs → gfe-core):
     a. ClientHello arrives; the SNI resolver (resolver.rs) selects a certificate
        from the cert store (cert_store.rs) by SNI, falling back to default.
     b. TLS policy (policy.rs) enforces min version + cipher suites; ALPN
@@ -374,7 +374,7 @@ A **certificate** entry binds one or more SNI names to a PEM certificate chain +
 
 ## 6. Proxy Design (Data Plane)
 
-> **Code location:** `crates/gfe-proxy/` (engine) + `crates/gfe-tls/`, `crates/gfe-router/`, `crates/gfe-upstream/`
+> **Code location:** `crates/gfe-proxy/` (engine) + `crates/gfe-core/src/tls/`, `crates/gfe-router/`, `crates/gfe-upstream/`
 
 The proxy is a fully asynchronous Tokio service. Unlike `lb`'s forwarder, it terminates TCP and TLS and therefore uses the kernel stack and ordinary `tokio::net` sockets — there is no kernel bypass and no per-packet hot path to keep allocation-free. The performance discipline instead targets **per-request** overhead: zero-copy body streaming, connection reuse, and lock-free config reads.
 
@@ -399,7 +399,7 @@ Two listeners may not share an address and port (rejected by validation).
 
 ### 6.2 TLS Termination and SNI Certificate Resolution
 
-> **Code location:** `crates/gfe-tls/`
+> **Code location:** `crates/gfe-core/src/tls/`
 
 GFE terminates TLS with **rustls**. Centralized certificate management is GFE's core value proposition.
 
@@ -505,7 +505,7 @@ Bounded, predictable behaviour under stress:
 
 ## 7. Controller Design (Control Plane)
 
-> **Code location:** `crates/gfe-controller/` (orchestrator) + `crates/gfe-health/`, `crates/gfe-config/`, `crates/gfe-tls/`
+> **Code location:** `crates/gfe-controller/` (orchestrator) + `crates/gfe-health/`, `crates/gfe-config/`, `crates/gfe-core/src/tls/`
 
 The controller runs as Tokio tasks alongside the proxy. It does not handle client requests and shares with the proxy only atomic snapshots (route table, cert store) and the upstream health map.
 
@@ -576,7 +576,7 @@ The file-based model and its rationale are inherited verbatim from `lb`'s ADR-00
 
 ### 7.3 Certificate Manager
 
-> **Code location:** `crates/gfe-tls/src/cert_store.rs`, `crates/gfe-tls/src/loader.rs`
+> **Code location:** `crates/gfe-core/src/tls/cert_store.rs`, `crates/gfe-core/src/tls/loader.rs`
 
 - On config load and on cert-file change, the manager parses each certificate entry (`loader.rs`), builds an updated cert store, and swaps it in atomically.
 - It records each certificate's **not-after** time and exposes `gfe_cert_expiry_timestamp{sni}` so monitoring can alert well before expiry. The series of an SNI that a reload removes is removed with it.
@@ -1035,7 +1035,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 ### Phase 1 — Core Proxy (MVP) ✅
 
 - [x] `gfe-core`: domain types (Listener, Route, UpstreamPool, Upstream, TlsConfig, CertEntry) + bootstrap & dynamic config structs
-- [x] `gfe-tls`: cert store, SNI resolver, TLS policy / `ServerConfig` builder, PEM loader
+- [x] `gfe-core`: cert store, SNI resolver, TLS policy / `ServerConfig` builder, PEM loader
 - [x] `gfe-router`: compiled route table, host (exact + wildcard) and path (prefix/exact) matching
 - [x] `gfe-upstream`: pool handle, round-robin policy, hyper upstream client, connection pooling
 - [x] `gfe-proxy`: acceptor, per-connection TLS + HTTP serve, routing, forwarding, synthetic errors
@@ -1082,13 +1082,13 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 | Async runtime | `tokio` | proxy + control plane | The natural model for an L7 proxy |
 | HTTP server + client | `hyper` 1.x + `hyper-util` | `gfe-proxy`, `gfe-upstream` | h1/h2 server and client, streaming bodies, battle-tested |
 | HTTP types / bodies | `http`, `http-body-util` | `gfe-proxy`, `gfe-upstream` | Shared request/response and streaming-body abstractions |
-| TLS | `rustls` + `tokio-rustls` | `gfe-tls` | Safe, modern TLS; pluggable `ResolvesServerCert` for SNI |
-| Cert parsing | `rustls-pemfile`, `x509-parser` | `gfe-tls` | PEM loading and not-after extraction |
+| TLS | `rustls` + `tokio-rustls` | `gfe-core` | Safe, modern TLS; pluggable `ResolvesServerCert` for SNI |
+| Cert parsing | `rustls-pemfile`, `x509-parser` | `gfe-core` | PEM loading and not-after extraction |
 | Upstream trust roots | `rustls-native-certs` / `webpki-roots` | `gfe-upstream` | Validate upstream TLS |
-| ACME (Phase 3) | `instant-acme` | `gfe-tls` | Async, rustls-native certificate automation |
+| ACME (Phase 3) | `instant-acme` | `gfe-core` | Async, rustls-native certificate automation |
 | Config serialization | `serde` + `toml` + `serde_json` | `gfe-core`, `gfe-config` | TOML bootstrap, JSON dynamic config (mirrors `lb`) |
 | File watching | `notify` | `gfe-config` | inotify-based hot reload (ADR-001) |
-| Atomic config swap | `arc-swap` | `gfe-router`, `gfe-tls`, `gfe-config` | Lock-free snapshot reads on the hot path |
+| Atomic config swap | `arc-swap` | `gfe-router`, `gfe-core`, `gfe-config` | Lock-free snapshot reads on the hot path |
 | Shared health map | `dashmap` | `gfe-health` | Concurrent reads from the data plane |
 | Metrics | `prometheus-client` | `gfe-observability` | Direct Prometheus exposition (same as `lb`) |
 | Logging / tracing | `tracing` + `tracing-subscriber` | all | Structured, async-aware, runtime-adjustable levels |

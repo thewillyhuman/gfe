@@ -73,8 +73,9 @@ impl Node {
             TimeoutsConfig::default(),
             TlsConfig::default(),
         ));
-        let server_config =
-            Arc::new(gfe_tls::server_config(shared.resolver.clone(), MinVersion::Tls12).unwrap());
+        let server_config = Arc::new(
+            gfe_core::tls::server_config(shared.resolver.clone(), MinVersion::Tls12).unwrap(),
+        );
         let (shutdown, shutdown_rx) = watch::channel(false);
         let listeners = Arc::new(ListenerSet::new(shared.clone(), server_config, shutdown_rx));
         listeners.adopt(sockets);

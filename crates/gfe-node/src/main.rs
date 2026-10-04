@@ -154,7 +154,7 @@ async fn run(
     // The TLS server config is shared across https listeners. Cert rotation
     // flows through the resolver's swappable store, so it is never rebuilt.
     let server_config = Arc::new(
-        gfe_tls::server_config(resolver.clone(), node.tls.min_version)
+        gfe_core::tls::server_config(resolver.clone(), node.tls.min_version)
             .map_err(|e| anyhow::anyhow!("building TLS server config: {e}"))?,
     );
 

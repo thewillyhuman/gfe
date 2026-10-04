@@ -1,9 +1,9 @@
 //! Builds the rustls [`ServerConfig`] enforcing the fleet TLS policy:
 //! minimum protocol version and ALPN advertisement.
 
-use crate::resolver::SniResolver;
-use gfe_core::config::MinVersion;
-use gfe_core::GfeError;
+use crate::config::MinVersion;
+use crate::tls::resolver::SniResolver;
+use crate::GfeError;
 use rustls::ServerConfig;
 use std::sync::Arc;
 
@@ -47,7 +47,7 @@ pub fn server_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cert_store::CertStore;
+    use crate::tls::cert_store::CertStore;
 
     #[test]
     fn builds_server_config() {

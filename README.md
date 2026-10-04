@@ -86,7 +86,7 @@ GRE-decapsulated packets reach GFE's socket and responses return via DSR.
 
 ## Performance
 
-All numbers from `cargo bench` (criterion, release profile, single-threaded, Apple M-series). Reproduce with `cargo bench -p gfe-router --bench routing`, `-p gfe-upstream --bench selection`, `-p gfe-tls --bench handshake`.
+All numbers from `cargo bench` (criterion, release profile, single-threaded, Apple M-series). Reproduce with `cargo bench -p gfe-router --bench routing`, `-p gfe-upstream --bench selection`, `-p gfe-core --bench handshake`.
 
 **Routing (`gfe-router`)** — match cost is **O(1) in the number of routes** (exact-host hashmap + bounded per-host prefix list):
 
@@ -111,7 +111,7 @@ ring_build/20                  216 µs   (control plane, on reload only)
 hash64                        22.9 ns
 ```
 
-**TLS (`gfe-tls`)**:
+**TLS (`gfe-core`)**:
 
 ```
 tls13_full_handshake_ecdsa_p256   133 µs   (full client+server handshake, in-process)
@@ -213,9 +213,8 @@ cd demo && docker compose up -d --build   # then open http://localhost:13000
 
 ```
 crates/
-  gfe-core/        Domain types + config (bootstrap TOML + dynamic JSON)
+  gfe-core/         Config (types, loading, validation); TLS termination
   gfe-router/       Compiled route table: host (exact/wildcard) + path matching
-  gfe-tls/          Cert store, SNI resolver, TLS policy, ACME challenge store
   gfe-upstream/     Pools, LB policies, shared health map, pooled hyper client
   gfe-proxy/        Data plane: acceptor, TLS termination, routing, forwarding
   gfe-health/       L7 probes (TCP/HTTP/HTTPS), state machine, checker
@@ -248,7 +247,7 @@ cargo test --workspace          # unit + integration tests
 cargo clippy --workspace --all-targets
 cargo bench -p gfe-router --bench routing
 cargo bench -p gfe-upstream --bench selection
-cargo bench -p gfe-tls --bench handshake
+cargo bench -p gfe-core --bench handshake
 ./scripts/loadtest.sh 64 6      # end-to-end load test (mock upstream + real node)
 ```
 

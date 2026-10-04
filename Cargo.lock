@@ -583,7 +583,6 @@ dependencies = [
  "gfe-observability",
  "gfe-proxy",
  "gfe-router",
- "gfe-tls",
  "gfe-upstream",
  "notify",
  "rcgen",
@@ -601,7 +600,6 @@ dependencies = [
  "gfe-health",
  "gfe-observability",
  "gfe-proxy",
- "gfe-tls",
  "gfe-upstream",
  "notify",
  "rcgen",
@@ -614,10 +612,17 @@ dependencies = [
 name = "gfe-core"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
+ "criterion",
+ "dashmap",
+ "rcgen",
+ "rustls",
+ "rustls-pemfile",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "toml",
+ "x509-parser",
 ]
 
 [[package]]
@@ -686,7 +691,6 @@ dependencies = [
  "gfe-health",
  "gfe-observability",
  "gfe-proxy",
- "gfe-tls",
  "gfe-upstream",
  "http",
  "http-body-util",
@@ -723,7 +727,6 @@ dependencies = [
  "gfe-core",
  "gfe-observability",
  "gfe-router",
- "gfe-tls",
  "gfe-upstream",
  "http",
  "http-body-util",
@@ -744,21 +747,6 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "gfe-core",
-]
-
-[[package]]
-name = "gfe-tls"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "criterion",
- "dashmap",
- "gfe-core",
- "rcgen",
- "rustls",
- "rustls-pemfile",
- "tracing",
- "x509-parser",
 ]
 
 [[package]]

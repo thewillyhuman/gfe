@@ -2,11 +2,11 @@
 //! atomically. In-flight requests finish on the old snapshots.
 
 use gfe_core::config::{validate, DynamicConfig};
+use gfe_core::tls::CertStore;
 use gfe_core::GfeError;
 use gfe_observability::SniLabel;
 use gfe_proxy::ProxyShared;
 use gfe_router::RouteTable;
-use gfe_tls::CertStore;
 use gfe_upstream::PoolSet;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};

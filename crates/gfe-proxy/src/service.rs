@@ -39,7 +39,7 @@ pub async fn handle_request(
 
     // ACME http-01 challenge: served on the plaintext HTTP listener before
     // routing, so a cert can be issued for a host that has no cert yet.
-    if !ctx.is_tls && path.starts_with(gfe_tls::ACME_CHALLENGE_PREFIX) {
+    if !ctx.is_tls && path.starts_with(gfe_core::tls::ACME_CHALLENGE_PREFIX) {
         let resp = match ctx.shared.challenges.resolve_path(&path) {
             Some(key_auth) => fixed_response(200, &key_auth, record.request_id()),
             None => {

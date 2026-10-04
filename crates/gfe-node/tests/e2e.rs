@@ -107,7 +107,7 @@ fn listener_set(
 ) -> (ListenerSet, watch::Sender<bool>) {
     gfe_config::apply(&shared, cfg).expect("apply config");
     let server_config = Arc::new(
-        gfe_tls::server_config(shared.resolver.clone(), gfe_core::config::MinVersion::Tls12)
+        gfe_core::tls::server_config(shared.resolver.clone(), gfe_core::config::MinVersion::Tls12)
             .unwrap(),
     );
     let (tx, rx) = watch::channel(false);

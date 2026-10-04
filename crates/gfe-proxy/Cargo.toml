@@ -9,7 +9,6 @@ publish.workspace = true
 [dependencies]
 gfe-core = { workspace = true }
 gfe-router = { workspace = true }
-gfe-tls = { workspace = true }
 gfe-upstream = { workspace = true }
 gfe-observability = { workspace = true }
 tokio = { workspace = true }
@@ -28,7 +27,6 @@ rand = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 
 [dev-dependencies]
-gfe-tls = { workspace = true }
 rcgen = { workspace = true }
 
 [lints]

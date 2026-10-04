@@ -1,9 +1,9 @@
 //! The SNI → certificate map, built from the dynamic config and swapped
 //! atomically on reload.
 
-use crate::loader::load_cert_files;
-use gfe_core::config::CertEntry;
-use gfe_core::GfeError;
+use crate::config::CertEntry;
+use crate::tls::loader::load_cert_files;
+use crate::GfeError;
 use rustls::sign::CertifiedKey;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -116,7 +116,7 @@ fn wildcard_suffix_matches(suffix: &str, host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loader::self_signed;
+    use crate::tls::loader::self_signed;
     use std::io::Write;
 
     fn write_temp(bytes: &[u8], suffix: &str) -> std::path::PathBuf {

@@ -2,7 +2,7 @@
 //! [`CertStore`], so certificate rotation never interrupts in-flight
 //! handshakes.
 
-use crate::cert_store::CertStore;
+use crate::tls::cert_store::CertStore;
 use arc_swap::ArcSwap;
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
