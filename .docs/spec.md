@@ -505,7 +505,7 @@ Bounded, predictable behaviour under stress:
 
 ## 7. Controller Design (Control Plane)
 
-> **Code location:** `crates/gfe-controller/` (orchestrator) + `crates/gfe-health-checking/`, `crates/gfe-config/`, `crates/gfe-core/src/tls/`
+> **Code location:** `crates/gfe-controller/` (orchestrator) + `crates/gfe-health-checking/`, `crates/gfe-proxy/src/reload/`, `crates/gfe-core/src/tls/`
 
 The controller runs as Tokio tasks alongside the proxy. It does not handle client requests and shares with the proxy only atomic snapshots (route table, cert store) and the upstream health map.
 
@@ -562,7 +562,7 @@ Since all upstreams have globally routable IPs across the organization's IP serv
 
 ### 7.2 Config Manager
 
-> **Code location:** `crates/gfe-config/`
+> **Code location:** `crates/gfe-proxy/src/reload/`
 
 Responsibilities:
 
@@ -1040,7 +1040,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] `gfe-load-balancing`: pool handle, round-robin policy, hyper upstream client, connection pooling
 - [x] `gfe-proxy`: acceptor, per-connection TLS + HTTP serve, routing, forwarding, synthetic errors
 - [x] `gfe-observability`: proxy metrics + Prometheus endpoint
-- [x] `gfe-config`: loader + validator + applier (atomic swap) for the dynamic config
+- [x] `gfe-proxy`: loader + validator + applier (atomic swap) for the dynamic config
 - [x] `gfe-node`: binary wiring proxy + config from local file; `--check-config`
 - [x] Integration tests (TLS termination, routing, proxying) against mock upstreams
 - [x] `config/gfe.example.toml`
@@ -1048,7 +1048,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 ### Phase 2 — Control Plane and Resilience ✅
 
 - [x] `gfe-health-checking`: HTTP/HTTPS/TCP probes, dedup, state machine, shared health map
-- [x] `gfe-config`: inotify watcher + debounce + last-known-good cache
+- [x] `gfe-proxy`: inotify watcher + debounce + last-known-good cache
 - [x] `gfe-controller`: orchestrator wiring config + health + cert lifecycle
 - [x] `gfe-load-balancing`: `least_request` and `ring_hash` (affinity) policies, upstream TLS validation
 - [x] bounded pools — idle connections bounded per host; open upstream connections capped node-wide (`max_upstream_connections`)
@@ -1086,9 +1086,9 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 | Cert parsing | `rustls-pemfile`, `x509-parser` | `gfe-core` | PEM loading and not-after extraction |
 | Upstream trust roots | `rustls-native-certs` / `webpki-roots` | `gfe-load-balancing` | Validate upstream TLS |
 | ACME (Phase 3) | `instant-acme` | `gfe-core` | Async, rustls-native certificate automation |
-| Config serialization | `serde` + `toml` + `serde_json` | `gfe-core`, `gfe-config` | TOML bootstrap, JSON dynamic config (mirrors `lb`) |
-| File watching | `notify` | `gfe-config` | inotify-based hot reload (ADR-001) |
-| Atomic config swap | `arc-swap` | `gfe-proxy`, `gfe-core`, `gfe-config` | Lock-free snapshot reads on the hot path |
+| Config serialization | `serde` + `toml` + `serde_json` | `gfe-core`, `gfe-proxy` | TOML bootstrap, JSON dynamic config (mirrors `lb`) |
+| File watching | `notify` | `gfe-proxy` | inotify-based hot reload (ADR-001) |
+| Atomic config swap | `arc-swap` | `gfe-proxy`, `gfe-core`, `gfe-proxy` | Lock-free snapshot reads on the hot path |
 | Shared health map | `dashmap` | `gfe-health-checking` | Concurrent reads from the data plane |
 | Metrics | `prometheus-client` | `gfe-observability` | Direct Prometheus exposition (same as `lb`) |
 | Logging / tracing | `tracing` + `tracing-subscriber` | all | Structured, async-aware, runtime-adjustable levels |

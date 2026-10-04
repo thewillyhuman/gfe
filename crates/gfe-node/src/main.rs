@@ -109,7 +109,7 @@ fn main() -> Result<()> {
 fn check_dynamic_config(path: &Path) -> Result<()> {
     let dynamic = gfe_core::config::load_dynamic_config(path)
         .with_context(|| format!("loading dynamic config {}", path.display()))?;
-    gfe_config::prepare(&dynamic).context("checking dynamic config")?;
+    gfe_proxy::reload::prepare(&dynamic).context("checking dynamic config")?;
     println!(
         "config OK: {} listeners, {} routes, {} pools, {} certificates",
         dynamic.listeners.len(),

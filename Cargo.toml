@@ -5,7 +5,6 @@ members = [
     "crates/gfe-limits",
     "crates/gfe-load-balancing",
     "crates/gfe-proxy",
-    "crates/gfe-config",
     "crates/gfe-node",
     "crates/gfe-health-checking",
     "crates/gfe-controller",
@@ -16,7 +15,7 @@ members = [
     "crates/gfe-handover",
     # Crates are added to this list as they are implemented (see roadmap in
     # .docs/spec.md). The full set: gfe-observability,
-    # gfe-load-balancing, gfe-proxy, gfe-health-checking, gfe-config, gfe-controller,
+    # gfe-load-balancing, gfe-proxy, gfe-health-checking, gfe-controller,
     # gfe-node.
 ]
 resolver = "2"
@@ -44,7 +43,6 @@ gfe-limits = { path = "crates/gfe-limits" }
 gfe-load-balancing = { path = "crates/gfe-load-balancing" }
 gfe-proxy = { path = "crates/gfe-proxy" }
 gfe-health-checking = { path = "crates/gfe-health-checking" }
-gfe-config = { path = "crates/gfe-config" }
 gfe-controller = { path = "crates/gfe-controller" }
 gfe-ebpf = { path = "crates/gfe-ebpf" }
 gfe-handover = { path = "crates/gfe-handover" }

@@ -108,7 +108,7 @@ fn listener_set(
     cfg: &DynamicConfig,
     shared: Arc<ProxyShared>,
 ) -> (ListenerSet, watch::Sender<bool>) {
-    gfe_config::apply(&shared, cfg).expect("apply config");
+    gfe_proxy::reload::apply(&shared, cfg).expect("apply config");
     let server_config = Arc::new(
         gfe_core::tls::server_config(shared.resolver.clone(), gfe_core::config::MinVersion::Tls12)
             .unwrap(),
@@ -817,7 +817,7 @@ async fn open_connection_follows_a_renamed_listener() {
     // Same address, new id, and the route follows the new id.
     cfg.listeners[0].id = ListenerId("renamed".into());
     cfg.routes[0].listener = ListenerId("renamed".into());
-    gfe_config::apply(&shared, &cfg).expect("apply config");
+    gfe_proxy::reload::apply(&shared, &cfg).expect("apply config");
     reconcile(&listeners, &cfg.listeners);
     stream.write_all(KEEP_ALIVE_GET).await.unwrap();
     let status_line = read_status_line(&mut stream).await;

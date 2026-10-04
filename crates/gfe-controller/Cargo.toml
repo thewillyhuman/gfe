@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 gfe-core = { workspace = true }
-gfe-config = { workspace = true }
 gfe-health-checking = { workspace = true }
 gfe-proxy = { workspace = true }
 gfe-observability = { workspace = true }

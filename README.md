@@ -221,7 +221,6 @@ crates/
   gfe-proxy/        What happens to a request: routing (host and path
                     matching), forwarding, accounting
   gfe-health-checking/  L7 probes, state machine, checker, health map
-  gfe-config/       Load, validate, apply (atomic swap), watch, cache
   gfe-controller/   Orchestrator: config + health + cache + hot-reload
   gfe-observability/  Prometheus metrics; the non-blocking log
   gfe-ebpf/         Optional kernel view of the node's TCP connections (eBPF)

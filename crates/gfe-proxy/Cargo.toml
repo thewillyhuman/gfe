@@ -18,9 +18,12 @@ http-body-util = { workspace = true }
 bytes = { workspace = true }
 arc-swap = { workspace = true }
 tracing = { workspace = true }
+serde_json = { workspace = true }
+notify = { workspace = true }
 rand = { workspace = true }
 
 [dev-dependencies]
+rcgen = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

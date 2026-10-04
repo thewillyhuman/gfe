@@ -10,6 +10,7 @@ pub mod errors;
 pub mod forward;
 pub mod progress;
 pub mod record;
+pub mod reload;
 pub mod routing;
 pub mod service;
 

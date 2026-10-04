@@ -1,13 +1,13 @@
 //! Compile a validated dynamic config into snapshots and swap them in
 //! atomically. In-flight requests finish on the old snapshots.
 
+use crate::routing::RouteTable;
+use crate::ProxyShared;
 use gfe_core::config::{validate, DynamicConfig};
 use gfe_core::tls::CertStore;
 use gfe_core::GfeError;
 use gfe_load_balancing::PoolSet;
 use gfe_observability::SniLabel;
-use gfe_proxy::routing::RouteTable;
-use gfe_proxy::ProxyShared;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
