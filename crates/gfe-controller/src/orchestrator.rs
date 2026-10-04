@@ -5,7 +5,7 @@
 use gfe_config::{cache, install, prepare, spawn_watcher, CertFiles};
 use gfe_core::config::{load_dynamic_config, DynamicConfig, HealthCheckConfig, NodeConfig};
 use gfe_core::GfeError;
-use gfe_health::HealthChecker;
+use gfe_health_checking::HealthChecker;
 use gfe_proxy::{ListenerSet, ProxyShared};
 use notify::RecommendedWatcher;
 use std::path::PathBuf;

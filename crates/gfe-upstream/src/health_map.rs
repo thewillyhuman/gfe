@@ -1,6 +1,6 @@
 //! Shared backend health state.
 //!
-//! Written by the control plane (`gfe-health`) and read by the data plane on
+//! Written by the control plane (`gfe-health-checking`) and read by the data plane on
 //! every upstream selection. Lives in this crate because the hot-path reader
 //! owns it; the control plane depends on this crate to write it.
 

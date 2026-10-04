@@ -218,7 +218,7 @@ crates/
   gfe-router/       Compiled route table: host (exact/wildcard) + path matching
   gfe-upstream/     Pools, LB policies, shared health map
   gfe-proxy/        Data plane: acceptor, TLS termination, routing, forwarding
-  gfe-health/       L7 probes (TCP/HTTP/HTTPS), state machine, checker
+  gfe-health-checking/  L7 probes (TCP/HTTP/HTTPS), state machine, checker
   gfe-config/       Load, validate, apply (atomic swap), watch, cache
   gfe-controller/   Orchestrator: config + health + cache + hot-reload
   gfe-observability/  Prometheus metrics; the non-blocking log

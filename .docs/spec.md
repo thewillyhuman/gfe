@@ -185,7 +185,7 @@ gfe/
 │   │  CONTROL PLANE — async, Tokio-based
 │   │  ─────────────────────────────────
 │   │
-│   ├── gfe-health/                 # L7 upstream health checking
+│   ├── gfe-health-checking/                 # L7 upstream health checking
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
@@ -277,7 +277,7 @@ gfe/
                       /                \
               gfe-proxy            gfe-controller
              /    |    \           /      |       \
-      gfe-tls gfe-router gfe-upstream  gfe-health gfe-config
+      gfe-tls gfe-router gfe-upstream  gfe-health-checking gfe-config
             \      |        |    /        |        /
              ──────── gfe-observability ───────
                           |
@@ -505,20 +505,20 @@ Bounded, predictable behaviour under stress:
 
 ## 7. Controller Design (Control Plane)
 
-> **Code location:** `crates/gfe-controller/` (orchestrator) + `crates/gfe-health/`, `crates/gfe-config/`, `crates/gfe-core/src/tls/`
+> **Code location:** `crates/gfe-controller/` (orchestrator) + `crates/gfe-health-checking/`, `crates/gfe-config/`, `crates/gfe-core/src/tls/`
 
 The controller runs as Tokio tasks alongside the proxy. It does not handle client requests and shares with the proxy only atomic snapshots (route table, cert store) and the upstream health map.
 
 ### 7.1 L7 Health Checking
 
-> **Code location:** `crates/gfe-health/`
+> **Code location:** `crates/gfe-health-checking/`
 
 GFE health-checks every upstream in every referenced pool — at **L7**, which is richer than the L4 LB's TCP/connectivity checks.
 
 Each probe implements the `Probe` trait:
 
 ```rust
-/// crates/gfe-health/src/probe.rs
+/// crates/gfe-health-checking/src/probe.rs
 #[async_trait]
 pub trait Probe: Send + Sync {
     async fn check(&self, target: &Upstream, timeout: Duration) -> ProbeResult;
@@ -586,7 +586,7 @@ The file-based model and its rationale are inherited verbatim from `lb`'s ADR-00
 
 ### 7.4 Lame Duck and Graceful Drain
 
-> **Code location:** `crates/gfe-health/src/state_machine.rs`, `crates/gfe-proxy/src/drain.rs`
+> **Code location:** `crates/gfe-health-checking/src/state_machine.rs`, `crates/gfe-proxy/src/drain.rs`
 
 **Upstream lame duck (zero-downtime backend deploys).** A backend signals it wants to drain — by serving a configured **lame-duck response** on its health endpoint (e.g. a `503` with a known marker, or a dedicated drain path) — and the health state machine moves it to `DRAINING`. While draining:
 
@@ -1047,7 +1047,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 
 ### Phase 2 — Control Plane and Resilience ✅
 
-- [x] `gfe-health`: HTTP/HTTPS/TCP probes, dedup, state machine, shared health map
+- [x] `gfe-health-checking`: HTTP/HTTPS/TCP probes, dedup, state machine, shared health map
 - [x] `gfe-config`: inotify watcher + debounce + last-known-good cache
 - [x] `gfe-controller`: orchestrator wiring config + health + cert lifecycle
 - [x] `gfe-upstream`: `least_request` and `ring_hash` (affinity) policies, upstream TLS validation
@@ -1089,7 +1089,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 | Config serialization | `serde` + `toml` + `serde_json` | `gfe-core`, `gfe-config` | TOML bootstrap, JSON dynamic config (mirrors `lb`) |
 | File watching | `notify` | `gfe-config` | inotify-based hot reload (ADR-001) |
 | Atomic config swap | `arc-swap` | `gfe-router`, `gfe-core`, `gfe-config` | Lock-free snapshot reads on the hot path |
-| Shared health map | `dashmap` | `gfe-health` | Concurrent reads from the data plane |
+| Shared health map | `dashmap` | `gfe-health-checking` | Concurrent reads from the data plane |
 | Metrics | `prometheus-client` | `gfe-observability` | Direct Prometheus exposition (same as `lb`) |
 | Logging / tracing | `tracing` + `tracing-subscriber` | all | Structured, async-aware, runtime-adjustable levels |
 | CLI | `clap` | `gfe-node` | Arg parsing (same as `lb`) |

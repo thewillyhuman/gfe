@@ -34,7 +34,7 @@ rustix = { workspace = true, features = ["process"] }
 serde_json = { workspace = true }
 tracing-subscriber = { workspace = true }
 gfe-handover = { workspace = true }
-gfe-health = { workspace = true }
+gfe-health-checking = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }

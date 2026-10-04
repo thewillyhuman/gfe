@@ -126,7 +126,7 @@ impl HttpProbe {
         let req = Request::builder()
             .uri(&self.path)
             .header("host", host)
-            .header("user-agent", "gfe-health/0.1")
+            .header("user-agent", "gfe-health-checking/0.1")
             .body(Empty::<Bytes>::new())
             .ok()?;
         let resp = sender.send_request(req).await.ok()?;
@@ -219,7 +219,7 @@ impl GrpcProbe {
             ))
             .header("content-type", "application/grpc")
             .header("te", "trailers")
-            .header("user-agent", "gfe-health/0.1")
+            .header("user-agent", "gfe-health-checking/0.1")
             .body(Full::new(Bytes::from_static(CHECK_REQUEST)))
             .ok()?;
         let resp = sender.send_request(req).await.ok()?;

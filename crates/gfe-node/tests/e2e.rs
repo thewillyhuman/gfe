@@ -411,7 +411,7 @@ async fn serves_acme_http01_challenge() {
 #[tokio::test]
 async fn health_failover_excludes_dead_backend() {
     use gfe_core::config::{HealthCheckConfig, ProbeType};
-    use gfe_health::HealthChecker;
+    use gfe_health_checking::HealthChecker;
 
     // One healthy upstream, one dead (closed port).
     let good = spawn_upstream().await;

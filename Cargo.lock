@@ -597,7 +597,7 @@ version = "0.1.0"
 dependencies = [
  "gfe-config",
  "gfe-core",
- "gfe-health",
+ "gfe-health-checking",
  "gfe-observability",
  "gfe-proxy",
  "notify",
@@ -651,7 +651,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gfe-health"
+name = "gfe-health-checking"
 version = "0.1.0"
 dependencies = [
  "async-trait",
@@ -696,7 +696,7 @@ dependencies = [
  "gfe-core",
  "gfe-ebpf",
  "gfe-handover",
- "gfe-health",
+ "gfe-health-checking",
  "gfe-observability",
  "gfe-proxy",
  "http",
