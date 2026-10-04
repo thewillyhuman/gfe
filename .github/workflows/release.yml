@@ -168,6 +168,10 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
+          # Only what build-binaries uploaded. The image build leaves an
+          # artifact of its own in the run (its build record), which is not
+          # a zip: downloading everything fails on it.
+          pattern: '*-unknown-linux-musl'
           path: dist
       - name: Flatten artifact layout
         run: |
