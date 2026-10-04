@@ -970,7 +970,7 @@ The ops server serves at most 64 connections at once and closes any over that at
 
 ### Upgrading a Node in Place
 
-> **Code location:** `crates/gfe-node/src/upgrade.rs`, `crates/gfe-handover`
+> **Code location:** `crates/gfe-node/src/upgrade.rs`, `crates/gfe-node/src/handover.rs`
 
 A new binary, or a change to the bootstrap config (which is read once, at startup), needs a new process. It does not need the listening sockets to be closed. On `SIGUSR2` a node replaces itself (Unix only):
 

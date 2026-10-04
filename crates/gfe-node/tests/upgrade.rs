@@ -2,7 +2,7 @@
 //! upgrades itself would run it.
 #![cfg(unix)]
 
-use gfe_handover::Sockets;
+use gfe_node::handover::Sockets;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::fd::OwnedFd;
@@ -133,10 +133,11 @@ impl Successor {
             .process_group(0)
             .spawn()
             .unwrap();
-        gfe_handover::send(&ours, &sockets).unwrap();
+        gfe_node::handover::send(&ours, &sockets).unwrap();
         let deadline = Instant::now() + Duration::from_secs(20);
-        gfe_handover::await_receipt(&ours, deadline).expect("the node should take the sockets");
-        gfe_handover::await_confirmation(&ours, deadline).expect("the node should take over");
+        gfe_node::handover::await_receipt(&ours, deadline)
+            .expect("the node should take the sockets");
+        gfe_node::handover::await_confirmation(&ours, deadline).expect("the node should take over");
 
         Successor {
             launcher,

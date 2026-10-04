@@ -25,11 +25,9 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-gfe-handover = { workspace = true }
-rustix = { workspace = true, features = ["process"] }
-
-[dev-dependencies]
-gfe-handover = { workspace = true }
+# `net`: passing the listening sockets to a successor. `process`: replacing
+# the running node.
+rustix = { workspace = true, features = ["net", "process"] }
 
 # RPM packaging, built by `cargo generate-rpm -p crates/gfe-node` from the
 # release binary (see packaging/rpm/README.md). The package is named `gfe`

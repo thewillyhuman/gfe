@@ -20,8 +20,7 @@
 //!
 //! The sockets travel as ancillary data (`SCM_RIGHTS`), which is how a Unix
 //! socket carries open file descriptors from one process to another. Unix
-//! only: elsewhere this crate is empty.
-#![cfg(unix)]
+//! only: elsewhere this module is not built.
 
 use rustix::io::{fcntl_setfd, retry_on_intr, FdFlags};
 use rustix::net::{

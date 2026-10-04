@@ -617,13 +617,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gfe-handover"
-version = "0.1.0"
-dependencies = [
- "rustix",
-]
-
-[[package]]
 name = "gfe-health-checking"
 version = "0.1.0"
 dependencies = [
@@ -680,7 +673,6 @@ dependencies = [
  "clap",
  "gfe-core",
  "gfe-ebpf",
- "gfe-handover",
  "gfe-observability",
  "gfe-proxy",
  "http-body-util",

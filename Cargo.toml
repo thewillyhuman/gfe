@@ -10,8 +10,6 @@ members = [
     "crates/gfe-loadtest",
     # Kernel-side view of the node's TCP connections (eBPF, Linux only).
     "crates/gfe-ebpf",
-    # Passing a node's listening sockets to its successor (Unix only).
-    "crates/gfe-handover",
     # Crates are added to this list as they are implemented (see roadmap in
     # .docs/spec.md). The full set: gfe-observability,
     # gfe-load-balancing, gfe-proxy, gfe-health-checking,
@@ -43,7 +41,6 @@ gfe-load-balancing = { path = "crates/gfe-load-balancing" }
 gfe-proxy = { path = "crates/gfe-proxy" }
 gfe-health-checking = { path = "crates/gfe-health-checking" }
 gfe-ebpf = { path = "crates/gfe-ebpf" }
-gfe-handover = { path = "crates/gfe-handover" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

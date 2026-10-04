@@ -3,7 +3,7 @@
 //! A node told to upgrade starts the binary it was started from, as that
 //! binary is on disk now, with `--upgrade` and, as its standard input, a Unix
 //! socket to itself ([`hand_over`]). Over that socket the successor is given
-//! the listening sockets ([`gfe_handover`], [`take_over`]). Once it accepts
+//! the listening sockets ([`gfe_node::handover`], [`take_over`]). Once it accepts
 //! connections on them it says so, and only then does the node that started
 //! it stop accepting and drain.
 //!
@@ -61,7 +61,7 @@ impl Predecessor {
     /// stops doing so and winds down.
     pub fn release(self) -> std::io::Result<()> {
         #[cfg(unix)]
-        gfe_handover::confirm(&self.channel)?;
+        gfe_node::handover::confirm(&self.channel)?;
         Ok(())
     }
 }
@@ -79,7 +79,7 @@ pub fn take_over() -> Result<(Predecessor, Inherited)> {
         .try_clone_to_owned()
         .context("duplicating standard input")?;
     let channel = UnixStream::from(stdin);
-    let sockets = gfe_handover::receive(&channel)
+    let sockets = gfe_node::handover::receive(&channel)
         .context("receiving the listening sockets of the running node")?;
     let inherited = Inherited {
         listeners: sockets.listeners,
@@ -123,7 +123,7 @@ pub async fn hand_over(
         })
         .transpose()
         .context("duplicating the ops socket")?;
-    let sockets = gfe_handover::Sockets {
+    let sockets = gfe_node::handover::Sockets {
         listeners: listeners
             .sockets()
             .context("duplicating the listening sockets")?,
@@ -175,7 +175,7 @@ impl Drop for Abandon {
 /// `sockets` over, unless `abandoned` is set first.
 #[cfg(unix)]
 fn start_successor(
-    sockets: &gfe_handover::Sockets,
+    sockets: &gfe_node::handover::Sockets,
     ours: std::os::unix::net::UnixStream,
     theirs: std::os::unix::net::UnixStream,
     abandoned: &AtomicBool,
@@ -204,9 +204,9 @@ fn start_successor(
     );
 
     let deadline = Instant::now() + SUCCESSOR_START_TIMEOUT;
-    gfe_handover::send(&ours, sockets).map_err(not_taken_over)?;
-    let successor = gfe_handover::await_receipt(&ours, deadline).map_err(not_taken_over)?;
-    gfe_handover::await_confirmation(&ours, deadline).map_err(|e| {
+    gfe_node::handover::send(&ours, sockets).map_err(not_taken_over)?;
+    let successor = gfe_node::handover::await_receipt(&ours, deadline).map_err(not_taken_over)?;
+    gfe_node::handover::await_confirmation(&ours, deadline).map_err(|e| {
         if timed_out(&e) || abandoned.load(Ordering::SeqCst) {
             // It says it accepts connections as soon as it does, so one that
             // has not said so holds none that killing it would break.
