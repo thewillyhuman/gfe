@@ -98,23 +98,6 @@ jobs:
           tar -czf "$tarball" -C "$stage" .
           sha256sum "$tarball" > "$tarball.sha256"
           echo "ARTIFACT=$tarball" >> "$GITHUB_ENV"
-      - name: Install cargo-generate-rpm
-        run: cargo install cargo-generate-rpm --locked
-      - name: Build RPM
-        # Packages the binaries built above; no rpmbuild involved. The RPM
-        # version is the tag, with a pre-release dash turned into RPM's `~`.
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          version="${version//-/\~}"
-          cargo generate-rpm -p crates/gfe-node --target ${{ matrix.target }} \
-            -s "version = '${version}'"
-          rpm=$(ls target/${{ matrix.target }}/generate-rpm/gfe-*.rpm)
-          # Written from the RPM's directory, so that the checksum names the
-          # file alone: it is checked next to a downloaded RPM, where the
-          # path it has here does not exist.
-          (cd "$(dirname "$rpm")" && sha256sum "$(basename "$rpm")" > "$(basename "$rpm").sha256")
-          echo "RPM=$rpm" >> "$GITHUB_ENV"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -122,8 +105,56 @@ jobs:
           path: |
             ${{ env.ARTIFACT }}
             ${{ env.ARTIFACT }}.sha256
-            ${{ env.RPM }}
-            ${{ env.RPM }}.sha256
+          retention-days: 7
+
+  # The RPMs are built here and not next to the binaries so that the image
+  # does not wait for the packaging tool, which takes longer to compile than
+  # the packages take to build. This job and the image run side by side, and
+  # the tool is compiled once for both architectures.
+  build-rpm:
+    name: rpm packages
+    runs-on: ubuntu-latest
+    needs: build-binaries
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Download the tarballs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-unknown-linux-musl'
+          path: dist
+      - name: Install cargo-generate-rpm
+        # From source: its authors publish no binaries.
+        run: cargo install cargo-generate-rpm --locked
+      - name: Build the RPMs
+        # Packages the binaries of the tarballs; no rpmbuild involved. The
+        # tool only reads files, so one machine builds the packages of both
+        # architectures. The RPM version is the tag, with a pre-release dash
+        # turned into RPM's `~`.
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          version="${version//-/\~}"
+          mkdir rpms
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            # Where `cargo generate-rpm --target` looks for the binaries.
+            mkdir -p "target/$target/release"
+            tar -xzf dist/"$target"/gfe-*.tar.gz -C "target/$target/release" ./gfe-node ./gfe-trace
+            cargo generate-rpm -p crates/gfe-node --target "$target" -s "version = '${version}'"
+            mv "target/$target"/generate-rpm/gfe-*.rpm rpms/
+          done
+          # Written from the RPMs' directory, so that each checksum names
+          # the file alone: it is checked next to a downloaded RPM.
+          cd rpms
+          for rpm in gfe-*.rpm; do
+            sha256sum "$rpm" > "$rpm.sha256"
+          done
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpms
+          path: rpms/
           retention-days: 7
 
   build-image:
@@ -189,19 +220,24 @@ jobs:
   release:
     name: github release
     runs-on: ubuntu-latest
-    needs: [test, build-binaries, build-image]
+    needs: [test, build-binaries, build-image, build-rpm]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # so the release-notes generator sees prior tags
-      - name: Download artifacts
+      # The artifacts are downloaded by name. The image build leaves one of
+      # its own in the run (its build record), which is not a zip:
+      # downloading everything fails on it.
+      - name: Download the tarballs
         uses: actions/download-artifact@v4
         with:
-          # Only what build-binaries uploaded. The image build leaves an
-          # artifact of its own in the run (its build record), which is not
-          # a zip: downloading everything fails on it.
           pattern: '*-unknown-linux-musl'
           path: dist
+      - name: Download the RPMs
+        uses: actions/download-artifact@v4
+        with:
+          name: rpms
+          path: dist/rpms
       - name: Flatten artifact layout
         run: |
           set -euo pipefail
