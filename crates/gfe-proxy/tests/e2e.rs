@@ -2681,3 +2681,83 @@ async fn connection_log_tells_a_connection_closed_by_a_drain() {
 
     assert_eq!(event["reason"], "drain");
 }
+
+/// A connection to `proxy` that has been accepted and answered once, and is
+/// still open; `None` if the node dropped it instead of serving it.
+async fn try_open_connection(proxy: SocketAddr) -> Option<TcpStream> {
+    let mut stream = TcpStream::connect(proxy).await.ok()?;
+    let request = b"GET / HTTP/1.1\r\nhost: example.org\r\n\r\n";
+    stream.write_all(request).await.ok()?;
+    let mut status_line = [0u8; 12];
+    let answered = stream.read_exact(&mut status_line);
+    tokio::time::timeout(Duration::from_secs(5), answered)
+        .await
+        .expect("the node should answer a connection or close it")
+        .ok()?;
+    (&status_line == b"HTTP/1.1 200").then_some(stream)
+}
+
+/// A proxy that answers every request itself, under `limits`.
+async fn start_proxy_limited_to(
+    limits: LimitsConfig,
+) -> (SocketAddr, Arc<ProxyShared>, watch::Sender<bool>) {
+    let shared = build_shared_with(TimeoutsConfig::default(), limits);
+    let (proxy, tx) = start_proxy(&fixed_response_config(), shared.clone()).await;
+    (proxy, shared, tx)
+}
+
+#[tokio::test]
+async fn drops_connections_beyond_the_node_wide_limit() {
+    let (proxy, shared, _tx) = start_proxy_limited_to(LimitsConfig {
+        max_connections: 1,
+        ..Default::default()
+    })
+    .await;
+    let _held = try_open_connection(proxy).await.unwrap();
+
+    let beyond = try_open_connection(proxy).await;
+
+    assert!(beyond.is_none());
+    let exposed = shared.server.metrics.encode();
+    let expected = r#"gfe_connections_rejected_total{reason="limit"} 1"#;
+    assert!(exposed.contains(expected), "{exposed}");
+}
+
+#[tokio::test]
+async fn drops_connections_beyond_the_limit_of_a_listener() {
+    let (proxy, shared, _tx) = start_proxy_limited_to(LimitsConfig {
+        max_connections_listener: 1,
+        ..Default::default()
+    })
+    .await;
+    let _held = try_open_connection(proxy).await.unwrap();
+
+    let beyond = try_open_connection(proxy).await;
+
+    assert!(beyond.is_none());
+    let exposed = shared.server.metrics.encode();
+    let expected = r#"gfe_connections_rejected_total{reason="limit"} 1"#;
+    assert!(exposed.contains(expected), "{exposed}");
+}
+
+#[tokio::test]
+async fn a_closed_connection_makes_room_for_the_next() {
+    let (proxy, _shared, _tx) = start_proxy_limited_to(LimitsConfig {
+        max_connections: 1,
+        ..Default::default()
+    })
+    .await;
+    let first = try_open_connection(proxy).await.unwrap();
+
+    drop(first);
+
+    // The node gives the place back once it has noticed the client is gone.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while try_open_connection(proxy).await.is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the place was never given back"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
