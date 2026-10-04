@@ -229,6 +229,7 @@ src/rust/               The Cargo workspace
   gfe-ebpf/             Optional kernel view of the node's TCP connections
   gfe-loadtest/         Load generator for benchmarks (not shipped)
 src/c/                  The eBPF program gfe-ebpf loads, compiled by its build
+src/docker/             The image of gfe-node
 config/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)

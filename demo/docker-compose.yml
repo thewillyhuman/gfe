@@ -45,6 +45,7 @@ services:
   gfe:
     build:
       context: ..
+      dockerfile: src/docker/Dockerfile
     image: gfe-node:demo
     depends_on:
       setup:

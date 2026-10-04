@@ -110,7 +110,6 @@ The codebase is a Cargo workspace whose crates are named after what they do, aft
 gfe/
 ├── README.md
 ├── LICENSE
-├── Dockerfile
 ├── docs/
 │   ├── spec.md                         # This specification
 │   └── observability.md                # Metrics, logs, alerts and the dashboard
@@ -121,7 +120,8 @@ gfe/
 │
 ├── src/
 │   ├── rust/                           # The Cargo workspace, detailed below
-│   └── c/tcp_events.bpf.c              # The eBPF program (sockops, cgroup-attached)
+│   ├── c/tcp_events.bpf.c              # The eBPF program (sockops, cgroup-attached)
+│   └── docker/Dockerfile               # The image of gfe-node
 │
 ├── demo/                                # Local playground: node, backends, monitoring
 ├── packaging/rpm/                       # RPM scriptlets and build notes

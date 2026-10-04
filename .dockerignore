@@ -1,6 +1,0 @@
-src/rust/target/
-.git/
-.github/
-docs/
-.claude/
-.vscode/

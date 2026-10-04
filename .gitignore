@@ -1,6 +1,6 @@
 # Build artifacts
 /src/rust/target
-# Binaries handed to the image build (see Dockerfile)
+# Binaries handed to the image build (see src/docker/Dockerfile)
 /prebuilt
 
 # Editor / IDE

@@ -1,10 +1,14 @@
 # Dockerfile for `gfe-node`.
 #
+# The build context is the root of the repository:
+#
+#     docker build -f src/docker/Dockerfile .
+#
 # The image gets its binary from one of two stages, chosen with
 # `--build-arg BINARY=<stage>`:
 #
 #   builder    (default) compiles it here, from this source tree. This is
-#              what `docker build .` and the demo do.
+#              what the command above and the demo do.
 #   prebuilt   takes one compiled beforehand, from `prebuilt/<arch>/gfe-node`
 #              in the build context, where <arch> is Docker's name for the
 #              architecture (amd64, arm64). This is what the release does

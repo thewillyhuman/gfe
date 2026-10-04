@@ -1,0 +1,8 @@
+# What the build of the Dockerfile next to this file leaves out of its
+# context. Docker reads it because it carries that Dockerfile's name.
+src/rust/target/
+.git/
+.github/
+docs/
+.claude/
+.vscode/
