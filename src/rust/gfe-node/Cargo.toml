@@ -30,8 +30,8 @@ anyhow = { workspace = true }
 rustix = { workspace = true, features = ["net", "process"] }
 
 # RPM packaging, built by `cargo generate-rpm -p gfe-node` from the
-# release binary (see packaging/rpm/README.md). The package is named `gfe`
-# and carries the node, the systemd unit, the dashboard and the alert rules.
+# release binary (see docs/rpm.md). The package is named `gfe` and carries
+# the node, the systemd unit, the dashboard and the alert rules.
 # Configuration under /etc/gfe is left to config management.
 [package.metadata.generate-rpm]
 name = "gfe"
@@ -48,10 +48,10 @@ assets = [
     { source = "../../../README.md", dest = "/usr/share/doc/gfe/README.md", mode = "644", doc = true },
     { source = "../../../LICENSE", dest = "/usr/share/licenses/gfe/LICENSE", mode = "644" },
 ]
-pre_install_script = "../../../packaging/rpm/pre-install.sh"
-post_install_script = "../../../packaging/rpm/post-install.sh"
-pre_uninstall_script = "../../../packaging/rpm/pre-uninstall.sh"
-post_uninstall_script = "../../../packaging/rpm/post-uninstall.sh"
+pre_install_script = "../../../hack/rpm/pre-install.sh"
+post_install_script = "../../../hack/rpm/post-install.sh"
+pre_uninstall_script = "../../../hack/rpm/pre-uninstall.sh"
+post_uninstall_script = "../../../hack/rpm/post-uninstall.sh"
 
 [package.metadata.generate-rpm.requires]
 systemd = "*"

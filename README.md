@@ -144,7 +144,7 @@ The dominant cost at the GFE tier is **TLS handshakes**, not request processing 
 
 ### End-to-end load test
 
-A self-contained harness (`src/rust/gfe-loadtest` + `scripts/loadtest.sh`) drives the **real `gfe-node` binary** over loopback in front of a mock upstream, layer by layer. Reproduce with `./scripts/loadtest.sh 64 6` (64 connections, 6 s/scenario):
+A self-contained harness (`src/rust/gfe-loadtest` + `hack/loadtest.sh`) drives the **real `gfe-node` binary** over loopback in front of a mock upstream, layer by layer. Reproduce with `./hack/loadtest.sh 64 6` (64 connections, 6 s/scenario):
 
 ```
 scenario                          mode        result
@@ -238,8 +238,9 @@ src/prometheus/         Alerting rules (GFE + host network)
 config/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
-packaging/
-  rpm/                        RPM scriptlets, build notes, Puppet usage
+hack/
+  loadtest.sh           End-to-end load test of the real binary
+  rpm/                  What the RPM runs when installed and removed
 ```
 
 ## Development
@@ -251,7 +252,7 @@ cargo clippy --workspace --all-targets
 cargo bench -p gfe-proxy --bench routing
 cargo bench -p gfe-load-balancing --bench selection
 cargo bench -p gfe-core --bench handshake
-../../scripts/loadtest.sh 64 6  # end-to-end load test (mock upstream + real node)
+../../hack/loadtest.sh 64 6     # end-to-end load test (mock upstream + real node)
 ```
 
 CI runs the tests with [cargo-nextest](https://nexte.st), which reports the
@@ -267,6 +268,7 @@ cargo test --workspace --doc    # doctests, which nextest does not run
 - **[Data-plane spec](docs/spec.md)** — proxy architecture and protocol details.
 - **[Observability guide](docs/observability.md)** — which signal answers which question.
 - **[Demo guide](docs/demo.md)** — the local playground and what to try in it.
+- **[RPM guide](docs/rpm.md)** — building the package and managing a node with Puppet.
 
 ## License
 

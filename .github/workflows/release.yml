@@ -3,7 +3,7 @@ name: release
 # Triggered by pushing a `v*` tag (e.g. `v0.1.0`). Produces:
 #   * GitHub Release with auto-generated release notes
 #   * x86_64 + aarch64 Linux binaries (statically linked against musl)
-#   * x86_64 + aarch64 RPMs built from those binaries (see packaging/rpm/)
+#   * x86_64 + aarch64 RPMs built from those binaries (see docs/rpm.md)
 #   * `gfe-node` container image for both architectures, built from those
 #     binaries and pushed to `ghcr.io/${owner}/gfe-node`
 #

@@ -4,7 +4,7 @@
 //!   * `upstream` — a fast mock backend returning a fixed body.
 //!   * `run`      — a concurrent load client measuring req/s and latency.
 //!
-//! Not a runtime component; a dev/benchmark tool. See scripts/loadtest.sh.
+//! Not a runtime component; a dev/benchmark tool. See hack/loadtest.sh.
 
 use anyhow::{Context, Result};
 use bytes::Bytes;

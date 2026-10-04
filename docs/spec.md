@@ -113,7 +113,8 @@ gfe/
 ├── docs/
 │   ├── spec.md                         # This specification
 │   ├── observability.md                # Metrics, logs, alerts and the dashboard
-│   └── demo.md                         # The local playground, and what to try in it
+│   ├── demo.md                         # The local playground, and what to try in it
+│   └── rpm.md                          # Building the RPM; a node under Puppet
 │
 ├── config/
 │   ├── gfe.example.toml                # Reference node (bootstrap) configuration
@@ -131,8 +132,9 @@ gfe/
 │   ├── grafana/gfe-dashboard.json      # Pre-built Grafana dashboard
 │   └── prometheus/gfe-alerts.yml       # Alerting rules
 │
-├── packaging/rpm/                      # RPM scriptlets and build notes
-└── scripts/loadtest.sh                 # End-to-end load test of the real binary
+└── hack/                               # Scripts and utilities
+    ├── loadtest.sh                     # End-to-end load test of the real binary
+    └── rpm/                            # What the RPM runs when installed and removed
 ```
 
 The workspace:

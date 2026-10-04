@@ -5,7 +5,7 @@
 # tears down. All three processes share this host's CPUs, so numbers are
 # conservative/comparative (relative cost per layer), not a tuned NIC benchmark.
 #
-# Usage: ./scripts/loadtest.sh [connections] [duration_secs]
+# Usage: ./hack/loadtest.sh [connections] [duration_secs]
 set -euo pipefail
 
 CONNS="${1:-64}"
