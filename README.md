@@ -239,6 +239,7 @@ docs/examples/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
 hack/
+  create-tag.sh         Tag a release, listing the commits since the last one
   loadtest.sh           End-to-end load test of the real binary
   rpm/                  What the RPM runs when installed and removed
 ```

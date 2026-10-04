@@ -7,8 +7,9 @@ name: release
 #   * `gfe-node` container image for both architectures, built from those
 #     binaries and pushed to `ghcr.io/${owner}/gfe-node`
 #
-# To cut a release:
-#   git tag -a v0.1.0 -m "0.1.0"
+# To cut a release (the script lists the commits since the last tag in the
+# message of the new one, and asks before creating it):
+#   hack/create-tag.sh v0.1.0
 #   git push origin v0.1.0
 #
 # We do NOT run on every push to main — releases are explicit.

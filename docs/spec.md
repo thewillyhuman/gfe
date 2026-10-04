@@ -132,6 +132,7 @@ gfe/
 │   └── prometheus/gfe-alerts.yml       # Alerting rules
 │
 └── hack/                               # Scripts and utilities
+    ├── create-tag.sh                   # Tag a release, listing what it brings
     ├── loadtest.sh                     # End-to-end load test of the real binary
     └── rpm/                            # What the RPM runs when installed and removed
 ```
