@@ -1,5 +1,5 @@
 # A local GFE playground: one node, a handful of backends, clients that
-# misbehave, and the monitoring stack around it. See README.md.
+# misbehave, and the monitoring stack around it. See docs/demo.md.
 #
 #   docker compose up -d --build     then open http://localhost:13000
 #   docker compose down -v           to remove everything, volumes included
@@ -44,7 +44,8 @@ services:
 
   gfe:
     build:
-      context: ..
+      # The root of the repository.
+      context: ../../..
       dockerfile: src/docker/Dockerfile
     image: gfe-node:demo
     depends_on:
@@ -147,7 +148,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ../deploy/prometheus/gfe-alerts.yml:/etc/prometheus/rules/gfe-alerts.yml:ro
+      - ../../../deploy/prometheus/gfe-alerts.yml:/etc/prometheus/rules/gfe-alerts.yml:ro
     ports:
       - "127.0.0.1:19090:9090"
 
@@ -186,7 +187,7 @@ services:
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/gfe/gfe-dashboard.json
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ../deploy/grafana:/var/lib/grafana/dashboards/gfe:ro
+      - ../../../deploy/grafana:/var/lib/grafana/dashboards/gfe:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards/demo:ro
     ports:
       - "127.0.0.1:13000:3000"

@@ -6,7 +6,7 @@ Loki and Grafana with the dashboards loaded. It exists to explore what GFE
 reports, not to measure it.
 
 ```bash
-cd demo
+cd src/docker/demo
 docker compose up -d --build     # first run builds gfe-node: a few minutes
 open http://localhost:13000      # Grafana, no login
 docker compose down -v           # remove everything, volumes included
@@ -27,7 +27,8 @@ Every port is published on `127.0.0.1` only.
 ## What is running
 
 **The node.** `gfe` is built from this repository and configured by
-[`gfe/gfe.toml`](gfe/gfe.toml) and [`gfe/gfe-dynamic.json`](gfe/gfe-dynamic.json):
+[`gfe/gfe.toml`](../src/docker/demo/gfe/gfe.toml) and
+[`gfe/gfe-dynamic.json`](../src/docker/demo/gfe/gfe-dynamic.json):
 three listeners, eleven routes, seven pools.
 
 | Host | Listener | Goes to |
@@ -47,7 +48,7 @@ The HTTP backends are [go-httpbin](https://github.com/mccutchen/go-httpbin):
 status, latency or size on demand.
 
 **The clients.** Three containers (three client addresses) run
-[`traffic/traffic.sh`](traffic/traffic.sh): about two thirds healthy requests
+[`traffic/traffic.sh`](../src/docker/demo/traffic/traffic.sh): about two thirds healthy requests
 over HTTP/1.1, HTTP/2 and gRPC, and one third of what an edge sees every day.
 Two of them (`traffic`) sit next to the node. The third (`traffic-far`) is the
 same client behind a worse network: 40 ms away and losing 3% of its packets.
@@ -157,7 +158,7 @@ docker compose exec traffic-far tc qdisc del dev eth0 root
 ROTATE=1 docker compose run --rm setup
 ```
 
-**Hot reload.** Edit [`gfe/gfe-dynamic.json`](gfe/gfe-dynamic.json) while the
+**Hot reload.** Edit [`gfe/gfe-dynamic.json`](../src/docker/demo/gfe/gfe-dynamic.json) while the
 stack runs: change the `/ping` body, add a route, add a listener. The node
 reloads within a second (*Node events* in the logs dashboard). Break the file
 on purpose (a route to a pool that does not exist) and the node keeps serving

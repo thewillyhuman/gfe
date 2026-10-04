@@ -202,12 +202,13 @@ cargo build --release --manifest-path src/rust/Cargo.toml
 
 ## See it running
 
-[`demo/`](demo/) is a local playground: one node, HTTP and gRPC backends,
-clients that misbehave, and Prometheus, Loki and Grafana with the dashboards
-loaded.
+[`src/docker/demo/`](src/docker/demo/) is a local playground: one node, HTTP
+and gRPC backends, clients that misbehave, and Prometheus, Loki and Grafana
+with the dashboards loaded. The [demo guide](docs/demo.md) says what runs in
+it and what to try.
 
 ```bash
-cd demo && docker compose up -d --build   # then open http://localhost:13000
+cd src/docker/demo && docker compose up -d --build   # then open http://localhost:13000
 ```
 
 ## Project structure
@@ -230,10 +231,10 @@ src/rust/               The Cargo workspace
   gfe-loadtest/         Load generator for benchmarks (not shipped)
 src/c/                  The eBPF program gfe-ebpf loads, compiled by its build
 src/docker/             The image of gfe-node
+  demo/                 Local playground: node, backends, traffic, monitoring
 config/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
-demo/                         Local playground: node, backends, traffic, monitoring
 packaging/
   rpm/                        RPM scriptlets, build notes, Puppet usage
 deploy/
@@ -270,6 +271,7 @@ cargo test --workspace --doc    # doctests, which nextest does not run
 
 - **[Data-plane spec](docs/spec.md)** — proxy architecture and protocol details.
 - **[Observability guide](docs/observability.md)** — which signal answers which question.
+- **[Demo guide](docs/demo.md)** — the local playground and what to try in it.
 
 ## License
 

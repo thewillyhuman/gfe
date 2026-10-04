@@ -112,7 +112,8 @@ gfe/
 ├── LICENSE
 ├── docs/
 │   ├── spec.md                         # This specification
-│   └── observability.md                # Metrics, logs, alerts and the dashboard
+│   ├── observability.md                # Metrics, logs, alerts and the dashboard
+│   └── demo.md                         # The local playground, and what to try in it
 │
 ├── config/
 │   ├── gfe.example.toml                # Reference node (bootstrap) configuration
@@ -121,9 +122,10 @@ gfe/
 ├── src/
 │   ├── rust/                           # The Cargo workspace, detailed below
 │   ├── c/tcp_events.bpf.c              # The eBPF program (sockops, cgroup-attached)
-│   └── docker/Dockerfile               # The image of gfe-node
+│   └── docker/
+│       ├── Dockerfile                  # The image of gfe-node
+│       └── demo/                       # Local playground: node, backends, monitoring
 │
-├── demo/                                # Local playground: node, backends, monitoring
 ├── packaging/rpm/                       # RPM scriptlets and build notes
 ├── scripts/loadtest.sh                  # End-to-end load test of the real binary
 └── deploy/
