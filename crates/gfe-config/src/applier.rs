@@ -31,7 +31,7 @@ pub fn prepare(cfg: &DynamicConfig) -> Result<Prepared, GfeError> {
     Ok(Prepared {
         cert_store: CertStore::build(&cfg.certificates)?,
         route_table: RouteTable::compile(cfg),
-        pool_set: PoolSet::build(&cfg.pools),
+        pool_set: PoolSet::build(&cfg.pools)?,
     })
 }
 

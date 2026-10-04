@@ -13,6 +13,12 @@ use std::hash::{Hash, Hasher};
 /// smoother distribution at higher build cost.
 pub const RING_REPLICAS: usize = 160;
 
+/// The most points a ring may hold (`RING_REPLICAS` times the sum of the
+/// weights of its backends), about 16 MB of ring. Every node builds the ring
+/// on every reload and at start, so an unbounded one exhausts memory on the
+/// whole fleet at once.
+pub const MAX_RING_POINTS: u64 = 1_000_000;
+
 /// Hash a value to a ring point.
 pub fn hash64<T: Hash>(v: T) -> u64 {
     let mut h = DefaultHasher::new();

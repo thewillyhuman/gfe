@@ -25,25 +25,25 @@ fn bench(c: &mut Criterion) {
     let health = HealthMap::new(true);
     let n = 20;
 
-    let rr = PoolSet::build(&[pool(LbPolicy::RoundRobin, n, false)]);
+    let rr = PoolSet::build(&[pool(LbPolicy::RoundRobin, n, false)]).unwrap();
     let rr_pool = rr.get(&PoolId("p".into())).unwrap().clone();
     c.bench_function("select_round_robin/20", |b| {
         b.iter(|| black_box(rr_pool.select(black_box(&health), None)))
     });
 
-    let wrr = PoolSet::build(&[pool(LbPolicy::RoundRobin, n, true)]);
+    let wrr = PoolSet::build(&[pool(LbPolicy::RoundRobin, n, true)]).unwrap();
     let wrr_pool = wrr.get(&PoolId("p".into())).unwrap().clone();
     c.bench_function("select_weighted_round_robin/20", |b| {
         b.iter(|| black_box(wrr_pool.select(black_box(&health), None)))
     });
 
-    let lr = PoolSet::build(&[pool(LbPolicy::LeastRequest, n, true)]);
+    let lr = PoolSet::build(&[pool(LbPolicy::LeastRequest, n, true)]).unwrap();
     let lr_pool = lr.get(&PoolId("p".into())).unwrap().clone();
     c.bench_function("select_least_request/20", |b| {
         b.iter(|| black_box(lr_pool.select(black_box(&health), None)))
     });
 
-    let rh = PoolSet::build(&[pool(LbPolicy::RingHash, n, true)]);
+    let rh = PoolSet::build(&[pool(LbPolicy::RingHash, n, true)]).unwrap();
     let rh_pool = rh.get(&PoolId("p".into())).unwrap().clone();
     let mut k: u64 = 0;
     c.bench_function("select_ring_hash/20", |b| {

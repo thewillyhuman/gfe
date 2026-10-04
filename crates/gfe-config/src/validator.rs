@@ -1,25 +1,16 @@
 //! Semantic validation of the dynamic config, run before any swap so a bad
 //! config is rejected wholesale and the running snapshot is kept.
 
-use gfe_types::{
-    DynamicConfig, GfeError, HealthCheckConfig, LbPolicy, ListenProtocol, RouteAction,
-};
-use gfe_upstream::policy::RING_REPLICAS;
+use gfe_types::{DynamicConfig, GfeError, HealthCheckConfig, ListenProtocol, RouteAction};
 use std::collections::HashSet;
 use std::net::IpAddr;
 use std::ops::RangeInclusive;
 use std::time::Duration;
 
 /// The largest `weight` an upstream may have. Weights are relative, so this
-/// leaves ample room for ratios while bounding what a weight costs: a
-/// `ring_hash` pool places `RING_REPLICAS` ring points per unit of weight.
+/// leaves ample room for ratios while bounding what a weight costs: the ring
+/// of a `ring_hash` pool grows with the weights of its upstreams.
 pub const MAX_UPSTREAM_WEIGHT: u32 = 1000;
-
-/// The most points a `ring_hash` pool's ring may hold (`RING_REPLICAS` times
-/// the sum of its weights), about 16 MB of ring. Every node builds the ring
-/// on every reload and at start, so an unbounded one exhausts memory on the
-/// whole fleet at once.
-pub const MAX_RING_POINTS: u64 = 1_000_000;
 
 /// Validate the dynamic config. Returns the first error found.
 pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
@@ -92,18 +83,6 @@ pub fn validate(cfg: &DynamicConfig) -> Result<(), GfeError> {
                     "pool {}: upstream {}:{} has weight {}, above the maximum of \
                      {MAX_UPSTREAM_WEIGHT}; weights are relative, scale them down",
                     p.id, u.host, u.port, u.weight
-                )));
-            }
-        }
-        if p.lb_policy == LbPolicy::RingHash {
-            let weights: u64 = p.upstreams.iter().map(|u| u64::from(u.weight)).sum();
-            let points = RING_REPLICAS as u64 * weights;
-            if points > MAX_RING_POINTS {
-                return Err(GfeError::Validation(format!(
-                    "pool {}: its ring_hash ring would hold {points} points \
-                     ({RING_REPLICAS} per unit of weight), above the maximum of \
-                     {MAX_RING_POINTS}; lower the weights of its upstreams",
-                    p.id
                 )));
             }
         }
@@ -224,8 +203,8 @@ const HTTP_STATUS: RangeInclusive<u16> = 100..=599;
 mod tests {
     use super::*;
     use gfe_types::{
-        CertEntry, HealthCheckConfig, LbPolicy, Listener, ListenerId, PoolId, Route, RouteId,
-        Scheme, Upstream, UpstreamPool,
+        CertEntry, HealthCheckConfig, Listener, ListenerId, PoolId, Route, RouteId, Scheme,
+        Upstream, UpstreamPool,
     };
     use std::time::Duration;
 
@@ -373,31 +352,6 @@ mod tests {
 
         assert!(err.contains("pool p"), "{err}");
         assert!(err.contains("1000"), "{err}");
-    }
-
-    #[test]
-    fn ring_hash_pool_with_too_many_ring_points_fails() {
-        // 7 backends at the maximum weight: 160 x 7000 = 1,120,000 points.
-        let mut p = pool("p");
-        p.lb_policy = LbPolicy::RingHash;
-        p.upstreams = (1..=7)
-            .map(|i| backend(&format!("10.0.0.{i}"), MAX_UPSTREAM_WEIGHT))
-            .collect();
-
-        let err = validate(&config_with_pool(p)).unwrap_err().to_string();
-
-        assert!(err.contains("pool p"), "{err}");
-        assert!(err.contains("1000000"), "{err}");
-    }
-
-    #[test]
-    fn round_robin_pool_with_the_same_weights_passes() {
-        let mut p = pool("p");
-        p.upstreams = (1..=7)
-            .map(|i| backend(&format!("10.0.0.{i}"), MAX_UPSTREAM_WEIGHT))
-            .collect();
-
-        assert!(validate(&config_with_pool(p)).is_ok());
     }
 
     /// What `validate` says about a pool whose only upstream is `host`.

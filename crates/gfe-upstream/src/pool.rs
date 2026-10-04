@@ -2,8 +2,8 @@
 //! config, with per-pool selection over the healthy set.
 
 use crate::health_map::HealthMap;
-use crate::policy::{build_ring, ring_pick, weighted_pick};
-use gfe_types::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
+use crate::policy::{build_ring, ring_pick, weighted_pick, MAX_RING_POINTS, RING_REPLICAS};
+use gfe_types::{GfeError, LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -51,7 +51,9 @@ pub struct Pool {
 }
 
 impl Pool {
-    fn new(p: &UpstreamPool) -> Pool {
+    /// Fails if the pool is a `ring_hash` pool whose ring would hold more
+    /// than [`MAX_RING_POINTS`] points.
+    fn new(p: &UpstreamPool) -> Result<Pool, GfeError> {
         let inflight = p
             .upstreams
             .iter()
@@ -60,13 +62,22 @@ impl Pool {
         let ring = if p.lb_policy == LbPolicy::RingHash {
             let authorities: Vec<String> = p.upstreams.iter().map(|u| u.authority()).collect();
             let weights: Vec<u32> = p.upstreams.iter().map(|u| u.weight).collect();
+            let points = RING_REPLICAS as u64 * weights.iter().map(|w| u64::from(*w)).sum::<u64>();
+            if points > MAX_RING_POINTS {
+                return Err(GfeError::Validation(format!(
+                    "pool {}: its ring_hash ring would hold {points} points \
+                     ({RING_REPLICAS} per unit of weight), above the maximum of \
+                     {MAX_RING_POINTS}; lower the weights of its upstreams",
+                    p.id
+                )));
+            }
             build_ring(&authorities, &weights)
         } else {
             Vec::new()
         };
         let first_weight = p.upstreams.first().map(|u| u.weight).unwrap_or(1);
         let uniform_weights = p.upstreams.iter().all(|u| u.weight == first_weight);
-        Pool {
+        Ok(Pool {
             id: p.id.clone(),
             scheme: p.scheme,
             policy: p.lb_policy,
@@ -77,7 +88,7 @@ impl Pool {
             uniform_weights,
             in_flight: Arc::new(AtomicUsize::new(0)),
             max_in_flight: p.max_in_flight,
-        }
+        })
     }
 
     /// Admit one more request to the pool, unless it already has
@@ -180,13 +191,15 @@ pub struct PoolSet {
 }
 
 impl PoolSet {
-    /// Build a pool set from the dynamic config's pools.
-    pub fn build(pools: &[UpstreamPool]) -> Self {
+    /// Build a pool set from the dynamic config's pools. Fails, naming the
+    /// pool, if one of them cannot be built: a `ring_hash` pool whose ring
+    /// would hold more than [`MAX_RING_POINTS`] points.
+    pub fn build(pools: &[UpstreamPool]) -> Result<Self, GfeError> {
         let mut map = HashMap::new();
         for p in pools {
-            map.insert(p.id.clone(), Arc::new(Pool::new(p)));
+            map.insert(p.id.clone(), Arc::new(Pool::new(p)?));
         }
-        PoolSet { pools: map }
+        Ok(PoolSet { pools: map })
     }
 
     pub fn get(&self, id: &PoolId) -> Option<&Arc<Pool>> {
@@ -241,10 +254,42 @@ mod tests {
         }
     }
 
+    /// `count` backends, each with `weight`.
+    fn backends(count: u8, weight: u32) -> Vec<Upstream> {
+        (1..=count)
+            .map(|i| Upstream {
+                host: format!("10.0.0.{i}"),
+                port: 80,
+                weight,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn ring_hash_pool_with_too_many_ring_points_is_refused() {
+        // 7 backends of weight 1000: 160 x 7000 = 1,120,000 points.
+        let mut pool = pool_with(LbPolicy::RingHash);
+        pool.upstreams = backends(7, 1000);
+
+        let err = PoolSet::build(&[pool]).err().unwrap().to_string();
+
+        assert!(err.contains("pool p"), "{err}");
+        assert!(err.contains("1000000"), "{err}");
+    }
+
+    #[test]
+    fn round_robin_pool_with_the_same_weights_is_built() {
+        let mut pool = pool_with(LbPolicy::RoundRobin);
+        pool.upstreams = backends(7, 1000);
+
+        assert!(PoolSet::build(&[pool]).is_ok());
+    }
+
     fn pool_admitting(max_in_flight: Option<u32>) -> Arc<Pool> {
         let mut config = pool_with(LbPolicy::RoundRobin);
         config.max_in_flight = max_in_flight.and_then(std::num::NonZeroU32::new);
         PoolSet::build(&[config])
+            .unwrap()
             .get(&PoolId("p".into()))
             .unwrap()
             .clone()
@@ -283,7 +328,7 @@ mod tests {
 
     #[test]
     fn round_robin_alternates() {
-        let set = PoolSet::build(&[pool_with(LbPolicy::RoundRobin)]);
+        let set = PoolSet::build(&[pool_with(LbPolicy::RoundRobin)]).unwrap();
         let p = set.get(&PoolId("p".into())).unwrap();
         let h = HealthMap::new(true);
         let a = p.select(&h, None).unwrap().upstream.host;
@@ -293,7 +338,7 @@ mod tests {
 
     #[test]
     fn least_request_prefers_idle() {
-        let set = PoolSet::build(&[pool_with(LbPolicy::LeastRequest)]);
+        let set = PoolSet::build(&[pool_with(LbPolicy::LeastRequest)]).unwrap();
         let p = set.get(&PoolId("p".into())).unwrap();
         let h = HealthMap::new(true);
         // Hold one request on whatever gets picked first.
@@ -327,7 +372,7 @@ mod tests {
             health_check: None,
             max_in_flight: None,
         };
-        let set = PoolSet::build(&[pool]);
+        let set = PoolSet::build(&[pool]).unwrap();
         let p = set.get(&PoolId("p".into())).unwrap();
         let h = HealthMap::new(true);
 
@@ -351,7 +396,7 @@ mod tests {
 
     #[test]
     fn ring_hash_is_sticky() {
-        let set = PoolSet::build(&[pool_with(LbPolicy::RingHash)]);
+        let set = PoolSet::build(&[pool_with(LbPolicy::RingHash)]).unwrap();
         let p = set.get(&PoolId("p".into())).unwrap();
         let h = HealthMap::new(true);
         let key = Some(crate::policy::hash64("client-x"));
@@ -362,7 +407,7 @@ mod tests {
 
     #[test]
     fn skips_unhealthy() {
-        let set = PoolSet::build(&[pool_with(LbPolicy::RoundRobin)]);
+        let set = PoolSet::build(&[pool_with(LbPolicy::RoundRobin)]).unwrap();
         let p = set.get(&PoolId("p".into())).unwrap();
         let h = HealthMap::new(true);
         h.set("10.0.0.1", 80, HealthStatus::Unhealthy);
@@ -373,7 +418,7 @@ mod tests {
 
     #[test]
     fn none_when_all_unhealthy() {
-        let set = PoolSet::build(&[pool_with(LbPolicy::RoundRobin)]);
+        let set = PoolSet::build(&[pool_with(LbPolicy::RoundRobin)]).unwrap();
         let p = set.get(&PoolId("p".into())).unwrap();
         let h = HealthMap::new(false);
         assert!(p.select(&h, None).is_none());
