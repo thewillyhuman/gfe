@@ -143,7 +143,7 @@ The dominant cost at the GFE tier is **TLS handshakes**, not request processing 
 
 ### End-to-end load test
 
-A self-contained harness (`tools/gfe-loadtest` + `scripts/loadtest.sh`) drives the **real `gfe-node` binary** over loopback in front of a mock upstream, layer by layer. Reproduce with `./scripts/loadtest.sh 64 6` (64 connections, 6 s/scenario):
+A self-contained harness (`src/rust/gfe-loadtest` + `scripts/loadtest.sh`) drives the **real `gfe-node` binary** over loopback in front of a mock upstream, layer by layer. Reproduce with `./scripts/loadtest.sh 64 6` (64 connections, 6 s/scenario):
 
 ```
 scenario                          mode        result
@@ -183,21 +183,21 @@ Put differently, **a single GFE instance sustained ~71k fully-terminated HTTPS r
 ## Quick start
 
 ```bash
-# Build
-cargo build --release
+# Build (the Cargo workspace is in src/rust)
+cargo build --release --manifest-path src/rust/Cargo.toml
 
 # Validate config (with the dynamic config it names, /etc/gfe/gfe-dynamic.json)
-./target/release/gfe-node --config config/gfe.example.toml --check-config
+./src/rust/target/release/gfe-node --config config/gfe.example.toml --check-config
 
 # Validate a candidate dynamic config before it replaces the deployed one
-./target/release/gfe-node --config config/gfe.example.toml --check-config \
+./src/rust/target/release/gfe-node --config config/gfe.example.toml --check-config \
     --dynamic-config /tmp/gfe-dynamic.candidate.json
 
 # Generate a dynamic config scaffold
 ./deploy/generate-config.sh --host app.example.org --backend 10.0.0.1:8443 -o /tmp/gfe-dynamic.json
 
 # Run (binds the listeners in the dynamic config; serves /metrics on metrics_addr)
-./target/release/gfe-node --config config/gfe.example.toml
+./src/rust/target/release/gfe-node --config config/gfe.example.toml
 ```
 
 ## See it running
@@ -213,7 +213,7 @@ cd demo && docker compose up -d --build   # then open http://localhost:13000
 ## Project structure
 
 ```
-crates/
+src/rust/               The Cargo workspace
   gfe-core/             The server, whatever it serves: config files (types,
                         loading, validation), TLS termination, serving
                         connections, the pooled client for backends
@@ -227,7 +227,6 @@ crates/
                         accounting; applying a config and reloading it
   gfe-node/             The binary: wiring, signals, ops server, upgrade in place
   gfe-ebpf/             Optional kernel view of the node's TCP connections
-tools/
   gfe-loadtest/         Load generator for benchmarks (not shipped)
 config/
   gfe.example.toml            Bootstrap node config
@@ -248,12 +247,13 @@ deploy/
 ## Development
 
 ```bash
+cd src/rust                     # the Cargo workspace: cargo runs from here
 cargo test --workspace          # unit + integration tests
 cargo clippy --workspace --all-targets
 cargo bench -p gfe-proxy --bench routing
 cargo bench -p gfe-load-balancing --bench selection
 cargo bench -p gfe-core --bench handshake
-./scripts/loadtest.sh 64 6      # end-to-end load test (mock upstream + real node)
+../../scripts/loadtest.sh 64 6  # end-to-end load test (mock upstream + real node)
 ```
 
 CI runs the tests with [cargo-nextest](https://nexte.st), which reports the

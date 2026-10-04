@@ -1,4 +1,4 @@
-target/
+src/rust/target/
 .git/
 .github/
 docs/

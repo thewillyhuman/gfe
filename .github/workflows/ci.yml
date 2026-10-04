@@ -13,6 +13,11 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
+# The Cargo workspace is not at the root of the repository.
+defaults:
+  run:
+    working-directory: src/rust
+
 jobs:
   fmt:
     name: rustfmt
@@ -37,6 +42,8 @@ jobs:
           components: clippy
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
       # `--locked` everywhere: CI must build what Cargo.lock says, as the
       # release does, so a lockfile that no longer matches fails here and not
       # at tag time.
@@ -56,6 +63,8 @@ jobs:
           tool: cargo-nextest
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
       # Tests are the source of truth — run the whole workspace on every PR.
       # GFE is a pure-userspace proxy (tokio + hyper + rustls/ring), so there
       # are no platform-gated features to toggle here.
@@ -81,6 +90,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
       # Catches broken doc links / examples without publishing anything.
       - name: cargo doc --locked --workspace --no-deps
         run: cargo doc --locked --workspace --no-deps
@@ -96,6 +107,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
       - name: Install cargo-deny
         # 0.16.4+ pulls in rustsec >= 0.30 which understands CVSS v4.0 vectors.
         run: cargo install cargo-deny --locked --version '>=0.16.4'

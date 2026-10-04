@@ -46,8 +46,10 @@ jobs:
           tool: cargo-nextest
       # The same two steps as the test job of ci.yml.
       - name: cargo nextest run --locked --workspace
+        working-directory: src/rust
         run: cargo nextest run --locked --workspace --no-fail-fast --failure-output immediate-final
       - name: cargo test --locked --workspace --doc
+        working-directory: src/rust
         run: cargo test --locked --workspace --doc
 
   build-binaries:
@@ -80,15 +82,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends musl-tools clang
       - name: Build gfe-node
+        working-directory: src/rust
         run: cargo build --release --locked --target ${{ matrix.target }} --bin gfe-node
       - name: Run the built binary
         # Catches a binary that links but does not start.
-        run: target/${{ matrix.target }}/release/gfe-node --version
+        run: src/rust/target/${{ matrix.target }}/release/gfe-node --version
       - name: Package
         run: |
           set -euo pipefail
           stage=$(mktemp -d)
-          cp target/${{ matrix.target }}/release/gfe-node "$stage/"
+          cp src/rust/target/${{ matrix.target }}/release/gfe-node "$stage/"
           cp deploy/gfe-node.service "$stage/"
           cp README.md "$stage/" 2>/dev/null || true
           tarball="gfe-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
@@ -134,16 +137,18 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           version="${version//-/\~}"
           mkdir rpms
+          # The tool runs from the Cargo workspace.
+          cd src/rust
           for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
             # Where `cargo generate-rpm --target` looks for the binary.
             mkdir -p "target/$target/release"
-            tar -xzf dist/"$target"/gfe-*.tar.gz -C "target/$target/release" ./gfe-node
-            cargo generate-rpm -p crates/gfe-node --target "$target" -s "version = '${version}'"
-            mv "target/$target"/generate-rpm/gfe-*.rpm rpms/
+            tar -xzf ../../dist/"$target"/gfe-*.tar.gz -C "target/$target/release" ./gfe-node
+            cargo generate-rpm -p gfe-node --target "$target" -s "version = '${version}'"
+            mv "target/$target"/generate-rpm/gfe-*.rpm ../../rpms/
           done
           # Written from the RPMs' directory, so that each checksum names
           # the file alone: it is checked next to a downloaded RPM.
-          cd rpms
+          cd ../../rpms
           for rpm in gfe-*.rpm; do
             sha256sum "$rpm" > "$rpm.sha256"
           done

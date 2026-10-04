@@ -1,5 +1,5 @@
 # Build artifacts
-/target
+/src/rust/target
 # Binaries handed to the image build (see Dockerfile)
 /prebuilt
 

@@ -11,7 +11,7 @@
 # Usage:
 #   ./validate-config.sh /etc/gfe/gfe.toml
 #   ./validate-config.sh /etc/gfe/gfe.toml /tmp/gfe-dynamic.candidate.json
-#   GFE_BIN=./target/release/gfe-node ./validate-config.sh config/gfe.example.toml
+#   GFE_BIN=./src/rust/target/release/gfe-node ./validate-config.sh config/gfe.example.toml
 set -euo pipefail
 
 CONFIG="${1:-/etc/gfe/gfe.toml}"

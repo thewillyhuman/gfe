@@ -19,7 +19,7 @@ HTTPS=127.0.0.1:18443
 METRICS=127.0.0.1:19191
 
 echo ">> building release binaries"
-cargo build --release -q -p gfe-node -p gfe-loadtest
+cargo build --release -q --manifest-path src/rust/Cargo.toml -p gfe-node -p gfe-loadtest
 
 # Ensure dummy certs exist.
 if [[ ! -f config/certs/default.cert.pem ]]; then
@@ -68,8 +68,8 @@ local_cache = "$TMP/cache.json"
 [health_check_defaults]
 TOML
 
-LT=./target/release/gfe-loadtest
-NODE=./target/release/gfe-node
+LT=./src/rust/target/release/gfe-loadtest
+NODE=./src/rust/target/release/gfe-node
 
 echo ">> starting mock upstream ($UPSTREAM)"
 "$LT" upstream --listen "$UPSTREAM" --body-bytes 64 >/dev/null 2>&1 &

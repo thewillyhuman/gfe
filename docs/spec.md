@@ -108,11 +108,9 @@ The codebase is a Cargo workspace whose crates are named after what they do, aft
 
 ```
 gfe/
-├── Cargo.toml                          # Workspace root
-├── Cargo.lock
 ├── README.md
+├── LICENSE
 ├── Dockerfile
-├── deny.toml
 ├── docs/
 │   ├── spec.md                         # This specification
 │   └── observability.md                # Metrics, logs, alerts and the dashboard
@@ -121,135 +119,8 @@ gfe/
 │   ├── gfe.example.toml                # Reference node (bootstrap) configuration
 │   └── gfe-dynamic.example.json        # Reference dynamic configuration
 │
-├── crates/
-│   │
-│   │  ─────────────────────────────────
-│   │  USED BY EVERYTHING — no dependency on the rest of the workspace
-│   │  ─────────────────────────────────
-│   │
-│   ├── gfe-observability/          # What a node tells about itself
-│   │   └── src/
-│   │       ├── lib.rs                   # The registry and its exposition
-│   │       ├── proxy_metrics.rs         # Connections, requests, latency, bytes
-│   │       ├── control_metrics.rs       # Health, config reload, cert expiry
-│   │       ├── process_metrics.rs       # File descriptors, CPU, memory, runtime
-│   │       ├── kernel_metrics.rs        # What the kernel reports (eBPF)
-│   │       └── logging.rs               # The log: destinations, never blocking
-│   │
-│   ├── gfe-limits/                 # The limits a node puts on itself
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       └── concurrency.rs           # A cap on how many of something are in use
-│   │
-│   │  ─────────────────────────────────
-│   │  THE CORE — a server that does not know what it serves
-│   │  ─────────────────────────────────
-│   │
-│   ├── gfe-core/
-│   │   ├── benches/handshake.rs         # TLS handshakes per second
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── error.rs                 # GfeError
-│   │       ├── config/                  # The two config files
-│   │       │   ├── mod.rs               #   NodeConfig (bootstrap) + DynamicConfig
-│   │       │   ├── listener.rs          #   Listener, ListenProtocol (http|https)
-│   │       │   ├── route.rs             #   Route, RouteAction
-│   │       │   ├── upstream.rs          #   Upstream, UpstreamPool, LbPolicy, Scheme
-│   │       │   ├── tls.rs               #   TlsConfig, CertEntry, MinVersion
-│   │       │   ├── duration.rs          #   Durations as "5s", "200ms"
-│   │       │   ├── loader.rs            #   Read and deserialize the files
-│   │       │   └── validator.rs         #   Semantic validation of a dynamic config
-│   │       ├── tls/                     # TLS termination
-│   │       │   ├── cert_store.rs        #   SNI → certified key map, atomically swappable
-│   │       │   ├── resolver.rs          #   rustls ResolvesServerCert backed by the store
-│   │       │   ├── policy.rs            #   ServerConfig builder: versions, ALPN
-│   │       │   ├── loader.rs            #   PEM cert/key parsing, expiry extraction
-│   │       │   └── acme.rs              #   http-01 challenge store
-│   │       ├── server/                  # Serving the connections of clients
-│   │       │   ├── mod.rs               #   ServerShared, ConnInfo, RequestHandler
-│   │       │   ├── listeners.rs         #   Listening sockets, reconciled on reload
-│   │       │   ├── acceptor.rs          #   Per-socket accept loop, connection limits
-│   │       │   ├── connection.rs        #   Per-connection: TLS handshake → HTTP serve
-│   │       │   ├── activity.rs          #   In-flight tracking for client timeouts
-│   │       │   ├── conn_record.rs       #   Per-connection metrics and log event
-│   │       │   └── drain.rs             #   Graceful draining on shutdown
-│   │       └── upstream/                # Talking to backends
-│   │           ├── client.rs            #   Pooled hyper client, TLS to backends
-│   │           ├── limit.rs             #   The cap on open upstream connections
-│   │           └── failure.rs           #   Why a request to a backend failed
-│   │
-│   │  ─────────────────────────────────
-│   │  CAPABILITIES — built on the core
-│   │  ─────────────────────────────────
-│   │
-│   ├── gfe-health-checking/        # Which backends are alive
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── checker.rs               # Runs probes, deduplicated by (host, port)
-│   │       ├── probe.rs                 # Probe trait + TCP, HTTP(S) and gRPC probes
-│   │       ├── state_machine.rs         # UNKNOWN → HEALTHY ↔ UNHEALTHY (+ DRAINING)
-│   │       └── health_map.rs            # HealthStatus and the shared map of it
-│   │
-│   ├── gfe-load-balancing/         # Which backend gets a request
-│   │   ├── benches/selection.rs         # Selection throughput per policy
-│   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── pool.rs                  # Pools: selection over the healthy set
-│   │       └── policy.rs                # RoundRobin, LeastRequest, RingHash
-│   │
-│   │  ─────────────────────────────────
-│   │  THE PROXY — what happens to a request
-│   │  ─────────────────────────────────
-│   │
-│   ├── gfe-proxy/
-│   │   ├── benches/routing.rs           # Route match throughput
-│   │   ├── tests/
-│   │   │   ├── e2e.rs                   # A proxy in front of mock upstreams
-│   │   │   └── hot_reload.rs            # Config and certificate changes on disk
-│   │   └── src/
-│   │       ├── lib.rs                   # ProxyShared, the request handler
-│   │       ├── service.rs               # Per-request: route → select upstream → proxy
-│   │       ├── forward.rs               # Request/response streaming, header rewriting
-│   │       ├── progress.rs              # Upstream timeouts, and who is to blame
-│   │       ├── errors.rs                # Synthetic error responses (4xx/5xx pages)
-│   │       ├── record.rs                # Per-request metrics and access-log event
-│   │       ├── routing/                 # (listener, host, path) → route
-│   │       │   ├── matcher.rs           #   Host (exact + wildcard) and path matching
-│   │       │   └── snapshot.rs          #   Compiled route table built from a config
-│   │       └── reload/                  # Keeping a node in step with its config
-│   │           ├── applier.rs           #   Compile snapshots, swap them in atomically
-│   │           ├── orchestrator.rs      #   Controller: start, reload, fall back
-│   │           ├── watcher.rs           #   notify (inotify) watcher on the config file
-│   │           ├── cert_files.rs        #   Detects certificate files replaced in place
-│   │           └── cache.rs             #   Last-known-good cache for restart resilience
-│   │
-│   │  ─────────────────────────────────
-│   │  THE PROGRAM
-│   │  ─────────────────────────────────
-│   │
-│   ├── gfe-node/                   # The binary a node runs
-│   │   ├── tests/                       # Tests that start the binary
-│   │   └── src/
-│   │       ├── main.rs                  # CLI args, wiring, the signal loop
-│   │       ├── ops.rs                   # /healthz, /readyz, /metrics
-│   │       ├── signals.rs               # The signals a node acts on
-│   │       ├── systemd.rs               # sd_notify
-│   │       ├── upgrade.rs               # Replacing a running node in place
-│   │       ├── kernel.rs                # The eBPF view, as metrics and log events
-│   │       ├── lib.rs                   # What the tests reach directly
-│   │       └── handover.rs              # Passing listening sockets to a successor
-│   │
-│   └── gfe-ebpf/                   # Kernel view of the node's TCP connections (optional)
-│       ├── build.rs                     # Compiles the kernel program with clang
-│       ├── bpf/tcp_events.bpf.c         # The eBPF program (sockops, cgroup-attached)
-│       └── src/
-│           ├── lib.rs                   # Types; why it may be unavailable
-│           ├── wire.rs                  # Byte layouts shared with the program
-│           ├── linux.rs                 # Load, attach, read
-│           └── unsupported.rs           # Stand-in elsewhere
-│
-├── tools/
-│   └── gfe-loadtest/                    # Load generator for benchmarks (not shipped)
+├── src/
+│   └── rust/                           # The Cargo workspace, detailed below
 │
 ├── demo/                                # Local playground: node, backends, monitoring
 ├── packaging/rpm/                       # RPM scriptlets and build notes
@@ -262,6 +133,146 @@ gfe/
     ├── backend-onboard.sh               # GRE tunnel + loopback VIP on a GFE node
     ├── grafana/gfe-dashboard.json       # Pre-built Grafana dashboard
     └── prometheus/gfe-alerts.yml        # Alerting rules
+```
+
+The workspace:
+
+```
+src/rust/
+├── Cargo.toml                      # Workspace root
+├── Cargo.lock
+├── deny.toml                       # Dependency policy, checked by cargo-deny
+│
+│  ─────────────────────────────────
+│  USED BY EVERYTHING — no dependency on the rest of the workspace
+│  ─────────────────────────────────
+│
+├── gfe-observability/          # What a node tells about itself
+│   └── src/
+│       ├── lib.rs                   # The registry and its exposition
+│       ├── proxy_metrics.rs         # Connections, requests, latency, bytes
+│       ├── control_metrics.rs       # Health, config reload, cert expiry
+│       ├── process_metrics.rs       # File descriptors, CPU, memory, runtime
+│       ├── kernel_metrics.rs        # What the kernel reports (eBPF)
+│       └── logging.rs               # The log: destinations, never blocking
+│
+├── gfe-limits/                 # The limits a node puts on itself
+│   └── src/
+│       ├── lib.rs
+│       └── concurrency.rs           # A cap on how many of something are in use
+│
+│  ─────────────────────────────────
+│  THE CORE — a server that does not know what it serves
+│  ─────────────────────────────────
+│
+├── gfe-core/
+│   ├── benches/handshake.rs         # TLS handshakes per second
+│   └── src/
+│       ├── lib.rs
+│       ├── error.rs                 # GfeError
+│       ├── config/                  # The two config files
+│       │   ├── mod.rs               #   NodeConfig (bootstrap) + DynamicConfig
+│       │   ├── listener.rs          #   Listener, ListenProtocol (http|https)
+│       │   ├── route.rs             #   Route, RouteAction
+│       │   ├── upstream.rs          #   Upstream, UpstreamPool, LbPolicy, Scheme
+│       │   ├── tls.rs               #   TlsConfig, CertEntry, MinVersion
+│       │   ├── duration.rs          #   Durations as "5s", "200ms"
+│       │   ├── loader.rs            #   Read and deserialize the files
+│       │   └── validator.rs         #   Semantic validation of a dynamic config
+│       ├── tls/                     # TLS termination
+│       │   ├── cert_store.rs        #   SNI → certified key map, atomically swappable
+│       │   ├── resolver.rs          #   rustls ResolvesServerCert backed by the store
+│       │   ├── policy.rs            #   ServerConfig builder: versions, ALPN
+│       │   ├── loader.rs            #   PEM cert/key parsing, expiry extraction
+│       │   └── acme.rs              #   http-01 challenge store
+│       ├── server/                  # Serving the connections of clients
+│       │   ├── mod.rs               #   ServerShared, ConnInfo, RequestHandler
+│       │   ├── listeners.rs         #   Listening sockets, reconciled on reload
+│       │   ├── acceptor.rs          #   Per-socket accept loop, connection limits
+│       │   ├── connection.rs        #   Per-connection: TLS handshake → HTTP serve
+│       │   ├── activity.rs          #   In-flight tracking for client timeouts
+│       │   ├── conn_record.rs       #   Per-connection metrics and log event
+│       │   └── drain.rs             #   Graceful draining on shutdown
+│       └── upstream/                # Talking to backends
+│           ├── client.rs            #   Pooled hyper client, TLS to backends
+│           ├── limit.rs             #   The cap on open upstream connections
+│           └── failure.rs           #   Why a request to a backend failed
+│
+│  ─────────────────────────────────
+│  CAPABILITIES — built on the core
+│  ─────────────────────────────────
+│
+├── gfe-health-checking/        # Which backends are alive
+│   └── src/
+│       ├── lib.rs
+│       ├── checker.rs               # Runs probes, deduplicated by (host, port)
+│       ├── probe.rs                 # Probe trait + TCP, HTTP(S) and gRPC probes
+│       ├── state_machine.rs         # UNKNOWN → HEALTHY ↔ UNHEALTHY (+ DRAINING)
+│       └── health_map.rs            # HealthStatus and the shared map of it
+│
+├── gfe-load-balancing/         # Which backend gets a request
+│   ├── benches/selection.rs         # Selection throughput per policy
+│   └── src/
+│       ├── lib.rs
+│       ├── pool.rs                  # Pools: selection over the healthy set
+│       └── policy.rs                # RoundRobin, LeastRequest, RingHash
+│
+│  ─────────────────────────────────
+│  THE PROXY — what happens to a request
+│  ─────────────────────────────────
+│
+├── gfe-proxy/
+│   ├── benches/routing.rs           # Route match throughput
+│   ├── tests/
+│   │   ├── e2e.rs                   # A proxy in front of mock upstreams
+│   │   └── hot_reload.rs            # Config and certificate changes on disk
+│   └── src/
+│       ├── lib.rs                   # ProxyShared, the request handler
+│       ├── service.rs               # Per-request: route → select upstream → proxy
+│       ├── forward.rs               # Request/response streaming, header rewriting
+│       ├── progress.rs              # Upstream timeouts, and who is to blame
+│       ├── errors.rs                # Synthetic error responses (4xx/5xx pages)
+│       ├── record.rs                # Per-request metrics and access-log event
+│       ├── routing/                 # (listener, host, path) → route
+│       │   ├── matcher.rs           #   Host (exact + wildcard) and path matching
+│       │   └── snapshot.rs          #   Compiled route table built from a config
+│       └── reload/                  # Keeping a node in step with its config
+│           ├── applier.rs           #   Compile snapshots, swap them in atomically
+│           ├── orchestrator.rs      #   Controller: start, reload, fall back
+│           ├── watcher.rs           #   notify (inotify) watcher on the config file
+│           ├── cert_files.rs        #   Detects certificate files replaced in place
+│           └── cache.rs             #   Last-known-good cache for restart resilience
+│
+│  ─────────────────────────────────
+│  THE PROGRAM
+│  ─────────────────────────────────
+│
+├── gfe-node/                   # The binary a node runs
+│   ├── tests/                       # Tests that start the binary
+│   └── src/
+│       ├── main.rs                  # CLI args, wiring, the signal loop
+│       ├── ops.rs                   # /healthz, /readyz, /metrics
+│       ├── signals.rs               # The signals a node acts on
+│       ├── systemd.rs               # sd_notify
+│       ├── upgrade.rs               # Replacing a running node in place
+│       ├── kernel.rs                # The eBPF view, as metrics and log events
+│       ├── lib.rs                   # What the tests reach directly
+│       └── handover.rs              # Passing listening sockets to a successor
+│
+├── gfe-ebpf/                   # Kernel view of the node's TCP connections (optional)
+│   ├── build.rs                     # Compiles the kernel program with clang
+│   ├── bpf/tcp_events.bpf.c         # The eBPF program (sockops, cgroup-attached)
+│   └── src/
+│       ├── lib.rs                   # Types; why it may be unavailable
+│       ├── wire.rs                  # Byte layouts shared with the program
+│       ├── linux.rs                 # Load, attach, read
+│       └── unsupported.rs           # Stand-in elsewhere
+│
+│  ─────────────────────────────────
+│  DEVELOPMENT — not part of what a node runs or a package ships
+│  ─────────────────────────────────
+│
+└── gfe-loadtest/               # Load generator for benchmarks
 ```
 
 ### Design Principles Behind the Structure
@@ -287,7 +298,7 @@ A crate may also use, directly, anything the crates it builds on use. `gfe-node`
 
 **Atomic, Lock-Free Config Swaps.** Like `lb`, the live routing snapshot and certificate store are held behind `ArcSwap`. A config reload compiles a brand-new snapshot off the hot path, then swaps the pointer in a single atomic store. In-flight requests keep using the old snapshot until they complete; new requests pick up the new one. The data plane never blocks on the control plane.
 
-**Tests Live Close to What They Test.** Unit tests are `#[cfg(test)] mod tests` inside each crate. Tests that need a running proxy are in `crates/gfe-proxy/tests/`, and tests that start the binary in `crates/gfe-node/tests/`. Benchmarks use `criterion` and sit in the crate they measure.
+**Tests Live Close to What They Test.** Unit tests are `#[cfg(test)] mod tests` inside each crate. Tests that need a running proxy are in `src/rust/gfe-proxy/tests/`, and tests that start the binary in `src/rust/gfe-node/tests/`. Benchmarks use `criterion` and sit in the crate they measure.
 
 ---
 
@@ -373,13 +384,13 @@ A **certificate** entry binds one or more SNI names to a PEM certificate chain +
 
 ## 6. Proxy Design (Data Plane)
 
-> **Code location:** `crates/gfe-proxy/` (engine) + `crates/gfe-core/src/tls/`, `crates/gfe-proxy/src/routing/`, `crates/gfe-load-balancing/`
+> **Code location:** `src/rust/gfe-proxy/` (engine) + `src/rust/gfe-core/src/tls/`, `src/rust/gfe-proxy/src/routing/`, `src/rust/gfe-load-balancing/`
 
 The proxy is a fully asynchronous Tokio service. Unlike `lb`'s forwarder, it terminates TCP and TLS and therefore uses the kernel stack and ordinary `tokio::net` sockets — there is no kernel bypass and no per-packet hot path to keep allocation-free. The performance discipline instead targets **per-request** overhead: zero-copy body streaming, connection reuse, and lock-free config reads.
 
 ### 6.1 Listeners and Acceptors
 
-> **Code location:** `crates/gfe-core/src/server/listeners.rs`, `crates/gfe-core/src/server/acceptor.rs`
+> **Code location:** `src/rust/gfe-core/src/server/listeners.rs`, `src/rust/gfe-core/src/server/acceptor.rs`
 
 One accept loop runs per configured listener. Each loop:
 
@@ -398,7 +409,7 @@ Two listeners may not share an address and port (rejected by validation).
 
 ### 6.2 TLS Termination and SNI Certificate Resolution
 
-> **Code location:** `crates/gfe-core/src/tls/`
+> **Code location:** `src/rust/gfe-core/src/tls/`
 
 GFE terminates TLS with **rustls**. Centralized certificate management is GFE's core value proposition.
 
@@ -412,7 +423,7 @@ GFE terminates TLS with **rustls**. Centralized certificate management is GFE's 
 
 ### 6.3 HTTP Protocol Handling
 
-> **Code location:** `crates/gfe-core/src/server/connection.rs`
+> **Code location:** `src/rust/gfe-core/src/server/connection.rs`
 
 After the handshake, the connection is served by **hyper**:
 
@@ -426,7 +437,7 @@ After the handshake, the connection is served by **hyper**:
 
 ### 6.4 Routing
 
-> **Code location:** `crates/gfe-proxy/src/routing/`
+> **Code location:** `src/rust/gfe-proxy/src/routing/`
 
 Routing maps a request to an action using a compiled, immutable snapshot.
 
@@ -437,7 +448,7 @@ Routing maps a request to an action using a compiled, immutable snapshot.
 
 ### 6.5 Upstream Selection and Load Balancing
 
-> **Code location:** `crates/gfe-load-balancing/src/pool.rs`, `crates/gfe-load-balancing/src/policy.rs`
+> **Code location:** `src/rust/gfe-load-balancing/src/pool.rs`, `src/rust/gfe-load-balancing/src/policy.rs`
 
 Once a route resolves to a pool, GFE selects one **healthy** upstream. The pool exposes only the current healthy set (driven by the health checker, Section 7.1); draining upstreams (lame duck, Section 7.4) are excluded from new selection.
 
@@ -453,7 +464,7 @@ Weights are honored by `round_robin` and `ring_hash`. If a pool has **no healthy
 
 ### 6.6 Upstream Connection Pooling
 
-> **Code location:** `crates/gfe-core/src/upstream/client.rs`
+> **Code location:** `src/rust/gfe-core/src/upstream/client.rs`
 
 Long-lived pooled upstream connections are a primary reason to run a shared edge: they amortize TCP + TLS handshake cost across all client requests to a backend.
 
@@ -465,7 +476,7 @@ Long-lived pooled upstream connections are a primary reason to run a shared edge
 
 ### 6.7 Request and Response Forwarding
 
-> **Code location:** `crates/gfe-proxy/src/forward.rs`
+> **Code location:** `src/rust/gfe-proxy/src/forward.rs`
 
 Forwarding streams bodies without buffering them in full:
 
@@ -481,7 +492,7 @@ Forwarding streams bodies without buffering them in full:
 
 ### 6.8 Timeouts, Retries, and Limits
 
-> **Code location:** `crates/gfe-proxy/src/service.rs`, `crates/gfe-core/src/server/connection.rs`
+> **Code location:** `src/rust/gfe-proxy/src/service.rs`, `src/rust/gfe-core/src/server/connection.rs`
 
 Bounded, predictable behaviour under stress:
 
@@ -504,20 +515,20 @@ Bounded, predictable behaviour under stress:
 
 ## 7. Controller Design (Control Plane)
 
-> **Code location:** `crates/gfe-proxy/src/reload/` (orchestrator) + `crates/gfe-health-checking/`, `crates/gfe-proxy/src/reload/`, `crates/gfe-core/src/tls/`
+> **Code location:** `src/rust/gfe-proxy/src/reload/` (orchestrator) + `src/rust/gfe-health-checking/`, `src/rust/gfe-proxy/src/reload/`, `src/rust/gfe-core/src/tls/`
 
 The controller runs as Tokio tasks alongside the proxy. It does not handle client requests and shares with the proxy only atomic snapshots (route table, cert store) and the upstream health map.
 
 ### 7.1 L7 Health Checking
 
-> **Code location:** `crates/gfe-health-checking/`
+> **Code location:** `src/rust/gfe-health-checking/`
 
 GFE health-checks every upstream in every referenced pool — at **L7**, which is richer than the L4 LB's TCP/connectivity checks.
 
 Each probe implements the `Probe` trait:
 
 ```rust
-/// crates/gfe-health-checking/src/probe.rs
+/// src/rust/gfe-health-checking/src/probe.rs
 #[async_trait]
 pub trait Probe: Send + Sync {
     async fn check(&self, target: &Upstream, timeout: Duration) -> ProbeResult;
@@ -561,7 +572,7 @@ Since all upstreams have globally routable IPs across the organization's IP serv
 
 ### 7.2 Config Manager
 
-> **Code location:** `crates/gfe-proxy/src/reload/`
+> **Code location:** `src/rust/gfe-proxy/src/reload/`
 
 Responsibilities:
 
@@ -575,7 +586,7 @@ The file-based model and its rationale are inherited verbatim from `lb`'s ADR-00
 
 ### 7.3 Certificate Manager
 
-> **Code location:** `crates/gfe-core/src/tls/cert_store.rs`, `crates/gfe-core/src/tls/loader.rs`
+> **Code location:** `src/rust/gfe-core/src/tls/cert_store.rs`, `src/rust/gfe-core/src/tls/loader.rs`
 
 - On config load and on cert-file change, the manager parses each certificate entry (`loader.rs`), builds an updated cert store, and swaps it in atomically.
 - It records each certificate's **not-after** time and exposes `gfe_cert_expiry_timestamp{sni}` so monitoring can alert well before expiry. The series of an SNI that a reload removes is removed with it.
@@ -585,7 +596,7 @@ The file-based model and its rationale are inherited verbatim from `lb`'s ADR-00
 
 ### 7.4 Lame Duck and Graceful Drain
 
-> **Code location:** `crates/gfe-health-checking/src/state_machine.rs`, `crates/gfe-core/src/server/drain.rs`
+> **Code location:** `src/rust/gfe-health-checking/src/state_machine.rs`, `src/rust/gfe-core/src/server/drain.rs`
 
 **Upstream lame duck (zero-downtime backend deploys).** A backend signals it wants to drain — by serving a configured **lame-duck response** on its health endpoint (e.g. a `503` with a known marker, or a dedicated drain path) — and the health state machine moves it to `DRAINING`. While draining:
 
@@ -792,7 +803,7 @@ GFE is registered as a **backend pool in the `lb` L4 load balancer**. The L4 LB 
 
 ## 12. Observability
 
-> **Code location:** `crates/gfe-observability/` (registration)
+> **Code location:** `src/rust/gfe-observability/` (registration)
 
 ### 12.1 Metrics
 
@@ -969,7 +980,7 @@ The ops server serves at most 64 connections at once and closes any over that at
 
 ### Upgrading a Node in Place
 
-> **Code location:** `crates/gfe-node/src/upgrade.rs`, `crates/gfe-node/src/handover.rs`
+> **Code location:** `src/rust/gfe-node/src/upgrade.rs`, `src/rust/gfe-node/src/handover.rs`
 
 A new binary, or a change to the bootstrap config (which is read once, at startup), needs a new process. It does not need the listening sockets to be closed. On `SIGUSR2` a node replaces itself (Unix only):
 

@@ -17,7 +17,7 @@ creates `/var/lib/gfe` (the last-known-good config cache) on start.
 
 ## Building
 
-The metadata lives in `crates/gfe-node/Cargo.toml` under
+The metadata lives in `src/rust/gfe-node/Cargo.toml` under
 `[package.metadata.generate-rpm]`; the scriptlets are next to this file. The
 package is assembled from the already-built release binary by
 [`cargo-generate-rpm`](https://github.com/cat-in-136/cargo-generate-rpm), so
@@ -25,8 +25,9 @@ no `rpmbuild` is needed:
 
 ```bash
 cargo install cargo-generate-rpm --locked
+cd src/rust
 cargo build --release --bin gfe-node
-cargo generate-rpm -p crates/gfe-node
+cargo generate-rpm -p gfe-node
 ls target/generate-rpm/gfe-*.rpm
 ```
 

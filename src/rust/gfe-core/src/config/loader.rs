@@ -272,7 +272,7 @@ mod tests {
     /// ships as the examples.
     fn shipped_example(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../config")
+            .join("../../../config")
             .join(name)
     }
 
