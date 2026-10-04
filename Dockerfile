@@ -38,6 +38,7 @@ RUN apt-get update \
 # only re-runs when Cargo.lock or any Cargo.toml changes.
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY tools ./tools
 
 # `--locked` so the build fails if Cargo.lock is out of date; this is a
 # release artifact, not a dev iteration.

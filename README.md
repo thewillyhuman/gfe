@@ -142,7 +142,7 @@ The dominant cost at the GFE tier is **TLS handshakes**, not request processing 
 
 ### End-to-end load test
 
-A self-contained harness (`crates/gfe-loadtest` + `scripts/loadtest.sh`) drives the **real `gfe-node` binary** over loopback in front of a mock upstream, layer by layer. Reproduce with `./scripts/loadtest.sh 64 6` (64 connections, 6 s/scenario):
+A self-contained harness (`tools/gfe-loadtest` + `scripts/loadtest.sh`) drives the **real `gfe-node` binary** over loopback in front of a mock upstream, layer by layer. Reproduce with `./scripts/loadtest.sh 64 6` (64 connections, 6 s/scenario):
 
 ```
 scenario                          mode        result

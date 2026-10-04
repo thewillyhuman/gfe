@@ -7,9 +7,10 @@ members = [
     "crates/gfe-proxy",
     "crates/gfe-node",
     "crates/gfe-health-checking",
-    "crates/gfe-loadtest",
     # Kernel-side view of the node's TCP connections (eBPF, Linux only).
     "crates/gfe-ebpf",
+    # Development tools: not part of what a node runs or a package ships.
+    "tools/gfe-loadtest",
     # Crates are added to this list as they are implemented (see roadmap in
     # .docs/spec.md). The full set: gfe-observability,
     # gfe-load-balancing, gfe-proxy, gfe-health-checking,
