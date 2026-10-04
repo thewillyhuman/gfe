@@ -4,7 +4,7 @@
 
 use crate::probe::make_probe;
 use crate::state_machine::BackendHealth;
-use gfe_metrics::{BackendLabels, GfeMetrics};
+use gfe_observability::{BackendLabels, GfeMetrics};
 use gfe_types::{HealthCheckConfig, HealthStatus, Scheme, UpstreamPool};
 use gfe_upstream::HealthMap;
 use std::collections::HashMap;

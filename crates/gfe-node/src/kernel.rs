@@ -7,7 +7,7 @@
 //! runs exactly as it does without it.
 
 use gfe_ebpf::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe};
-use gfe_metrics::{
+use gfe_observability::{
     BackendLabel, ClientEndingLabels, GfeMetrics, KernelMetrics, ListenerLabel,
     UpstreamEndingLabels,
 };

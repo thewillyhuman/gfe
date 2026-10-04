@@ -2,7 +2,7 @@
 //! upstream, exercised over plaintext HTTP and over TLS.
 
 use bytes::Bytes;
-use gfe_metrics::GfeMetrics;
+use gfe_observability::GfeMetrics;
 use gfe_proxy::{ListenerSet, ProxyShared};
 use gfe_types::{
     CertEntry, DynamicConfig, LimitsConfig, ListenProtocol, Listener, ListenerId, PoolId, Route,

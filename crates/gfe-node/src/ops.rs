@@ -3,7 +3,7 @@
 use crate::kernel::KernelView;
 use crate::logging::Log;
 use bytes::Bytes;
-use gfe_metrics::{GfeMetrics, LogDestinationLabel};
+use gfe_observability::{GfeMetrics, LogDestinationLabel};
 use gfe_proxy::ProxyShared;
 use http_body_util::Full;
 use hyper::header::{HeaderValue, CONNECTION};

@@ -8,7 +8,7 @@
 //! (TLS parameters, bytes on the wire, why connections end).
 
 use crate::ProxyShared;
-use gfe_metrics::{
+use gfe_observability::{
     CloseLabels, Counter, ListenerLabel, TlsFailureLabel, TlsLabels, TlsResultLabel,
 };
 use gfe_types::Listener;

@@ -12,7 +12,7 @@ gfe-config = { workspace = true }
 gfe-health = { workspace = true }
 gfe-proxy = { workspace = true }
 gfe-upstream = { workspace = true }
-gfe-metrics = { workspace = true }
+gfe-observability = { workspace = true }
 notify = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

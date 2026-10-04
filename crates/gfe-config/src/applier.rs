@@ -2,7 +2,7 @@
 //! atomically. In-flight requests finish on the old snapshots.
 
 use crate::validator::validate;
-use gfe_metrics::SniLabel;
+use gfe_observability::SniLabel;
 use gfe_proxy::ProxyShared;
 use gfe_router::RouteTable;
 use gfe_tls::CertStore;
@@ -106,7 +106,7 @@ pub fn install(shared: &ProxyShared, prepared: Prepared) {
 mod tests {
     use super::*;
 
-    use gfe_metrics::GfeMetrics;
+    use gfe_observability::GfeMetrics;
 
     use gfe_types::{
         CertEntry, LimitsConfig, ListenProtocol, Listener, ListenerId, PoolId, Route, RouteAction,

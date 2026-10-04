@@ -15,7 +15,7 @@ gfe-types = { workspace = true }
 gfe-config = { workspace = true }
 gfe-controller = { workspace = true }
 gfe-proxy = { workspace = true }
-gfe-metrics = { workspace = true }
+gfe-observability = { workspace = true }
 gfe-tls = { workspace = true }
 gfe-upstream = { workspace = true }
 gfe-ebpf = { workspace = true }

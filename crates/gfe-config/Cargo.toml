@@ -12,7 +12,7 @@ gfe-router = { workspace = true }
 gfe-tls = { workspace = true }
 gfe-upstream = { workspace = true }
 gfe-proxy = { workspace = true }
-gfe-metrics = { workspace = true }
+gfe-observability = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }

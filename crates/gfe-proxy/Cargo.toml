@@ -11,7 +11,7 @@ gfe-types = { workspace = true }
 gfe-router = { workspace = true }
 gfe-tls = { workspace = true }
 gfe-upstream = { workspace = true }
-gfe-metrics = { workspace = true }
+gfe-observability = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls = { workspace = true }

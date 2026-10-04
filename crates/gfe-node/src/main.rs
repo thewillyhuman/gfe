@@ -11,7 +11,7 @@ mod upgrade;
 use anyhow::{Context, Result};
 use clap::Parser;
 use gfe_controller::Controller;
-use gfe_metrics::GfeMetrics;
+use gfe_observability::GfeMetrics;
 use gfe_proxy::{DrainController, ListenerSet, ProxyShared};
 use gfe_upstream::{KeepAlive, UpstreamClient, UpstreamClientOptions};
 use logging::Log;

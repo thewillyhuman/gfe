@@ -13,7 +13,7 @@ use crate::errors::RespBody;
 use crate::progress::SendProgress;
 use crate::ConnCtx;
 use bytes::{Buf, Bytes};
-use gfe_metrics::{AbortLabels, GrpcLabels, RequestLabels, RouteLabels};
+use gfe_observability::{AbortLabels, GrpcLabels, RequestLabels, RouteLabels};
 use gfe_upstream::BoxError;
 use hyper::body::{Body, Frame, SizeHint};
 use hyper::{Request, Response, StatusCode};

@@ -6,7 +6,9 @@ use crate::progress::SendProgress;
 use crate::record::{CountedBody, RequestRecord};
 use crate::ConnCtx;
 use bytes::Bytes;
-use gfe_metrics::{Gauge, PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels};
+use gfe_observability::{
+    Gauge, PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels,
+};
 use gfe_upstream::{BoxError, FailureKind, InflightGuard, Pool};
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use http_body_util::BodyExt;

@@ -2,7 +2,7 @@
 //! plane without a restart.
 
 use gfe_controller::Controller;
-use gfe_metrics::GfeMetrics;
+use gfe_observability::GfeMetrics;
 use gfe_proxy::{ListenerSet, ProxyShared};
 use gfe_types::{GfeError, LimitsConfig, MinVersion, TimeoutsConfig, TlsConfig};
 use gfe_upstream::UpstreamClient;

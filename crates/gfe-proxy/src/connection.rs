@@ -8,7 +8,7 @@ use crate::conn_record::{ConnRecord, TlsInfo};
 use crate::service::handle_request;
 use crate::{ConnCtx, ProxyShared};
 use arc_swap::ArcSwap;
-use gfe_metrics::RejectLabel;
+use gfe_observability::RejectLabel;
 use gfe_types::{Listener, TimeoutsConfig};
 use hyper::header::{HeaderValue, CONNECTION};
 use hyper::service::service_fn;

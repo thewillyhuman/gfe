@@ -213,7 +213,7 @@ gfe/
 │   │  OBSERVABILITY
 │   │  ─────────────────────────────────
 │   │
-│   ├── gfe-metrics/                # Metrics registration and exposition
+│   ├── gfe-observability/                # Metrics registration and exposition
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
@@ -278,7 +278,7 @@ gfe/
              /    |    \           /      |       \
       gfe-tls gfe-router gfe-upstream  gfe-health gfe-config
             \      |        |    /        |        /
-             ──────── gfe-metrics ───────
+             ──────── gfe-observability ───────
                           |
                       gfe-types
 ```
@@ -792,7 +792,7 @@ GFE is registered as a **backend pool in the `lb` L4 load balancer**. The L4 LB 
 
 ## 12. Observability
 
-> **Code location:** `crates/gfe-metrics/` (registration)
+> **Code location:** `crates/gfe-observability/` (registration)
 
 ### 12.1 Metrics
 
@@ -1038,7 +1038,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] `gfe-router`: compiled route table, host (exact + wildcard) and path (prefix/exact) matching
 - [x] `gfe-upstream`: pool handle, round-robin policy, hyper upstream client, connection pooling
 - [x] `gfe-proxy`: acceptor, per-connection TLS + HTTP serve, routing, forwarding, synthetic errors
-- [x] `gfe-metrics`: proxy metrics + Prometheus endpoint
+- [x] `gfe-observability`: proxy metrics + Prometheus endpoint
 - [x] `gfe-config`: loader + validator + applier (atomic swap) for the dynamic config
 - [x] `gfe-node`: binary wiring proxy + config from local file; `--check-config`
 - [x] Integration tests (TLS termination, routing, proxying) against mock upstreams
@@ -1053,7 +1053,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 - [x] bounded pools — idle connections bounded per host; open upstream connections capped node-wide (`max_upstream_connections`)
 - [x] `gfe-proxy`: graceful drain (deadline), request-total timeout, conservative idempotent retries, connection limits
 - [x] per-stage timeouts — TLS handshake, request header, client idle, upstream connect, upstream first-byte and overall `request_total`
-- [x] `gfe-metrics`: control-plane metrics; structured access logging (`gfe::access`)
+- [x] `gfe-observability`: control-plane metrics; structured access logging (`gfe::access`)
 
 ### Phase 3 — Completeness and Operations ✅
 
@@ -1089,7 +1089,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 | File watching | `notify` | `gfe-config` | inotify-based hot reload (ADR-001) |
 | Atomic config swap | `arc-swap` | `gfe-router`, `gfe-tls`, `gfe-config` | Lock-free snapshot reads on the hot path |
 | Shared health map | `dashmap` | `gfe-health` | Concurrent reads from the data plane |
-| Metrics | `prometheus-client` | `gfe-metrics` | Direct Prometheus exposition (same as `lb`) |
+| Metrics | `prometheus-client` | `gfe-observability` | Direct Prometheus exposition (same as `lb`) |
 | Logging / tracing | `tracing` + `tracing-subscriber` | all | Structured, async-aware, runtime-adjustable levels |
 | CLI | `clap` | `gfe-node` | Arg parsing (same as `lb`) |
 | Error handling | `thiserror`, `anyhow` | all | Library vs. binary error idioms (same as `lb`) |

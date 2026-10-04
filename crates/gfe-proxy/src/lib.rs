@@ -23,7 +23,7 @@ pub use errors::RespBody;
 pub use listeners::ListenerSet;
 
 use arc_swap::ArcSwap;
-use gfe_metrics::GfeMetrics;
+use gfe_observability::GfeMetrics;
 use gfe_router::RouteTable;
 use gfe_tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_types::{LimitsConfig, ListenerId, TimeoutsConfig, TlsConfig};

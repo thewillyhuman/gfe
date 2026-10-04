@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "crates/gfe-types",
-    "crates/gfe-metrics",
+    "crates/gfe-observability",
     "crates/gfe-router",
     "crates/gfe-tls",
     "crates/gfe-upstream",
@@ -16,7 +16,7 @@ members = [
     # Passing a node's listening sockets to its successor (Unix only).
     "crates/gfe-handover",
     # Crates are added to this list as they are implemented (see roadmap in
-    # .docs/spec.md). The full set: gfe-metrics, gfe-tls, gfe-router,
+    # .docs/spec.md). The full set: gfe-observability, gfe-tls, gfe-router,
     # gfe-upstream, gfe-proxy, gfe-health, gfe-config, gfe-controller,
     # gfe-node.
 ]
@@ -40,7 +40,7 @@ unsafe_code = "forbid"
 [workspace.dependencies]
 # Workspace crates
 gfe-types = { path = "crates/gfe-types" }
-gfe-metrics = { path = "crates/gfe-metrics" }
+gfe-observability = { path = "crates/gfe-observability" }
 gfe-tls = { path = "crates/gfe-tls" }
 gfe-router = { path = "crates/gfe-router" }
 gfe-upstream = { path = "crates/gfe-upstream" }

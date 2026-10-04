@@ -579,7 +579,7 @@ dependencies = [
 name = "gfe-config"
 version = "0.1.0"
 dependencies = [
- "gfe-metrics",
+ "gfe-observability",
  "gfe-proxy",
  "gfe-router",
  "gfe-tls",
@@ -599,7 +599,7 @@ version = "0.1.0"
 dependencies = [
  "gfe-config",
  "gfe-health",
- "gfe-metrics",
+ "gfe-observability",
  "gfe-proxy",
  "gfe-tls",
  "gfe-types",
@@ -634,7 +634,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
- "gfe-metrics",
+ "gfe-observability",
  "gfe-types",
  "gfe-upstream",
  "http-body-util",
@@ -663,13 +663,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gfe-metrics"
-version = "0.1.0"
-dependencies = [
- "prometheus-client",
-]
-
-[[package]]
 name = "gfe-node"
 version = "0.1.0"
 dependencies = [
@@ -681,7 +674,7 @@ dependencies = [
  "gfe-ebpf",
  "gfe-handover",
  "gfe-health",
- "gfe-metrics",
+ "gfe-observability",
  "gfe-proxy",
  "gfe-tls",
  "gfe-types",
@@ -704,12 +697,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gfe-observability"
+version = "0.1.0"
+dependencies = [
+ "prometheus-client",
+]
+
+[[package]]
 name = "gfe-proxy"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
  "bytes",
- "gfe-metrics",
+ "gfe-observability",
  "gfe-router",
  "gfe-tls",
  "gfe-types",
