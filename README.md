@@ -257,6 +257,14 @@ cargo bench -p gfe-tls --bench handshake
 ./scripts/loadtest.sh 64 6      # end-to-end load test (mock upstream + real node)
 ```
 
+CI runs the tests with [cargo-nextest](https://nexte.st), which reports the
+whole workspace as one result instead of one per test binary:
+
+```bash
+cargo nextest run --workspace --profile ci   # settings in .config/nextest.toml
+cargo test --workspace --doc                 # doctests, which nextest does not run
+```
+
 ## Documentation
 
 - **[Data-plane spec](.docs/spec.md)** — proxy architecture and protocol details.
