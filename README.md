@@ -63,7 +63,7 @@ spread connections across a fleet with no coordination.
   when it is over, to a file or standard output, by a writer that never holds
   up a request and counts what it had to drop; `/healthz` `/readyz`
   `/metrics`; alert rules and a dashboard. See the
-  [observability guide](.docs/observability.md).
+  [observability guide](docs/observability.md).
 - **Kernel view (optional, eBPF)** — accept-queue wait, round-trip time,
   retransmissions and how connections end, per listener and per backend,
   from a small eBPF program attached to the node's own cgroup. It watches
@@ -266,8 +266,8 @@ cargo test --workspace --doc                 # doctests, which nextest does not 
 
 ## Documentation
 
-- **[Data-plane spec](.docs/spec.md)** — proxy architecture and protocol details.
-- **[Observability guide](.docs/observability.md)** — which signal answers which question.
+- **[Data-plane spec](docs/spec.md)** — proxy architecture and protocol details.
+- **[Observability guide](docs/observability.md)** — which signal answers which question.
 
 ## License
 

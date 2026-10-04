@@ -1,6 +1,6 @@
 # Prometheus alerting rules for a GFE fleet.
 #
-# The first groups use what GFE itself exports (see .docs/spec.md, section 12).
+# The first groups use what GFE itself exports (see docs/spec.md, section 12).
 # The last group uses node_exporter: packets, drops and interface errors are
 # kernel facts the proxy cannot see from user space, so they are alerted on at
 # the host level and correlated by `instance`.

@@ -114,7 +114,7 @@ gfe/
 ├── rust-toolchain.toml
 ├── Dockerfile
 ├── deny.toml
-├── .docs/
+├── docs/
 │   ├── spec.md                         # This specification
 │   └── observability.md                # Metrics, logs, alerts and the dashboard
 │
