@@ -247,7 +247,7 @@ fn text(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gfe_proxy::ServerShared;
+    use gfe_core::server::ServerShared;
     use std::sync::OnceLock;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;

@@ -3,7 +3,7 @@
 //! A watch channel tells the accept loops to stop accepting and the open
 //! connections to ask their clients to leave, and a `draining` flag makes the
 //! ops server fail `/readyz`. The connections get until the drain deadline to
-//! finish ([`ListenerSet::serve_until_drained`](crate::listeners::ListenerSet::serve_until_drained)).
+//! finish ([`ListenerSet::serve_until_drained`](crate::server::listeners::ListenerSet::serve_until_drained)).
 
 use crate::server::ServerShared;
 use std::sync::atomic::Ordering;

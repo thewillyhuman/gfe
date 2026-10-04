@@ -380,7 +380,7 @@ The proxy is a fully asynchronous Tokio service. Unlike `lb`'s forwarder, it ter
 
 ### 6.1 Listeners and Acceptors
 
-> **Code location:** `crates/gfe-proxy/src/listeners.rs`, `crates/gfe-proxy/src/acceptor.rs`
+> **Code location:** `crates/gfe-core/src/server/listeners.rs`, `crates/gfe-core/src/server/acceptor.rs`
 
 One accept loop runs per configured listener. Each loop:
 
@@ -413,7 +413,7 @@ GFE terminates TLS with **rustls**. Centralized certificate management is GFE's 
 
 ### 6.3 HTTP Protocol Handling
 
-> **Code location:** `crates/gfe-proxy/src/connection.rs`
+> **Code location:** `crates/gfe-core/src/server/connection.rs`
 
 After the handshake, the connection is served by **hyper**:
 
@@ -482,7 +482,7 @@ Forwarding streams bodies without buffering them in full:
 
 ### 6.8 Timeouts, Retries, and Limits
 
-> **Code location:** `crates/gfe-proxy/src/service.rs`, `crates/gfe-proxy/src/connection.rs`
+> **Code location:** `crates/gfe-proxy/src/service.rs`, `crates/gfe-core/src/server/connection.rs`
 
 Bounded, predictable behaviour under stress:
 
@@ -586,7 +586,7 @@ The file-based model and its rationale are inherited verbatim from `lb`'s ADR-00
 
 ### 7.4 Lame Duck and Graceful Drain
 
-> **Code location:** `crates/gfe-health-checking/src/state_machine.rs`, `crates/gfe-proxy/src/drain.rs`
+> **Code location:** `crates/gfe-health-checking/src/state_machine.rs`, `crates/gfe-core/src/server/drain.rs`
 
 **Upstream lame duck (zero-downtime backend deploys).** A backend signals it wants to drain — by serving a configured **lame-duck response** on its health endpoint (e.g. a `503` with a known marker, or a dedicated drain path) — and the health state machine moves it to `DRAINING`. While draining:
 
@@ -909,7 +909,7 @@ How it works, and what it does not assume:
   | `tls_version`, `tls_cipher` | Negotiated TLS parameters of the connection the request arrived on |
 
   Fields that do not apply to a request are omitted.
-- **Connection logs** (`conn_record.rs`): one structured event per client connection under the target `gfe::conn`, emitted when the connection is gone. Fields: `client`, `client_port`, `listener`, `proto`, `sni`, `tls_version`, `tls_cipher`, `alpn`, `tls_resumed`, `tls_handshake_ms`, `tls_error` (why a handshake failed), `accept_wait_ms` (time in the accept queue; only with the kernel view), `requests` (served on the connection), `bytes_in` / `bytes_out` (on the wire), `duration_ms`, `reason` (as in `gfe_connections_closed_total`) and `error` (the error text, when there was one). Both targets can be silenced or routed independently, e.g. `RUST_LOG=info,gfe::conn=off`.
+- **Connection logs** (`gfe-core/src/server/conn_record.rs`): one structured event per client connection under the target `gfe::conn`, emitted when the connection is gone. Fields: `client`, `client_port`, `listener`, `proto`, `sni`, `tls_version`, `tls_cipher`, `alpn`, `tls_resumed`, `tls_handshake_ms`, `tls_error` (why a handshake failed), `accept_wait_ms` (time in the accept queue; only with the kernel view), `requests` (served on the connection), `bytes_in` / `bytes_out` (on the wire), `duration_ms`, `reason` (as in `gfe_connections_closed_total`) and `error` (the error text, when there was one). Both targets can be silenced or routed independently, e.g. `RUST_LOG=info,gfe::conn=off`.
 - **TCP logs** (`gfe-node/src/kernel.rs`, only with the kernel view): one event per closed TCP connection under the target `gfe::tcp`. Fields: `side` (`client` or `upstream`), `client` and `client_port` (the same as in the `gfe::conn` event of that connection) or `backend`, `listener`, `ending`, `rtt_ms`, `min_rtt_ms`, `retransmits`, `segments_sent`, `bytes_acked`, `bytes_received`, `lifetime_ms`.
 - **Where the log goes** (`[log]` in the bootstrap config). By default every line goes to standard output, which under systemd is the journal. With `[log] file = "/var/log/gfe/gfe.log"` every line is appended to that file, and standard output keeps the node's own log only: the access, connection and TCP events go to the file alone. A journal is the wrong place for one line per request, and journald silently discards what exceeds its rate limit (10,000 lines per 30 s per service by default). The node does not rotate the file. It may be renamed, removed or truncated under the node, which goes on at the configured path within a second; a file that cannot be opened there fails every line, and counts it as lost, until it can. The file is created with mode `0640`.
 - **Writing the log never holds up a request** (`gfe-observability/src/logging.rs`). An event is formatted where it happens and queued; a thread of its own writes the queue out. A destination slower than the node logs fills the queue (128,000 lines), and from then on lines are dropped rather than waited for. Lines dropped, or refused by the destination, are counted in `gfe_log_lost_lines`. What is still queued when the node exits is written out first.

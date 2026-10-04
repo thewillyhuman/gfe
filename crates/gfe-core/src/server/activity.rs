@@ -6,10 +6,10 @@
 //! tracks the one fact needed to decide both: whether a request is in flight,
 //! and since when none has been.
 
+use crate::config::TimeoutsConfig;
 use crate::server::RespBody;
+use crate::upstream::BoxError;
 use bytes::Bytes;
-use gfe_core::config::TimeoutsConfig;
-use gfe_core::upstream::BoxError;
 use hyper::body::{Body, Frame, SizeHint};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

@@ -214,11 +214,12 @@ cd demo && docker compose up -d --build   # then open http://localhost:13000
 ```
 crates/
   gfe-core/         Config (types, loading, validation); TLS termination;
-                    the pooled client for backends
+                    serving connections (listeners, HTTP, timeouts,
+                    drain); the pooled client for backends
   gfe-router/       Compiled route table: host (exact/wildcard) + path matching
   gfe-load-balancing/  Pools and selection policies
   gfe-limits/       Counting and capping what a node holds at once
-  gfe-proxy/        Data plane: acceptor, TLS termination, routing, forwarding
+  gfe-proxy/        What happens to a request: routing, forwarding, accounting
   gfe-health-checking/  L7 probes, state machine, checker, health map
   gfe-config/       Load, validate, apply (atomic swap), watch, cache
   gfe-controller/   Orchestrator: config + health + cache + hot-reload

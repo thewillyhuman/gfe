@@ -3,11 +3,11 @@
 //! client-side timeouts and limits, and ended in an orderly way when the node
 //! drains.
 
-use crate::activity::{ConnActivity, InFlightBody, Verdict};
-use crate::conn_record::{ConnRecord, TlsInfo};
+use crate::config::{Listener, TimeoutsConfig};
+use crate::server::activity::{ConnActivity, InFlightBody, Verdict};
+use crate::server::conn_record::{ConnRecord, TlsInfo};
 use crate::server::{ConnInfo, RequestHandler, ServerShared};
 use arc_swap::ArcSwap;
-use gfe_core::config::{Listener, TimeoutsConfig};
 use gfe_observability::RejectLabel;
 use hyper::header::{HeaderValue, CONNECTION};
 use hyper::service::service_fn;

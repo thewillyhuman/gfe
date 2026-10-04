@@ -2,13 +2,13 @@
 //! reported exactly once, as metrics and as a connection-log event, when the
 //! connection is gone.
 //!
-//! The request-level counterpart is [`crate::record`]. The two are kept
+//! The request-level counterpart is whoever answers the requests. The two are kept
 //! apart because their rates and their audiences differ: requests describe
 //! what clients asked for, connections describe how clients reach the node
 //! (TLS parameters, bytes on the wire, why connections end).
 
+use crate::config::Listener;
 use crate::server::{millis, ServerShared};
-use gfe_core::config::Listener;
 use gfe_observability::{
     CloseLabels, Counter, ListenerLabel, TlsFailureLabel, TlsLabels, TlsResultLabel,
 };

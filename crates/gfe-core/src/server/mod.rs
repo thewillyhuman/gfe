@@ -1,11 +1,25 @@
-//! What serving connections takes that is not the requests themselves: the
-//! settings and state every connection of a node shares, what is known
-//! about a connection, and whoever answers its requests.
+//! Serving connections: the listening sockets and their accept loops, the
+//! TLS handshake, HTTP/1 and HTTP/2 over what was accepted, the client-side
+//! timeouts and limits, and draining.
+//!
+//! What a request is answered with is not decided here: every request is
+//! handed to a [`RequestHandler`], with what is known about the connection
+//! it arrived on ([`ConnInfo`]).
 
-use crate::conn_record::TlsInfo;
+pub mod acceptor;
+pub mod activity;
+pub mod conn_record;
+pub mod connection;
+pub mod drain;
+pub mod listeners;
+
+pub use conn_record::TlsInfo;
+pub use drain::DrainController;
+pub use listeners::ListenerSet;
+
+use crate::config::{LimitsConfig, ListenerId, TimeoutsConfig};
+use crate::upstream::BoxError;
 use bytes::Bytes;
-use gfe_core::config::{LimitsConfig, ListenerId, TimeoutsConfig};
-use gfe_core::upstream::BoxError;
 use gfe_observability::GfeMetrics;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;

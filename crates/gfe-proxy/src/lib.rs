@@ -6,25 +6,17 @@
 //! reconciles the listening sockets through the [`ListenerSet`]; the proxy
 //! reads the snapshots lock-free on the hot path.
 
-pub mod acceptor;
-pub mod activity;
-pub mod conn_record;
-pub mod connection;
-pub mod drain;
 pub mod errors;
 pub mod forward;
-pub mod listeners;
 pub mod progress;
 pub mod record;
-pub mod server;
 pub mod service;
 
-pub use drain::DrainController;
 pub use errors::RespBody;
-pub use server::{AcceptQueue, ConnInfo, RequestHandler, ServerShared};
 
 use arc_swap::ArcSwap;
 use gfe_core::config::{ListenerId, TlsConfig};
+use gfe_core::server::{ConnInfo, RequestHandler, ServerShared, TlsInfo};
 use gfe_core::tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_core::upstream::UpstreamClient;
 use gfe_health_checking::HealthMap;
@@ -36,7 +28,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 /// The listeners of a node whose requests the proxy answers.
-pub type ListenerSet = listeners::ListenerSet<ProxyShared>;
+pub type ListenerSet = gfe_core::server::ListenerSet<ProxyShared>;
 
 /// Shared state read by the data plane and mutated by the control plane.
 pub struct ProxyShared {
@@ -109,5 +101,5 @@ pub struct ConnCtx {
     pub client_port: u16,
     pub sni: Option<String>,
     /// The negotiated TLS parameters, on a TLS connection.
-    pub tls: Option<conn_record::TlsInfo>,
+    pub tls: Option<TlsInfo>,
 }

@@ -19,10 +19,10 @@
 //! [adopts]: ListenerSet::adopt
 //! [lends]: ListenerSet::sockets
 
-use crate::acceptor;
+use crate::config::{Listener, ListenerId};
+use crate::server::acceptor;
 use crate::server::{RequestHandler, ServerShared};
 use arc_swap::ArcSwap;
-use gfe_core::config::{Listener, ListenerId};
 use rustls::ServerConfig;
 use std::collections::{HashMap, HashSet};
 use std::io;

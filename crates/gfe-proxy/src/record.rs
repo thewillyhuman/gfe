@@ -11,9 +11,9 @@
 
 use crate::errors::RespBody;
 use crate::progress::SendProgress;
-use crate::server::millis;
 use crate::ConnCtx;
 use bytes::{Buf, Bytes};
+use gfe_core::server::millis;
 use gfe_core::upstream::BoxError;
 use gfe_observability::{AbortLabels, GrpcLabels, RequestLabels, RouteLabels};
 use hyper::body::{Body, Frame, SizeHint};

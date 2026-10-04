@@ -1,9 +1,9 @@
 //! Per-socket accept loop with connection-limit enforcement.
 
-use crate::connection;
+use crate::config::Listener;
+use crate::server::connection;
 use crate::server::{RequestHandler, ServerShared};
 use arc_swap::ArcSwap;
-use gfe_core::config::Listener;
 use gfe_observability::RejectLabel;
 use rustls::ServerConfig;
 use std::sync::Arc;

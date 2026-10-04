@@ -7,7 +7,7 @@ use hyper::body::Incoming;
 use hyper::header::{HeaderValue, CONTENT_TYPE};
 use hyper::{Response, StatusCode};
 
-pub use crate::server::RespBody;
+pub use gfe_core::server::RespBody;
 
 /// Box a `Full<Bytes>` (infallible) into the unified body type.
 pub fn full_body(bytes: Bytes) -> RespBody {

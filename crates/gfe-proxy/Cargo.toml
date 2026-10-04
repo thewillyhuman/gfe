@@ -13,22 +13,13 @@ gfe-load-balancing = { workspace = true }
 gfe-health-checking = { workspace = true }
 gfe-observability = { workspace = true }
 tokio = { workspace = true }
-tokio-rustls = { workspace = true }
-rustls = { workspace = true }
 hyper = { workspace = true }
-hyper-util = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
 arc-swap = { workspace = true }
 tracing = { workspace = true }
 rand = { workspace = true }
-# `all`: the keepalive probe count, and the getters the tests read socket
-# options back with.
-socket2 = { workspace = true, features = ["all"] }
-
-[dev-dependencies]
-rcgen = { workspace = true }
 
 [lints]
 workspace = true

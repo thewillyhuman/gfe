@@ -6,9 +6,10 @@ use gfe_core::config::{
     CertEntry, DynamicConfig, LimitsConfig, ListenProtocol, Listener, ListenerId, PoolId, Route,
     RouteAction, RouteId, Scheme, TimeoutsConfig, TlsConfig, Upstream, UpstreamPool,
 };
+use gfe_core::server::ServerShared;
 use gfe_core::upstream::UpstreamClient;
 use gfe_observability::GfeMetrics;
-use gfe_proxy::{ListenerSet, ProxyShared, ServerShared};
+use gfe_proxy::{ListenerSet, ProxyShared};
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -2477,7 +2478,7 @@ async fn fails_grpc_call_without_a_route_with_grpc_status_unimplemented() {
 /// Stands in for the kernel: every accepted connection waited 5 ms.
 struct FixedAcceptQueue;
 
-impl gfe_proxy::AcceptQueue for FixedAcceptQueue {
+impl gfe_core::server::AcceptQueue for FixedAcceptQueue {
     fn waited(&self, _local: SocketAddr, _peer: SocketAddr) -> Option<Duration> {
         Some(Duration::from_millis(5))
     }
