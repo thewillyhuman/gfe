@@ -33,14 +33,21 @@ use std::sync::Arc;
 pub type ListenerSet = gfe_core::server::ListenerSet<ProxyShared>;
 
 /// Shared state read by the data plane and mutated by the control plane.
+///
+/// What a config is compiled into (the routes and the pools) is swapped by
+/// [`reload`] alone and is not reachable from outside the crate. The rest
+/// is public because something outside needs it: the node builds its TLS
+/// server config from the resolver and reports the upstream client's
+/// connections, an ACME driver fills the challenge store, and a health
+/// checker writes the health map.
 pub struct ProxyShared {
     /// What every connection shares, whatever its requests are: metrics,
     /// limits, timeouts and whether the node is draining.
     pub server: Arc<ServerShared>,
     /// Compiled route table, swapped atomically on reload.
-    pub routes: ArcSwap<RouteTable>,
+    pub(crate) routes: ArcSwap<RouteTable>,
     /// Upstream pool set, swapped atomically on reload.
-    pub pools: ArcSwap<PoolSet>,
+    pub(crate) pools: ArcSwap<PoolSet>,
     /// SNI certificate resolver (holds its own swappable cert store).
     pub resolver: Arc<SniResolver>,
     /// ACME http-01 challenge store, served on the plaintext HTTP listener.
@@ -49,7 +56,7 @@ pub struct ProxyShared {
     pub health: Arc<HealthMap>,
     /// Pooled upstream client.
     pub upstream: UpstreamClient,
-    pub tls: TlsConfig,
+    pub(crate) tls: TlsConfig,
 }
 
 impl ProxyShared {
