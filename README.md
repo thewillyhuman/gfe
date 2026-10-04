@@ -39,7 +39,8 @@ spread connections across a fleet with no coordination.
   (listeners/routes/pools/certs), watched via inotify, validated wholesale, and
   swapped atomically with `ArcSwap` — in-flight requests never drop, and
   listeners are bound and released on reload without a restart
-  ([ADR-001](.docs/adr-001-configuration-model.md) model, inherited from `lb`).
+  ([ADR-001](https://github.com/thewillyhuman/lb/blob/main/.docs/adr-001-configuration-model.md)
+  model, inherited from `lb`).
 - **Last-known-good cache** — a restarted node serves immediately even if the
   config source is briefly unavailable.
 - **Conservative retries** — only bodyless idempotent requests, only on
