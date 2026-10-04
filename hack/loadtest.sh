@@ -21,23 +21,20 @@ METRICS=127.0.0.1:19191
 echo ">> building release binaries"
 cargo build --release -q --manifest-path src/rust/Cargo.toml -p gfe-node -p gfe-loadtest
 
-# Ensure dummy certs exist.
-if [[ ! -f config/certs/default.cert.pem ]]; then
-  mkdir -p config/certs
-  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out config/certs/default.key.pem 2>/dev/null
-  openssl req -x509 -key config/certs/default.key.pem -out config/certs/default.cert.pem -days 3650 -subj "/CN=localhost" 2>/dev/null
-fi
-
 TMP="$(mktemp -d)"
 cleanup() { kill "${UP_PID:-}" "${NODE_PID:-}" 2>/dev/null || true; rm -rf "$TMP"; }
 trap cleanup EXIT
+
+# A throwaway certificate for the https listener, gone with the run.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$TMP/key.pem" 2>/dev/null
+openssl req -x509 -key "$TMP/key.pem" -out "$TMP/cert.pem" -days 1 -subj "/CN=localhost" 2>/dev/null
 
 cat > "$TMP/dynamic.json" <<JSON
 {
   "certificates": [
     { "default": true,
-      "cert_file": "$ROOT/config/certs/default.cert.pem",
-      "key_file": "$ROOT/config/certs/default.key.pem" }
+      "cert_file": "$TMP/cert.pem",
+      "key_file": "$TMP/key.pem" }
   ],
   "listeners": [
     { "id": "http",  "address": "127.0.0.1", "port": 18080, "protocol": "http"  },
