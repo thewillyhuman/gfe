@@ -1,5 +1,7 @@
 # Build artifacts
 /target
+# Binaries handed to the image build (see Dockerfile)
+/prebuilt
 
 # Editor / IDE
 *.swp
