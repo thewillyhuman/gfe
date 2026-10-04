@@ -23,6 +23,7 @@ use crate::config::{Listener, ListenerId};
 use crate::server::acceptor;
 use crate::server::{RequestHandler, ServerShared};
 use arc_swap::ArcSwap;
+use gfe_limits::ConcurrencyLimit;
 use rustls::ServerConfig;
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -30,7 +31,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpSocket};
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 /// Pending-connection queue length requested for listening sockets (the
@@ -72,7 +73,7 @@ pub struct ListenerSet<H> {
     handler: Arc<H>,
     server_config: Arc<ServerConfig>,
     /// Bounds concurrent connections across all listeners.
-    connections: Arc<Semaphore>,
+    connections: Arc<ConcurrencyLimit>,
     shutdown: watch::Receiver<bool>,
     running: Mutex<HashMap<SocketAddr, Running>>,
     /// Listening sockets handed to the set, until the next commit.
@@ -89,7 +90,7 @@ impl<H: RequestHandler> ListenerSet<H> {
         server_config: Arc<ServerConfig>,
         shutdown: watch::Receiver<bool>,
     ) -> Self {
-        let connections = Arc::new(Semaphore::new(shared.limits.max_connections));
+        let connections = ConcurrencyLimit::new(Some(shared.limits.max_connections));
         ListenerSet {
             shared,
             handler,

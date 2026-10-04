@@ -4,12 +4,13 @@ use crate::config::Listener;
 use crate::server::connection;
 use crate::server::{RequestHandler, ServerShared};
 use arc_swap::ArcSwap;
+use gfe_limits::ConcurrencyLimit;
 use gfe_observability::RejectLabel;
 use rustls::ServerConfig;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::sync::{watch, Semaphore};
+use tokio::sync::watch;
 
 /// How long the accept loop waits after a failed `accept` before trying
 /// again. The errors that persist (out of file descriptors or memory) would
@@ -24,19 +25,19 @@ const ACCEPT_ERROR_PAUSE: Duration = Duration::from_millis(100);
 /// accepted connection, and its id for every request, so its id and
 /// protocol can change while the socket stays bound.
 ///
-/// `global_sem` bounds total concurrent connections across all listeners; a
-/// per-listener semaphore bounds this listener. When either is exhausted the
-/// connection is dropped and counted as rejected.
+/// `connections` bounds the connections open across all listeners; a limit
+/// of its own bounds this listener's. When either is reached the connection
+/// is dropped and counted as rejected.
 pub async fn run_listener<H: RequestHandler>(
     config: Arc<ArcSwap<Listener>>,
     tcp: Arc<TcpListener>,
     shared: Arc<ServerShared>,
     handler: Arc<H>,
     server_config: Arc<ServerConfig>,
-    global_sem: Arc<Semaphore>,
+    connections: Arc<ConcurrencyLimit>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let listener_sem = Arc::new(Semaphore::new(shared.limits.max_connections_listener));
+    let listener_connections = ConcurrencyLimit::new(Some(shared.limits.max_connections_listener));
 
     loop {
         tokio::select! {
@@ -60,19 +61,13 @@ pub async fn run_listener<H: RequestHandler>(
                     }
                 };
 
-                let global_permit = match global_sem.clone().try_acquire_owned() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        reject(&shared, "limit");
-                        continue;
-                    }
-                };
-                let listener_permit = match listener_sem.clone().try_acquire_owned() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        reject(&shared, "limit");
-                        continue;
-                    }
+                // Held for as long as the connection is served.
+                let permits = connections
+                    .try_acquire()
+                    .and_then(|node| Ok((node, listener_connections.try_acquire()?)));
+                let Ok(permits) = permits else {
+                    reject(&shared, "limit");
+                    continue;
                 };
 
                 let shared = shared.clone();
@@ -81,8 +76,7 @@ pub async fn run_listener<H: RequestHandler>(
                 let drain = shutdown.clone();
                 let config = config.clone();
                 tokio::spawn(async move {
-                    let _g = global_permit;
-                    let _l = listener_permit;
+                    let _permits = permits;
                     connection::serve(stream, peer, config, shared, handler, tls, drain).await;
                 });
             }
