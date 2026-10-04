@@ -1,6 +1,6 @@
 //! The compiled, immutable routing snapshot built from a [`DynamicConfig`].
 
-use crate::matcher::{host_matches, path_prefix_matches};
+use crate::routing::matcher::{host_matches, path_prefix_matches};
 use gfe_core::config::{DynamicConfig, ListenerId, Route, RouteAction, RouteId};
 use std::collections::HashMap;
 

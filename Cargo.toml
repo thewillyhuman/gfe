@@ -3,7 +3,6 @@ members = [
     "crates/gfe-core",
     "crates/gfe-observability",
     "crates/gfe-limits",
-    "crates/gfe-router",
     "crates/gfe-load-balancing",
     "crates/gfe-proxy",
     "crates/gfe-config",
@@ -16,7 +15,7 @@ members = [
     # Passing a node's listening sockets to its successor (Unix only).
     "crates/gfe-handover",
     # Crates are added to this list as they are implemented (see roadmap in
-    # .docs/spec.md). The full set: gfe-observability, gfe-router,
+    # .docs/spec.md). The full set: gfe-observability,
     # gfe-load-balancing, gfe-proxy, gfe-health-checking, gfe-config, gfe-controller,
     # gfe-node.
 ]
@@ -42,7 +41,6 @@ unsafe_code = "forbid"
 gfe-core = { path = "crates/gfe-core" }
 gfe-observability = { path = "crates/gfe-observability" }
 gfe-limits = { path = "crates/gfe-limits" }
-gfe-router = { path = "crates/gfe-router" }
 gfe-load-balancing = { path = "crates/gfe-load-balancing" }
 gfe-proxy = { path = "crates/gfe-proxy" }
 gfe-health-checking = { path = "crates/gfe-health-checking" }

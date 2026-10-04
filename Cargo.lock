@@ -583,7 +583,6 @@ dependencies = [
  "gfe-load-balancing",
  "gfe-observability",
  "gfe-proxy",
- "gfe-router",
  "notify",
  "rcgen",
  "serde_json",
@@ -750,25 +749,17 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "bytes",
+ "criterion",
  "gfe-core",
  "gfe-health-checking",
  "gfe-load-balancing",
  "gfe-observability",
- "gfe-router",
  "http",
  "http-body-util",
  "hyper",
  "rand",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "gfe-router"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "gfe-core",
 ]
 
 [[package]]

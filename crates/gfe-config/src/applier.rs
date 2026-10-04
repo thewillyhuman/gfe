@@ -6,8 +6,8 @@ use gfe_core::tls::CertStore;
 use gfe_core::GfeError;
 use gfe_load_balancing::PoolSet;
 use gfe_observability::SniLabel;
+use gfe_proxy::routing::RouteTable;
 use gfe_proxy::ProxyShared;
-use gfe_router::RouteTable;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 

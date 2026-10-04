@@ -352,7 +352,7 @@ A **certificate** entry binds one or more SNI names to a PEM certificate chain +
        negotiates h2 or http/1.1.
  7. HTTP serving (connection.rs via hyper):
     For each request on the connection:
-    a. Routing (service.rs → gfe-router): match (host, path, headers) → action.
+    a. Routing (service.rs → gfe-proxy): match (host, path, headers) → action.
        - No match → 404 synthetic response (errors.rs).
        - Redirect/fixed action → respond directly.
        - Forward action → continue.
@@ -374,7 +374,7 @@ A **certificate** entry binds one or more SNI names to a PEM certificate chain +
 
 ## 6. Proxy Design (Data Plane)
 
-> **Code location:** `crates/gfe-proxy/` (engine) + `crates/gfe-core/src/tls/`, `crates/gfe-router/`, `crates/gfe-load-balancing/`
+> **Code location:** `crates/gfe-proxy/` (engine) + `crates/gfe-core/src/tls/`, `crates/gfe-proxy/src/routing/`, `crates/gfe-load-balancing/`
 
 The proxy is a fully asynchronous Tokio service. Unlike `lb`'s forwarder, it terminates TCP and TLS and therefore uses the kernel stack and ordinary `tokio::net` sockets — there is no kernel bypass and no per-packet hot path to keep allocation-free. The performance discipline instead targets **per-request** overhead: zero-copy body streaming, connection reuse, and lock-free config reads.
 
@@ -427,7 +427,7 @@ After the handshake, the connection is served by **hyper**:
 
 ### 6.4 Routing
 
-> **Code location:** `crates/gfe-router/`
+> **Code location:** `crates/gfe-proxy/src/routing/`
 
 Routing maps a request to an action using a compiled, immutable snapshot.
 
@@ -1036,7 +1036,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 
 - [x] `gfe-core`: domain types (Listener, Route, UpstreamPool, Upstream, TlsConfig, CertEntry) + bootstrap & dynamic config structs
 - [x] `gfe-core`: cert store, SNI resolver, TLS policy / `ServerConfig` builder, PEM loader
-- [x] `gfe-router`: compiled route table, host (exact + wildcard) and path (prefix/exact) matching
+- [x] `gfe-proxy`: compiled route table, host (exact + wildcard) and path (prefix/exact) matching
 - [x] `gfe-load-balancing`: pool handle, round-robin policy, hyper upstream client, connection pooling
 - [x] `gfe-proxy`: acceptor, per-connection TLS + HTTP serve, routing, forwarding, synthetic errors
 - [x] `gfe-observability`: proxy metrics + Prometheus endpoint
@@ -1088,7 +1088,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 | ACME (Phase 3) | `instant-acme` | `gfe-core` | Async, rustls-native certificate automation |
 | Config serialization | `serde` + `toml` + `serde_json` | `gfe-core`, `gfe-config` | TOML bootstrap, JSON dynamic config (mirrors `lb`) |
 | File watching | `notify` | `gfe-config` | inotify-based hot reload (ADR-001) |
-| Atomic config swap | `arc-swap` | `gfe-router`, `gfe-core`, `gfe-config` | Lock-free snapshot reads on the hot path |
+| Atomic config swap | `arc-swap` | `gfe-proxy`, `gfe-core`, `gfe-config` | Lock-free snapshot reads on the hot path |
 | Shared health map | `dashmap` | `gfe-health-checking` | Concurrent reads from the data plane |
 | Metrics | `prometheus-client` | `gfe-observability` | Direct Prometheus exposition (same as `lb`) |
 | Logging / tracing | `tracing` + `tracing-subscriber` | all | Structured, async-aware, runtime-adjustable levels |

@@ -8,7 +8,6 @@ publish.workspace = true
 
 [dependencies]
 gfe-core = { workspace = true }
-gfe-router = { workspace = true }
 gfe-load-balancing = { workspace = true }
 gfe-health-checking = { workspace = true }
 gfe-observability = { workspace = true }
@@ -20,6 +19,13 @@ bytes = { workspace = true }
 arc-swap = { workspace = true }
 tracing = { workspace = true }
 rand = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "routing"
+harness = false
 
 [lints]
 workspace = true

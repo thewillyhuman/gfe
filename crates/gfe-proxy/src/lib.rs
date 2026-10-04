@@ -10,10 +10,12 @@ pub mod errors;
 pub mod forward;
 pub mod progress;
 pub mod record;
+pub mod routing;
 pub mod service;
 
 pub use errors::RespBody;
 
+use crate::routing::RouteTable;
 use arc_swap::ArcSwap;
 use gfe_core::config::{ListenerId, TlsConfig};
 use gfe_core::server::{ConnInfo, RequestHandler, ServerShared, TlsInfo};
@@ -21,7 +23,6 @@ use gfe_core::tls::{CertStore, ChallengeStore, SniResolver};
 use gfe_core::upstream::UpstreamClient;
 use gfe_health_checking::HealthMap;
 use gfe_load_balancing::PoolSet;
-use gfe_router::RouteTable;
 use hyper::body::Incoming;
 use hyper::{Request, Response};
 use std::net::IpAddr;
