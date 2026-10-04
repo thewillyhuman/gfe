@@ -111,7 +111,6 @@ gfe/
 ├── Cargo.toml                          # Workspace root
 ├── Cargo.lock
 ├── README.md
-├── rust-toolchain.toml
 ├── Dockerfile
 ├── deny.toml
 ├── docs/
