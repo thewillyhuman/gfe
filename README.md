@@ -88,7 +88,7 @@ GRE-decapsulated packets reach GFE's socket and responses return via DSR.
 
 ## Performance
 
-All numbers from `cargo bench` (criterion, release profile, single-threaded, Apple M-series). Reproduce with `cargo bench -p gfe-proxy --bench routing`, `-p gfe-load-balancing --bench selection`, `-p gfe-core --bench handshake`.
+All numbers from `cargo bench` (criterion, release profile, single-threaded, Apple M-series). Reproduce, from `src/rust`, with `cargo bench -p gfe-proxy --bench routing`, `-p gfe-load-balancing --bench selection`, `-p gfe-core --bench handshake`.
 
 **Routing (`gfe-proxy`)** — match cost is **O(1) in the number of routes** (exact-host hashmap + bounded per-host prefix list):
 
@@ -257,7 +257,8 @@ cargo bench -p gfe-core --bench handshake
 ```
 
 CI runs the tests with [cargo-nextest](https://nexte.st), which reports the
-whole workspace as one result instead of one per test binary:
+whole workspace as one result instead of one per test binary. From `src/rust`
+too:
 
 ```bash
 cargo nextest run --workspace --no-fail-fast --failure-output immediate-final

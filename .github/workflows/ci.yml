@@ -112,8 +112,9 @@ jobs:
       - name: Install cargo-deny
         # 0.16.4+ pulls in rustsec >= 0.30 which understands CVSS v4.0 vectors.
         run: cargo install cargo-deny --locked --version '>=0.16.4'
-      # Advisories, licenses, bans and sources, as configured in `deny.toml`.
-      # Also run weekly by supply-chain.yml, but a scheduled workflow is
-      # switched off by GitHub when a repository goes quiet; this one is not.
+      # Advisories, licenses, bans and sources, as configured in
+      # `src/rust/deny.toml`. Also run weekly by supply-chain.yml, but a
+      # scheduled workflow is switched off by GitHub when a repository goes
+      # quiet; this one is not.
       - name: cargo deny check
         run: cargo deny check

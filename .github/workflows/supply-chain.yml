@@ -50,8 +50,9 @@ jobs:
         run: cargo install cargo-audit --locked --version '>=0.21.2'
       # `--deny warnings` so unmaintained-crate notices fail the build, not
       # just RUSTSEC vulnerabilities. Each `--ignore` below is also listed
-      # in `deny.toml` with the same justification — keep the two in sync
-      # when a new transitive unmaintained advisory has to be accepted.
+      # in `src/rust/deny.toml` with the same justification — keep the two
+      # in sync when a new transitive unmaintained advisory has to be
+      # accepted.
       - name: cargo audit
         run: |
           cargo audit --deny warnings \
@@ -73,7 +74,8 @@ jobs:
         # 0.16.4+ pulls in rustsec >= 0.30 which understands CVSS v4.0 vectors.
         run: cargo install cargo-deny --locked --version '>=0.16.4'
       - name: cargo deny check
-        # `bans`, `licenses`, `sources`, `advisories`. Configured in `deny.toml`.
+        # `bans`, `licenses`, `sources`, `advisories`. Configured in
+        # `src/rust/deny.toml`.
         run: cargo deny check
 
   coverage:
