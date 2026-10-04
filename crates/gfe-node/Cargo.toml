@@ -29,16 +29,7 @@ gfe-handover = { workspace = true }
 rustix = { workspace = true, features = ["process"] }
 
 [dev-dependencies]
-serde_json = { workspace = true }
-tracing-subscriber = { workspace = true }
 gfe-handover = { workspace = true }
-gfe-health-checking = { workspace = true }
-rcgen = { workspace = true }
-rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
-tokio-rustls = { workspace = true }
-http = { workspace = true }
-webpki-roots = { workspace = true }
 
 # RPM packaging, built by `cargo generate-rpm -p crates/gfe-node` from the
 # release binary (see packaging/rpm/README.md). The package is named `gfe`
