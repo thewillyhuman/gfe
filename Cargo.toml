@@ -1,20 +1,20 @@
 [workspace]
 members = [
-    "crates/gfe-core",
+    # What every other crate may use.
     "crates/gfe-observability",
     "crates/gfe-limits",
+    # The server, whatever it serves.
+    "crates/gfe-core",
+    # What is built on it.
+    "crates/gfe-health-checking",
     "crates/gfe-load-balancing",
     "crates/gfe-proxy",
+    # The binary a node runs.
     "crates/gfe-node",
-    "crates/gfe-health-checking",
     # Kernel-side view of the node's TCP connections (eBPF, Linux only).
     "crates/gfe-ebpf",
     # Development tools: not part of what a node runs or a package ships.
     "tools/gfe-loadtest",
-    # Crates are added to this list as they are implemented (see roadmap in
-    # .docs/spec.md). The full set: gfe-observability,
-    # gfe-load-balancing, gfe-proxy, gfe-health-checking,
-    # gfe-node.
 ]
 resolver = "2"
 

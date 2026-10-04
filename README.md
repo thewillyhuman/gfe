@@ -213,19 +213,21 @@ cd demo && docker compose up -d --build   # then open http://localhost:13000
 
 ```
 crates/
-  gfe-core/         Config (types, loading, validation); TLS termination;
-                    serving connections (listeners, HTTP, timeouts,
-                    drain); the pooled client for backends
-  gfe-load-balancing/  Pools and selection policies
-  gfe-limits/       Counting and capping what a node holds at once
-  gfe-proxy/        What happens to a request: routing (host and path
-                    matching), forwarding, accounting; applying a
-                    config and reloading it when its files change
-  gfe-health-checking/  L7 probes, state machine, checker, health map
-  gfe-observability/  Prometheus metrics; the non-blocking log
-  gfe-ebpf/         Optional kernel view of the node's TCP connections (eBPF)
-  gfe-node/         Main binary: wiring, signals, ops server, upgrade in
-                    place (handing its listening sockets to its successor)
+  gfe-core/             The server, whatever it serves: config files (types,
+                        loading, validation), TLS termination, serving
+                        connections, the pooled client for backends
+  gfe-health-checking/  Which backends are alive: probes, state machine,
+                        checker, health map
+  gfe-load-balancing/   Which backend gets a request: pools, selection policies
+  gfe-limits/           Counting and capping what a node holds at once
+  gfe-observability/    What a node tells about itself: Prometheus metrics,
+                        the non-blocking log
+  gfe-proxy/            What happens to a request: routing, forwarding,
+                        accounting; applying a config and reloading it
+  gfe-node/             The binary: wiring, signals, ops server, upgrade in place
+  gfe-ebpf/             Optional kernel view of the node's TCP connections
+tools/
+  gfe-loadtest/         Load generator for benchmarks (not shipped)
 config/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
