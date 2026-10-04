@@ -1,8 +1,8 @@
 //! Read and deserialize the bootstrap (TOML) and dynamic (JSON) configs.
 
-use crate::validator::validate_health_check;
-use gfe_core::config::{DynamicConfig, NodeConfig, UpstreamConfig};
-use gfe_core::GfeError;
+use super::validator::validate_health_check;
+use crate::config::{DynamicConfig, NodeConfig, UpstreamConfig};
+use crate::GfeError;
 use std::path::Path;
 
 /// The smallest `limits.max_header_bytes` the HTTP server can be given: it
@@ -302,7 +302,7 @@ mod tests {
     fn example_dynamic_config_loads_and_validates() {
         let cfg = load_dynamic_config(&shipped_example("gfe-dynamic.example.json")).unwrap();
 
-        assert!(crate::validate(&cfg).is_ok());
+        assert!(crate::config::validate(&cfg).is_ok());
     }
 
     #[test]

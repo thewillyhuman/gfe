@@ -64,7 +64,7 @@ impl Node {
             ),
         )
         .unwrap();
-        let node = gfe_config::load_node_config(&bootstrap).unwrap();
+        let node = gfe_core::config::load_node_config(&bootstrap).unwrap();
 
         let shared = Arc::new(ProxyShared::new(
             UpstreamClient::new(1).unwrap(),

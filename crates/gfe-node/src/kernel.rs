@@ -273,7 +273,7 @@ mod tests {
             ),
         )
         .unwrap();
-        gfe_config::load_node_config(&path).unwrap()
+        gfe_core::config::load_node_config(&path).unwrap()
     }
 
     /// Asked for and not attached (on this host: no Linux, or not the

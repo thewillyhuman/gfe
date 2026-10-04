@@ -589,7 +589,6 @@ dependencies = [
  "rcgen",
  "serde_json",
  "tokio",
- "toml",
  "tracing",
 ]
 

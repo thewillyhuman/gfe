@@ -2,18 +2,24 @@
 //! config read once at start ([`NodeConfig`], TOML) and the dynamic config
 //! that is reloaded while the node runs ([`DynamicConfig`], JSON).
 //!
-//! Pure data and serde: nothing here reads a file or opens a socket.
+//! The types are pure data and serde. [`loader`] reads the files into them
+//! and [`validator`] says whether a dynamic config makes sense; neither
+//! knows what a config is used for.
 
 pub mod duration;
 pub mod listener;
+pub mod loader;
 pub mod route;
 pub mod tls;
 pub mod upstream;
+pub mod validator;
 
 pub use listener::{ListenProtocol, Listener, ListenerId};
+pub use loader::{load_dynamic_config, load_node_config};
 pub use route::{FixedAction, RedirectAction, Route, RouteAction, RouteId};
 pub use tls::{CertEntry, MinVersion, TlsConfig};
 pub use upstream::{HealthStatus, LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
+pub use validator::validate;
 
 use duration::{deserialize_duration, serialize_duration};
 use serde::{Deserialize, Serialize};

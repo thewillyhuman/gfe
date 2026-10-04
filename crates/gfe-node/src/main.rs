@@ -66,7 +66,7 @@ fn main() -> Result<()> {
         .config
         .as_deref()
         .map(|path| {
-            gfe_config::load_node_config(path)
+            gfe_core::config::load_node_config(path)
                 .with_context(|| format!("loading node config {}", path.display()))
         })
         .transpose()?;
@@ -106,7 +106,7 @@ fn main() -> Result<()> {
 /// then everything a reload does short of swapping it in (validate, load the
 /// certificates, compile the routes, build the pools).
 fn check_dynamic_config(path: &Path) -> Result<()> {
-    let dynamic = gfe_config::load_dynamic_config(path)
+    let dynamic = gfe_core::config::load_dynamic_config(path)
         .with_context(|| format!("loading dynamic config {}", path.display()))?;
     gfe_config::prepare(&dynamic).context("checking dynamic config")?;
     println!(

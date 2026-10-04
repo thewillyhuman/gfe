@@ -1,18 +1,12 @@
-//! Config loading, validation, and atomic application.
-//!
-//! Phase 1: load (TOML bootstrap + JSON dynamic), validate, and apply (compile
-//! snapshots + atomic swap). Phase 2 adds the inotify watcher, debounce, and
-//! last-known-good cache.
+//! Applying a dynamic config to a running node: compiling it into the
+//! snapshots the proxy serves from and swapping them in, watching the file
+//! and the certificates it names, and the last-known-good cache.
 
 pub mod applier;
 pub mod cache;
 pub mod cert_files;
-pub mod loader;
-pub mod validator;
 pub mod watcher;
 
 pub use applier::{apply, install, prepare, Prepared};
 pub use cert_files::CertFiles;
-pub use loader::{load_dynamic_config, load_node_config};
-pub use validator::validate;
 pub use watcher::spawn_watcher;
