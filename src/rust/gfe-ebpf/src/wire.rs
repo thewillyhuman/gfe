@@ -1,4 +1,4 @@
-//! The byte layouts shared with the kernel program (`bpf/tcp_events.bpf.c`).
+//! The byte layouts shared with the kernel program (`src/c/tcp_events.bpf.c`).
 //!
 //! Everything crossing the kernel boundary is read and written here, field
 //! by field, from plain bytes: no struct is ever reinterpreted. The layouts

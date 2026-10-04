@@ -2,7 +2,7 @@
 //! user space, cannot see: how long a connection waited to be accepted, its
 //! round-trip time, its retransmissions, and how it ended.
 //!
-//! A small eBPF program (`bpf/tcp_events.bpf.c`) is attached to the cgroup
+//! A small eBPF program (`src/c/tcp_events.bpf.c`) is attached to the cgroup
 //! the node runs in. It observes sockets, not packets, so it sees the
 //! connections the node accepts and the ones it opens, identically whether
 //! traffic reaches the node through a load balancer, a tunnel, or directly.

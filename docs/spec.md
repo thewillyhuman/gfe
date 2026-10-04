@@ -120,7 +120,8 @@ gfe/
 │   └── gfe-dynamic.example.json        # Reference dynamic configuration
 │
 ├── src/
-│   └── rust/                           # The Cargo workspace, detailed below
+│   ├── rust/                           # The Cargo workspace, detailed below
+│   └── c/tcp_events.bpf.c              # The eBPF program (sockops, cgroup-attached)
 │
 ├── demo/                                # Local playground: node, backends, monitoring
 ├── packaging/rpm/                       # RPM scriptlets and build notes
@@ -260,8 +261,7 @@ src/rust/
 │       └── handover.rs              # Passing listening sockets to a successor
 │
 ├── gfe-ebpf/                   # Kernel view of the node's TCP connections (optional)
-│   ├── build.rs                     # Compiles the kernel program with clang
-│   ├── bpf/tcp_events.bpf.c         # The eBPF program (sockops, cgroup-attached)
+│   ├── build.rs                     # Compiles the kernel program of src/c with clang
 │   └── src/
 │       ├── lib.rs                   # Types; why it may be unavailable
 │       ├── wire.rs                  # Byte layouts shared with the program

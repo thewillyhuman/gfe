@@ -34,8 +34,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends clang \
  && rm -rf /var/lib/apt/lists/*
 
-# The Cargo workspace, where the repository has it.
+# The Cargo workspace and the eBPF program it compiles, where the repository
+# has them.
 COPY src/rust ./
+COPY src/c ../c
 
 # `--locked` so the build fails if Cargo.lock is out of date; this is a
 # release artifact, not a dev iteration.

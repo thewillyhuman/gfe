@@ -1,4 +1,4 @@
-//! Compiles the kernel-side program (`bpf/tcp_events.bpf.c`) with clang.
+//! Compiles the kernel-side program (`src/c/tcp_events.bpf.c`) with clang.
 //!
 //! Only when building for Linux. If clang is not installed the crate still
 //! builds, without the program: attaching then reports that this build has no
@@ -9,7 +9,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const SOURCE: &str = "bpf/tcp_events.bpf.c";
+/// The program, from this crate: C lives in `src/c` of the repository.
+const SOURCE: &str = "../../c/tcp_events.bpf.c";
 
 fn main() {
     println!("cargo::rerun-if-changed={SOURCE}");

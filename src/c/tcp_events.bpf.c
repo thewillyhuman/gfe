@@ -15,7 +15,8 @@
  *     the kernel knows about it: round-trip time, retransmissions, and the
  *     TCP state it was closed from.
  *
- * The layouts below are read byte by byte by src/wire.rs. Change both.
+ * The layouts below are read byte by byte by src/wire.rs of gfe-ebpf.
+ * Change both.
  *
  * Deliberately self-contained: it needs clang and the kernel's uapi headers,
  * not libbpf.
@@ -23,7 +24,7 @@
 #include <linux/bpf.h>
 
 #if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "src/wire.rs decodes these structures as little-endian"
+#error "gfe-ebpf decodes these structures as little-endian"
 #endif
 
 #define SEC(name) __attribute__((section(name), used))
