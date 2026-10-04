@@ -6,7 +6,7 @@
 # the host level and correlated by `instance`.
 #
 # Thresholds are starting points. Check with:
-#   promtool check rules deploy/prometheus/gfe-alerts.yml
+#   promtool check rules src/prometheus/gfe-alerts.yml
 groups:
   - name: gfe-availability
     rules:

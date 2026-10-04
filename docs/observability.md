@@ -136,7 +136,7 @@ twice. The connections it is still draining then have a `gfe::conn` event but
 no `gfe::tcp` event.
 
 It needs Linux, `CAP_BPF` and `CAP_NET_ADMIN` (the drop-in
-`deploy/gfe-node-ebpf.conf` grants them under systemd). If it cannot be
+`src/systemd/gfe-node-ebpf.conf` grants them under systemd). If it cannot be
 attached, the node logs why, sets `gfe_ebpf_attached` to 0 and runs without it.
 `gfe_ebpf_enabled` is 1 whenever the config asks for it, attached or not, so
 `gfe_ebpf_enabled == 1 and gfe_ebpf_attached == 0` is a node that should have
@@ -183,11 +183,11 @@ Reading the two layers together:
 
 ## Alerts and dashboard
 
-- [`deploy/prometheus/gfe-alerts.yml`](../deploy/prometheus/gfe-alerts.yml) —
+- [`src/prometheus/gfe-alerts.yml`](../src/prometheus/gfe-alerts.yml) —
   alerting rules for availability, latency, saturation, client-side breakage,
   config and certificates, and the host-level network signals above. It
   expects the scrape job to be called `gfe`.
-- [`deploy/grafana/gfe-dashboard.json`](../deploy/grafana/gfe-dashboard.json) —
+- [`src/grafana/gfe-dashboard.json`](../src/grafana/gfe-dashboard.json) —
   the same signals as panels, filterable by instance, host and pool.
 
 ## What is not recorded, and why

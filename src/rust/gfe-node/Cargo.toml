@@ -39,10 +39,10 @@ summary = "General Front End - L7 TLS-terminating HTTP reverse proxy"
 url = "https://github.com/thewillyhuman/gfe"
 assets = [
     { source = "target/release/gfe-node", dest = "/usr/bin/gfe-node", mode = "755" },
-    { source = "../../../deploy/gfe-node.service", dest = "/usr/lib/systemd/system/gfe-node.service", mode = "644" },
-    { source = "../../../deploy/gfe-node-ebpf.conf", dest = "/usr/share/gfe/gfe-node-ebpf.conf", mode = "644" },
-    { source = "../../../deploy/grafana/gfe-dashboard.json", dest = "/usr/share/gfe/grafana/gfe-dashboard.json", mode = "644" },
-    { source = "../../../deploy/prometheus/gfe-alerts.yml", dest = "/usr/share/gfe/prometheus/gfe-alerts.yml", mode = "644" },
+    { source = "../../systemd/gfe-node.service", dest = "/usr/lib/systemd/system/gfe-node.service", mode = "644" },
+    { source = "../../systemd/gfe-node-ebpf.conf", dest = "/usr/share/gfe/gfe-node-ebpf.conf", mode = "644" },
+    { source = "../../grafana/gfe-dashboard.json", dest = "/usr/share/gfe/grafana/gfe-dashboard.json", mode = "644" },
+    { source = "../../prometheus/gfe-alerts.yml", dest = "/usr/share/gfe/prometheus/gfe-alerts.yml", mode = "644" },
     { source = "../../../config/gfe.example.toml", dest = "/usr/share/doc/gfe/gfe.example.toml", mode = "644", doc = true },
     { source = "../../../config/gfe-dynamic.example.json", dest = "/usr/share/doc/gfe/gfe-dynamic.example.json", mode = "644", doc = true },
     { source = "../../../README.md", dest = "/usr/share/doc/gfe/README.md", mode = "644", doc = true },

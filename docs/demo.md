@@ -75,12 +75,12 @@ on it, and each closed connection is logged as a `gfe::tcp` event. The
 container runs as root with `CAP_BPF` and `CAP_NET_ADMIN` for this, because
 Docker gives added capabilities to root only; under systemd the unprivileged
 service user gets them through the drop-in in
-[`deploy/gfe-node-ebpf.conf`](../deploy/gfe-node-ebpf.conf).
+[`src/systemd/gfe-node-ebpf.conf`](../src/systemd/gfe-node-ebpf.conf).
 
 **The monitoring.**
 
 - **Prometheus** scrapes the node every 5 s and evaluates
-  [`deploy/prometheus/gfe-alerts.yml`](../deploy/prometheus/gfe-alerts.yml).
+  [`src/prometheus/gfe-alerts.yml`](../src/prometheus/gfe-alerts.yml).
   Several alerts are meant to fire here; see them under *Alerts* in Prometheus
   or *Alerting* in Grafana.
 - **node_exporter** runs inside the node's network namespace, so the packet,
@@ -90,7 +90,7 @@ service user gets them through the drop-in in
   needs access to the Docker socket.
 - **Grafana** has both data sources and two dashboards provisioned:
   - *GFE — General Front End*: the metrics dashboard shipped in
-    [`deploy/grafana`](../deploy/grafana).
+    [`src/grafana`](../src/grafana).
   - *GFE — Logs*: built from the access, connection and kernel logs, which is
     where the client addresses are. It ranks clients by traffic and by what
     goes wrong for them, and narrows every panel to one client; see

@@ -59,7 +59,7 @@ services:
     # Kernel TCP statistics: loading the eBPF program needs CAP_BPF and
     # CAP_NET_ADMIN. Docker only gives added capabilities to root, hence the
     # user; under systemd the unprivileged service user gets them as ambient
-    # capabilities instead (see deploy/gfe-node.service).
+    # capabilities instead (see src/systemd/gfe-node.service).
     user: "0:0"
     cap_add: [BPF, NET_ADMIN]
     volumes:
@@ -148,7 +148,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ../../../deploy/prometheus/gfe-alerts.yml:/etc/prometheus/rules/gfe-alerts.yml:ro
+      - ../../prometheus/gfe-alerts.yml:/etc/prometheus/rules/gfe-alerts.yml:ro
     ports:
       - "127.0.0.1:19090:9090"
 
@@ -187,7 +187,7 @@ services:
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/gfe/gfe-dashboard.json
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ../../../deploy/grafana:/var/lib/grafana/dashboards/gfe:ro
+      - ../../grafana:/var/lib/grafana/dashboards/gfe:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards/demo:ro
     ports:
       - "127.0.0.1:13000:3000"

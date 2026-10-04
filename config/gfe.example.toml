@@ -48,7 +48,7 @@ idle_timeout = "60s"          # close a pooled upstream connection idle for this
 
 # Kernel-side TCP statistics (accept-queue wait, round-trip time,
 # retransmissions, how connections end), collected by an eBPF program. Linux
-# only; needs CAP_BPF and CAP_NET_ADMIN (see deploy/gfe-node-ebpf.conf).
+# only; needs CAP_BPF and CAP_NET_ADMIN (see src/systemd/gfe-node-ebpf.conf).
 # Where it cannot be attached the node says so and runs without it.
 [ebpf]
 enabled = false

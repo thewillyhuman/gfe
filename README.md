@@ -230,16 +230,16 @@ src/rust/               The Cargo workspace
 src/c/                  The eBPF program gfe-ebpf loads, compiled by its build
 src/docker/             The image of gfe-node
   demo/                 Local playground: node, backends, traffic, monitoring
+src/systemd/
+  gfe-node.service      systemd unit (hardened, CAP_NET_BIND_SERVICE only)
+  gfe-node-ebpf.conf    Drop-in granting what the eBPF kernel view needs
+src/grafana/            Prebuilt dashboard
+src/prometheus/         Alerting rules (GFE + host network)
 config/
   gfe.example.toml            Bootstrap node config
   gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
 packaging/
   rpm/                        RPM scriptlets, build notes, Puppet usage
-deploy/
-  gfe-node.service            systemd unit (hardened, CAP_NET_BIND_SERVICE only)
-  gfe-node-ebpf.conf          Drop-in granting what the eBPF kernel view needs
-  grafana/gfe-dashboard.json  Prebuilt dashboard
-  prometheus/gfe-alerts.yml   Alerting rules (GFE + host network)
 ```
 
 ## Development

@@ -22,7 +22,7 @@
 # container.
 #
 # Image is *not* the recommended deploy path for production (we ship as a
-# systemd service per `deploy/gfe-node.service`); it exists for CI integration
+# systemd service per `src/systemd/gfe-node.service`); it exists for CI integration
 # tests and for environments that already standardise on container delivery.
 
 ARG BINARY=builder
@@ -85,7 +85,7 @@ RUN useradd --system --no-create-home --shell /usr/sbin/nologin --uid 65532 gfe-
  && chown gfe-node:gfe-node /var/lib/gfe
 
 COPY --from=binary /gfe-node /usr/local/bin/gfe-node
-COPY deploy/gfe-node.service /usr/lib/systemd/system/gfe-node.service
+COPY src/systemd/gfe-node.service /usr/lib/systemd/system/gfe-node.service
 
 USER gfe-node
 # 9101 = metrics/health ops server; 80/443 = HTTP/HTTPS listeners.

@@ -92,7 +92,7 @@ jobs:
           set -euo pipefail
           stage=$(mktemp -d)
           cp src/rust/target/${{ matrix.target }}/release/gfe-node "$stage/"
-          cp deploy/gfe-node.service "$stage/"
+          cp src/systemd/gfe-node.service "$stage/"
           cp README.md "$stage/" 2>/dev/null || true
           tarball="gfe-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
           tar -czf "$tarball" -C "$stage" .

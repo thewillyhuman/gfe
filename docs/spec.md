@@ -122,17 +122,17 @@ gfe/
 ├── src/
 │   ├── rust/                           # The Cargo workspace, detailed below
 │   ├── c/tcp_events.bpf.c              # The eBPF program (sockops, cgroup-attached)
-│   └── docker/
-│       ├── Dockerfile                  # The image of gfe-node
-│       └── demo/                       # Local playground: node, backends, monitoring
+│   ├── docker/
+│   │   ├── Dockerfile                  # The image of gfe-node
+│   │   └── demo/                       # Local playground: node, backends, monitoring
+│   ├── systemd/
+│   │   ├── gfe-node.service            # systemd unit
+│   │   └── gfe-node-ebpf.conf          # Drop-in granting what the eBPF view needs
+│   ├── grafana/gfe-dashboard.json      # Pre-built Grafana dashboard
+│   └── prometheus/gfe-alerts.yml       # Alerting rules
 │
-├── packaging/rpm/                       # RPM scriptlets and build notes
-├── scripts/loadtest.sh                  # End-to-end load test of the real binary
-└── deploy/
-    ├── gfe-node.service                 # systemd unit
-    ├── gfe-node-ebpf.conf               # Drop-in granting what the eBPF view needs
-    ├── grafana/gfe-dashboard.json       # Pre-built Grafana dashboard
-    └── prometheus/gfe-alerts.yml        # Alerting rules
+├── packaging/rpm/                      # RPM scriptlets and build notes
+└── scripts/loadtest.sh                 # End-to-end load test of the real binary
 ```
 
 The workspace:
@@ -891,7 +891,7 @@ How it works, and what it does not assume:
 - One `sockops` program is attached to the **cgroup the node runs in**, so it sees exactly the node's sockets: connections it accepts and connections it opens (traffic to backends and health probes alike). It observes **sockets, not packets**, and is therefore indifferent to how traffic reached the node: through the L4 LB and its GRE tunnel, or directly from clients behind a DNS load balancer.
 - `ending` is read from the TCP state a connection was closed from: who sent its FIN first (`peer_closed`, `node_closed`), or no orderly shutdown at all (`aborted`: a reset in either direction, or the kernel giving up on a silent peer). On TLS connections the node usually closes first, in answer to the client's `close_notify`.
 - Statistics are reported once per connection, when it closes. A long-lived connection contributes when it ends.
-- Requirements: Linux ≥ 5.8, a build made with clang available, and `CAP_BPF` + `CAP_NET_ADMIN` (drop-in: `deploy/gfe-node-ebpf.conf`). The kernel program is C, checked by the kernel's verifier before it runs; the Rust side has no `unsafe`. Where any requirement is missing the node logs the reason and runs without the kernel view.
+- Requirements: Linux ≥ 5.8, a build made with clang available, and `CAP_BPF` + `CAP_NET_ADMIN` (drop-in: `src/systemd/gfe-node-ebpf.conf`). The kernel program is C, checked by the kernel's verifier before it runs; the Rust side has no `unsafe`. Where any requirement is missing the node logs the reason and runs without the kernel view.
 
 ### 12.2 Logging
 
@@ -1067,7 +1067,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 
 - [x] Lame-duck drain protocol for upstreams (DRAINING state, drain-status detection)
 - [x] mTLS to upstreams (client certificate) + extra-CA trust
-- [x] `deploy/`: systemd unit, Grafana dashboard, alert rules
+- [x] systemd unit, Grafana dashboard, alert rules (`src/systemd`, `src/grafana`, `src/prometheus`)
 - [~] ACME `http-01` — challenge store + `/.well-known/acme-challenge/` serving implemented & tested; the CA-ordering driver (e.g. `instant-acme`) is a documented integration point (requires a live ACME endpoint to exercise). `tls-alpn-01` deferred.
 - [~] TLS session resumption — per-node rotating ticketer enabled; fleet-shared ticket keys from file is a documented follow-up
 - [ ] Load and soak testing framework in `tests/` (deferred)
