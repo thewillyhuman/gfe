@@ -8,7 +8,7 @@ publish.workspace = true
 
 [dependencies]
 gfe-core = { workspace = true }
-dashmap = { workspace = true }
+gfe-health-checking = { workspace = true }
 rand = { workspace = true }
 
 [dev-dependencies]

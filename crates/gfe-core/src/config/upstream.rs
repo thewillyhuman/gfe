@@ -92,29 +92,6 @@ pub struct UpstreamPool {
     pub max_in_flight: Option<NonZeroU32>,
 }
 
-/// Health state of a single backend, tracked by the control plane and read by
-/// the data plane on each upstream selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum HealthStatus {
-    /// Not yet probed enough times to decide.
-    #[default]
-    Unknown,
-    /// Receiving traffic.
-    Healthy,
-    /// Failing checks; excluded from selection.
-    Unhealthy,
-    /// Lame-duck: excluded from *new* requests, existing ones drain.
-    Draining,
-}
-
-impl HealthStatus {
-    /// Whether a backend in this state may receive new requests.
-    pub fn is_selectable(&self) -> bool {
-        matches!(self, HealthStatus::Healthy)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,13 +148,5 @@ mod tests {
         let json = r#"{"id":"p","scheme":"h2c","upstreams":[{"host":"10.0.0.1","port":50051}]}"#;
         let p: UpstreamPool = serde_json::from_str(json).unwrap();
         assert_eq!(p.scheme, Scheme::H2c);
-    }
-
-    #[test]
-    fn health_selectable() {
-        assert!(HealthStatus::Healthy.is_selectable());
-        assert!(!HealthStatus::Draining.is_selectable());
-        assert!(!HealthStatus::Unhealthy.is_selectable());
-        assert!(!HealthStatus::Unknown.is_selectable());
     }
 }

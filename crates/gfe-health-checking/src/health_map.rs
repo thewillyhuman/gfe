@@ -1,11 +1,30 @@
-//! Shared backend health state.
+//! Shared backend health state: written by the [`HealthChecker`] as probes
+//! come back, read on every upstream selection.
 //!
-//! Written by the control plane (`gfe-health-checking`) and read by the data plane on
-//! every upstream selection. Lives in this crate because the hot-path reader
-//! owns it; the control plane depends on this crate to write it.
+//! [`HealthChecker`]: crate::HealthChecker
 
 use dashmap::DashMap;
-use gfe_core::config::HealthStatus;
+
+/// Health state of a single backend, as the health checker last decided it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HealthStatus {
+    /// Not yet probed enough times to decide.
+    #[default]
+    Unknown,
+    /// Receiving traffic.
+    Healthy,
+    /// Failing checks; excluded from selection.
+    Unhealthy,
+    /// Lame-duck: excluded from *new* requests, existing ones drain.
+    Draining,
+}
+
+impl HealthStatus {
+    /// Whether a backend in this state may receive new requests.
+    pub fn is_selectable(&self) -> bool {
+        matches!(self, HealthStatus::Healthy)
+    }
+}
 
 /// A concurrent map of `(host, port)` → [`HealthStatus`].
 pub struct HealthMap {
@@ -78,5 +97,13 @@ mod tests {
         assert!(!h.is_selectable("10.0.0.1", 80));
         h.set("10.0.0.1", 80, HealthStatus::Healthy);
         assert!(h.is_selectable("10.0.0.1", 80));
+    }
+
+    #[test]
+    fn only_a_healthy_backend_is_selectable() {
+        assert!(HealthStatus::Healthy.is_selectable());
+        assert!(!HealthStatus::Draining.is_selectable());
+        assert!(!HealthStatus::Unhealthy.is_selectable());
+        assert!(!HealthStatus::Unknown.is_selectable());
     }
 }

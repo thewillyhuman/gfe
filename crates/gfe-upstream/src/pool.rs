@@ -1,10 +1,10 @@
 //! Upstream pools: the immutable snapshot of pools compiled from the dynamic
 //! config, with per-pool selection over the healthy set.
 
-use crate::health_map::HealthMap;
 use crate::policy::{build_ring, ring_pick, weighted_pick, MAX_RING_POINTS, RING_REPLICAS};
 use gfe_core::config::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
 use gfe_core::GfeError;
+use gfe_health_checking::HealthMap;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -231,7 +231,7 @@ impl PoolSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gfe_core::config::HealthStatus;
+    use gfe_health_checking::HealthStatus;
 
     fn pool_with(policy: LbPolicy) -> UpstreamPool {
         UpstreamPool {

@@ -4,9 +4,10 @@
 
 use crate::probe::make_probe;
 use crate::state_machine::BackendHealth;
-use gfe_core::config::{HealthCheckConfig, HealthStatus, Scheme, UpstreamPool};
+use crate::HealthMap;
+use crate::HealthStatus;
+use gfe_core::config::{HealthCheckConfig, Scheme, UpstreamPool};
 use gfe_observability::{BackendLabels, GfeMetrics};
-use gfe_upstream::HealthMap;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

@@ -656,9 +656,9 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "dashmap",
  "gfe-core",
  "gfe-observability",
- "gfe-upstream",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -732,6 +732,7 @@ dependencies = [
  "arc-swap",
  "bytes",
  "gfe-core",
+ "gfe-health-checking",
  "gfe-observability",
  "gfe-router",
  "gfe-upstream",
@@ -761,8 +762,8 @@ name = "gfe-upstream"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "dashmap",
  "gfe-core",
+ "gfe-health-checking",
  "rand",
 ]
 

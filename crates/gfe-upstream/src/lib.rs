@@ -1,8 +1,7 @@
-//! Upstream pools, load-balancing policy, and the shared health map.
+//! Upstream pools and load-balancing policy: which backend, among the
+//! healthy ones of a pool, gets a request.
 
-pub mod health_map;
 pub mod policy;
 pub mod pool;
 
-pub use health_map::HealthMap;
 pub use pool::{InflightGuard, Pool, PoolSet, Selection};

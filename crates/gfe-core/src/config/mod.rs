@@ -18,7 +18,7 @@ pub use listener::{ListenProtocol, Listener, ListenerId};
 pub use loader::{load_dynamic_config, load_node_config};
 pub use route::{FixedAction, RedirectAction, Route, RouteAction, RouteId};
 pub use tls::{CertEntry, MinVersion, TlsConfig};
-pub use upstream::{HealthStatus, LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
+pub use upstream::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
 pub use validator::validate;
 
 use duration::{deserialize_duration, serialize_duration};

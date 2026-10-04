@@ -10,6 +10,7 @@ publish.workspace = true
 gfe-core = { workspace = true }
 gfe-router = { workspace = true }
 gfe-upstream = { workspace = true }
+gfe-health-checking = { workspace = true }
 gfe-observability = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
