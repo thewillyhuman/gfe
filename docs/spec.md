@@ -131,9 +131,6 @@ gfe/
 └── deploy/
     ├── gfe-node.service                 # systemd unit
     ├── gfe-node-ebpf.conf               # Drop-in granting what the eBPF view needs
-    ├── generate-config.sh               # Generate dynamic config JSON scaffold
-    ├── validate-config.sh               # Validate config before deployment
-    ├── backend-onboard.sh               # GRE tunnel + loopback VIP on a GFE node
     ├── grafana/gfe-dashboard.json       # Pre-built Grafana dashboard
     └── prometheus/gfe-alerts.yml        # Alerting rules
 ```
@@ -763,8 +760,6 @@ Application backends behind GFE are ordinary HTTP servers. Unlike the L4 LB's ba
 - **Real client IP awareness:** backends read the original client IP from `X-Forwarded-For` / `Forwarded` rather than the socket peer (which is the GFE node).
 - **(Optional) Upstream TLS:** if `scheme=https`, the backend presents a certificate GFE can validate (system roots or a pinned CA); for mTLS, it requires GFE's client certificate.
 
-A reference onboarding script (`deploy/backend-onboard.sh`) and docs help teams expose a conformant health endpoint and read forwarding headers.
-
 ---
 
 ## 11. L4 Load Balancer Integration
@@ -1072,7 +1067,7 @@ Statelessness means a restarted node is immediately a full peer — no warmup st
 
 - [x] Lame-duck drain protocol for upstreams (DRAINING state, drain-status detection)
 - [x] mTLS to upstreams (client certificate) + extra-CA trust
-- [x] `deploy/`: systemd unit, GRE+VIP onboarding script, config generate/validate scripts, Grafana dashboard
+- [x] `deploy/`: systemd unit, Grafana dashboard, alert rules
 - [~] ACME `http-01` — challenge store + `/.well-known/acme-challenge/` serving implemented & tested; the CA-ordering driver (e.g. `instant-acme`) is a documented integration point (requires a live ACME endpoint to exercise). `tls-alpn-01` deferred.
 - [~] TLS session resumption — per-node rotating ticketer enabled; fleet-shared ticket keys from file is a documented follow-up
 - [ ] Load and soak testing framework in `tests/` (deferred)

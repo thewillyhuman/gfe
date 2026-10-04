@@ -7,7 +7,7 @@ it: the binary in `/usr/bin`, a systemd unit, and no configuration.
 |---|---|
 | `/usr/bin/gfe-node` | The proxy |
 | `/usr/lib/systemd/system/gfe-node.service` | Hardened unit (not enabled by the package) |
-| `/usr/share/gfe/` | Deploy helpers and the Grafana dashboard |
+| `/usr/share/gfe/` | The eBPF drop-in, the Grafana dashboard and the alert rules |
 | `/usr/share/doc/gfe/` | README and example configs |
 
 The package creates the `gfe-node` system user. It does **not** ship

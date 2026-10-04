@@ -47,7 +47,8 @@ LimitNOFILE=1048576
 
 # GFE is a userspace proxy: the only elevated privilege it needs is binding
 # low ports (443/80) for its listeners. GRE decapsulation and the loopback VIP
-# are set up by deploy/backend-onboard.sh and handled by the kernel, not GFE.
+# are set up on the host (section 11 of the specification) and handled by the
+# kernel, not GFE.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 

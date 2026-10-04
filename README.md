@@ -82,7 +82,8 @@ spread connections across a fleet with no coordination.
 ```
 
 GFE registers as a backend pool in `lb`. Each GFE node runs a GRE tunnel and
-holds the service VIP on its loopback (see `deploy/backend-onboard.sh`), so
+holds the service VIP on its loopback (see
+[section 11 of the spec](docs/spec.md#11-l4-load-balancer-integration)), so
 GRE-decapsulated packets reach GFE's socket and responses return via DSR.
 
 ## Performance
@@ -193,9 +194,6 @@ cargo build --release --manifest-path src/rust/Cargo.toml
 ./src/rust/target/release/gfe-node --config config/gfe.example.toml --check-config \
     --dynamic-config /tmp/gfe-dynamic.candidate.json
 
-# Generate a dynamic config scaffold
-./deploy/generate-config.sh --host app.example.org --backend 10.0.0.1:8443 -o /tmp/gfe-dynamic.json
-
 # Run (binds the listeners in the dynamic config; serves /metrics on metrics_addr)
 ./src/rust/target/release/gfe-node --config config/gfe.example.toml
 ```
@@ -240,9 +238,6 @@ packaging/
 deploy/
   gfe-node.service            systemd unit (hardened, CAP_NET_BIND_SERVICE only)
   gfe-node-ebpf.conf          Drop-in granting what the eBPF kernel view needs
-  backend-onboard.sh          GRE tunnel + loopback VIP (DSR) for L4 integration
-  generate-config.sh          Scaffold a dynamic config
-  validate-config.sh          --check-config wrapper
   grafana/gfe-dashboard.json  Prebuilt dashboard
   prometheus/gfe-alerts.yml   Alerting rules (GFE + host network)
 ```

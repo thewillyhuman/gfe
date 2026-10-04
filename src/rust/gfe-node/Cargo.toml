@@ -31,7 +31,7 @@ rustix = { workspace = true, features = ["net", "process"] }
 
 # RPM packaging, built by `cargo generate-rpm -p gfe-node` from the
 # release binary (see packaging/rpm/README.md). The package is named `gfe`
-# and carries the node, the systemd unit and the deploy helpers.
+# and carries the node, the systemd unit, the dashboard and the alert rules.
 # Configuration under /etc/gfe is left to config management.
 [package.metadata.generate-rpm]
 name = "gfe"
@@ -41,9 +41,6 @@ assets = [
     { source = "target/release/gfe-node", dest = "/usr/bin/gfe-node", mode = "755" },
     { source = "../../../deploy/gfe-node.service", dest = "/usr/lib/systemd/system/gfe-node.service", mode = "644" },
     { source = "../../../deploy/gfe-node-ebpf.conf", dest = "/usr/share/gfe/gfe-node-ebpf.conf", mode = "644" },
-    { source = "../../../deploy/backend-onboard.sh", dest = "/usr/share/gfe/backend-onboard.sh", mode = "755" },
-    { source = "../../../deploy/generate-config.sh", dest = "/usr/share/gfe/generate-config.sh", mode = "755" },
-    { source = "../../../deploy/validate-config.sh", dest = "/usr/share/gfe/validate-config.sh", mode = "755" },
     { source = "../../../deploy/grafana/gfe-dashboard.json", dest = "/usr/share/gfe/grafana/gfe-dashboard.json", mode = "644" },
     { source = "../../../deploy/prometheus/gfe-alerts.yml", dest = "/usr/share/gfe/prometheus/gfe-alerts.yml", mode = "644" },
     { source = "../../../config/gfe.example.toml", dest = "/usr/share/doc/gfe/gfe.example.toml", mode = "644", doc = true },
