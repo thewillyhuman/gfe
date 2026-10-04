@@ -9,7 +9,7 @@
 use crate::errors::RespBody;
 use bytes::Bytes;
 use gfe_core::config::TimeoutsConfig;
-use gfe_upstream::BoxError;
+use gfe_core::upstream::BoxError;
 use hyper::body::{Body, Frame, SizeHint};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

@@ -112,7 +112,7 @@ mod tests {
         CertEntry, LimitsConfig, ListenProtocol, Listener, ListenerId, PoolId, Route, RouteAction,
         RouteId, Scheme, TimeoutsConfig, TlsConfig, Upstream, UpstreamPool,
     };
-    use gfe_upstream::UpstreamClient;
+    use gfe_core::upstream::UpstreamClient;
     use std::io::Write;
 
     /// A fresh certificate and key, in files unique to `test`.

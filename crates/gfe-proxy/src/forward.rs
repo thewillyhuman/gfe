@@ -6,10 +6,11 @@ use crate::progress::SendProgress;
 use crate::record::{CountedBody, RequestRecord};
 use crate::ConnCtx;
 use bytes::Bytes;
+use gfe_core::upstream::{BoxError, FailureKind};
 use gfe_observability::{
     Gauge, PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels,
 };
-use gfe_upstream::{BoxError, FailureKind, InflightGuard, Pool};
+use gfe_upstream::{InflightGuard, Pool};
 use http::header::{HeaderMap, HeaderName, HeaderValue};
 use http_body_util::BodyExt;
 use hyper::body::{Body, Incoming};
@@ -137,7 +138,7 @@ fn is_idempotent(method: &http::Method) -> bool {
     )
 }
 
-fn empty_body() -> gfe_upstream::ReqBody {
+fn empty_body() -> gfe_core::upstream::ReqBody {
     http_body_util::Empty::<bytes::Bytes>::new()
         .map_err(|e| Box::new(e) as BoxError)
         .boxed()

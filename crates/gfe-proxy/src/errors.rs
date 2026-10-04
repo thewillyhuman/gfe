@@ -1,7 +1,7 @@
 //! Synthetic responses and body helpers.
 
 use bytes::Bytes;
-use gfe_upstream::BoxError;
+use gfe_core::upstream::BoxError;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;

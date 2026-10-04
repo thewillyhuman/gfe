@@ -8,23 +8,10 @@ publish.workspace = true
 
 [dependencies]
 gfe-core = { workspace = true }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
-hyper-rustls = { workspace = true }
-tower-service = { workspace = true }
-http = { workspace = true }
-http-body-util = { workspace = true }
-bytes = { workspace = true }
-rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
-webpki-roots = { workspace = true }
 dashmap = { workspace = true }
 rand = { workspace = true }
-tracing = { workspace = true }
 
 [dev-dependencies]
-rcgen = { workspace = true }
-tokio = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

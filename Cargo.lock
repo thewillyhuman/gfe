@@ -600,7 +600,6 @@ dependencies = [
  "gfe-health",
  "gfe-observability",
  "gfe-proxy",
- "gfe-upstream",
  "notify",
  "rcgen",
  "rustls",
@@ -613,15 +612,24 @@ name = "gfe-core"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "bytes",
  "criterion",
  "dashmap",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
  "rcgen",
  "rustls",
  "rustls-pemfile",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
  "toml",
+ "tower-service",
+ "webpki-roots 0.26.11",
  "x509-parser",
 ]
 
@@ -691,7 +699,6 @@ dependencies = [
  "gfe-health",
  "gfe-observability",
  "gfe-proxy",
- "gfe-upstream",
  "http",
  "http-body-util",
  "hyper",
@@ -753,23 +760,10 @@ dependencies = [
 name = "gfe-upstream"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "criterion",
  "dashmap",
  "gfe-core",
- "http",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
  "rand",
- "rcgen",
- "rustls",
- "rustls-pemfile",
- "tokio",
- "tower-service",
- "tracing",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]

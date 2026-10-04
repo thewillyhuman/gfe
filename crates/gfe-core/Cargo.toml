@@ -16,9 +16,18 @@ rustls-pemfile = { workspace = true }
 x509-parser = { workspace = true }
 arc-swap = { workspace = true }
 dashmap = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
+tower-service = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+webpki-roots = { workspace = true }
 
 [dev-dependencies]
 rcgen = { workspace = true }
+tokio = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

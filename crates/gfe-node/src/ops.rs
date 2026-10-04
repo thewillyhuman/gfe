@@ -271,7 +271,7 @@ mod tests {
     async fn ops_server_to_hand_over() -> (SocketAddr, Arc<OpsState>, watch::Sender<bool>) {
         let metrics = Arc::new(GfeMetrics::new());
         let shared = ProxyShared::new(
-            gfe_upstream::UpstreamClient::new(1).unwrap(),
+            gfe_core::upstream::UpstreamClient::new(1).unwrap(),
             metrics.clone(),
             Default::default(),
             Default::default(),

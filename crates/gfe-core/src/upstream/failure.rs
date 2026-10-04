@@ -1,7 +1,7 @@
 //! Why an upstream request failed before any response arrived.
 
-use crate::client::BoxError;
-use crate::limit::ConnectionLimitReached;
+use crate::upstream::client::BoxError;
+use crate::upstream::limit::ConnectionLimitReached;
 use std::error::Error;
 use std::fmt;
 use std::io;

@@ -15,11 +15,11 @@
 //! `:authority`, which is its own address, and no `Host` is sent that would
 //! contradict it.
 
-use crate::failure::UpstreamFailure;
-use crate::limit::{ConnectionLimit, LimitedConnector};
+use crate::config::Scheme;
+use crate::upstream::failure::UpstreamFailure;
+use crate::upstream::limit::{ConnectionLimit, LimitedConnector};
+use crate::GfeError;
 use bytes::Bytes;
-use gfe_core::config::Scheme;
-use gfe_core::GfeError;
 use http::uri::PathAndQuery;
 use http_body_util::combinators::BoxBody;
 use hyper::body::Incoming;
@@ -261,7 +261,7 @@ fn read_key(pem: &[u8]) -> Result<rustls::pki_types::PrivateKeyDer<'static>, Gfe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::failure::FailureKind;
+    use crate::upstream::failure::FailureKind;
 
     #[test]
     fn builds_client() {

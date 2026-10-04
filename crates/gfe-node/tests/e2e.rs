@@ -6,9 +6,9 @@ use gfe_core::config::{
     CertEntry, DynamicConfig, LimitsConfig, ListenProtocol, Listener, ListenerId, PoolId, Route,
     RouteAction, RouteId, Scheme, TimeoutsConfig, TlsConfig, Upstream, UpstreamPool,
 };
+use gfe_core::upstream::UpstreamClient;
 use gfe_observability::GfeMetrics;
 use gfe_proxy::{ListenerSet, ProxyShared};
-use gfe_upstream::UpstreamClient;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -1844,7 +1844,7 @@ async fn stalled_upload_is_answered_with_408() {
 async fn answers_503_at_the_upstream_connection_limit() {
     let (logs, _guard) = CapturedLogs::start();
     let upstream = spawn_upstream_answering_after(Duration::from_millis(400)).await;
-    let client = UpstreamClient::with_options(gfe_upstream::UpstreamClientOptions {
+    let client = UpstreamClient::with_options(gfe_core::upstream::UpstreamClientOptions {
         max_connections: Some(1),
         ..Default::default()
     })
@@ -2033,7 +2033,7 @@ async fn spawn_tls_describing_upstream() -> (SocketAddr, Vec<u8>) {
 
 /// Shared state whose upstream client trusts the certificate `ca_pem`.
 fn build_shared_trusting(ca_pem: Vec<u8>) -> Arc<ProxyShared> {
-    let client = UpstreamClient::with_options(gfe_upstream::UpstreamClientOptions {
+    let client = UpstreamClient::with_options(gfe_core::upstream::UpstreamClientOptions {
         extra_ca_pem: Some(ca_pem),
         ..Default::default()
     })

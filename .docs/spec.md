@@ -454,7 +454,7 @@ Weights are honored by `round_robin` and `ring_hash`. If a pool has **no healthy
 
 ### 6.6 Upstream Connection Pooling
 
-> **Code location:** `crates/gfe-upstream/src/conn_pool.rs`, `crates/gfe-upstream/src/client.rs`
+> **Code location:** `crates/gfe-core/src/upstream/client.rs`
 
 Long-lived pooled upstream connections are a primary reason to run a shared edge: they amortize TCP + TLS handshake cost across all client requests to a backend.
 
