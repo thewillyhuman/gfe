@@ -36,7 +36,7 @@ Where they go is set by `[log] file` in the bootstrap config:
 
 | Question | Metric | Log field |
 |---|---|---|
-| How many requests, to what? | `gfe_requests_total{listener,host,route,status}` | `method`, `host`, `path`, `route` |
+| How many requests, to what? | `gfe_requests_total{listener,vhost,route,status}` | `method`, `host`, `path`, `route` |
 | What do clients get back? | `gfe_requests_total` by `status`; `gfe_grpc_responses_total` by `grpc_status` | `status`, `grpc_status`, `error` |
 | How long do requests take? | `gfe_request_duration_seconds` (to the last byte); `gfe_upstream_request_duration_seconds` (backend, to headers) | `duration_ms`, `upstream_ttfb_ms` |
 | How big are they? | `gfe_request_body_bytes_total`, `gfe_response_body_bytes_total` | `request_bytes`, `response_bytes` |
@@ -188,7 +188,7 @@ Reading the two layers together:
   config and certificates, and the host-level network signals above. It
   expects the scrape job to be called `gfe`.
 - [`src/grafana/gfe-dashboard.json`](../src/grafana/gfe-dashboard.json) —
-  the same signals as panels, filterable by instance, host and pool.
+  the same signals as panels, filterable by instance, virtual host and pool.
 
 ## What is not recorded, and why
 

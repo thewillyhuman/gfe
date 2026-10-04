@@ -1479,7 +1479,7 @@ async fn access_log_and_metrics_count_body_bytes() {
 
     assert_eq!(event["request_bytes"], 1000);
     assert_eq!(event["response_bytes"], body.len());
-    let labels = r#"{listener="http",host="a.example.org",route="web"}"#;
+    let labels = r#"{listener="http",vhost="a.example.org",route="web"}"#;
     let metrics = shared.server.metrics.encode();
     assert!(
         metrics.contains(&format!("gfe_request_body_bytes_total{labels} 1000")),
@@ -1519,7 +1519,7 @@ async fn logs_request_abandoned_before_the_response_as_499() {
     let metrics = shared.server.metrics.encode();
     assert!(
         metrics.contains(
-            r#"gfe_requests_aborted_total{listener="http",host="a.example.org",route="web",by="client"} 1"#
+            r#"gfe_requests_aborted_total{listener="http",vhost="a.example.org",route="web",by="client"} 1"#
         ),
         "{metrics}"
     );
@@ -1688,7 +1688,7 @@ async fn access_log_and_metrics_report_the_grpc_status() {
     assert_eq!(event["termination"], "complete");
     let metrics = shared.server.metrics.encode();
     let expected =
-        r#"gfe_grpc_responses_total{listener="grpc",host="*",route="grpc",grpc_status="0"} 1"#;
+        r#"gfe_grpc_responses_total{listener="grpc",vhost="*",route="grpc",grpc_status="0"} 1"#;
     assert!(
         metrics.contains(expected),
         "missing {expected} in:\n{metrics}"
@@ -2386,7 +2386,7 @@ async fn refuses_a_websocket_handshake_with_501() {
     assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
     let metrics = shared.server.metrics.encode();
     let counted =
-        r#"gfe_requests_total{listener="http",host="a.example.org",route="web",status="501"} 1"#;
+        r#"gfe_requests_total{listener="http",vhost="a.example.org",route="web",status="501"} 1"#;
     assert!(metrics.contains(counted), "{metrics}");
 }
 

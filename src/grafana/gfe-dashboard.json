@@ -26,10 +26,10 @@
         "current": { "text": "All", "value": "$__all" }
       },
       {
-        "name": "host",
+        "name": "vhost",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(gfe_requests_total{instance=~\"$instance\"}, host)",
+        "query": "label_values(gfe_requests_total{instance=~\"$instance\"}, vhost)",
         "refresh": 2,
         "includeAll": true,
         "allValue": ".*",
@@ -53,15 +53,15 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "sum by (route) (rate(gfe_requests_total{instance=~\"$instance\", host=~\"$host\"}[1m]))", "legendFormat": "{{route}}" }
+        { "expr": "sum by (route) (rate(gfe_requests_total{instance=~\"$instance\", vhost=~\"$vhost\"}[1m]))", "legendFormat": "{{route}}" }
       ]
     },
     {
-      "id": 2, "title": "Request rate by host (DNS alias)", "type": "timeseries",
+      "id": 2, "title": "Request rate by virtual host (DNS alias)", "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "sum by (host) (rate(gfe_requests_total{instance=~\"$instance\"}[1m]))", "legendFormat": "{{host}}" }
+        { "expr": "sum by (vhost) (rate(gfe_requests_total{instance=~\"$instance\"}[1m]))", "legendFormat": "{{vhost}}" }
       ]
     },
     {
@@ -70,7 +70,7 @@
       "fieldConfig": { "defaults": { "unit": "s" } },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "histogram_quantile(0.95, sum by (le, route) (rate(gfe_request_duration_seconds_bucket{instance=~\"$instance\", host=~\"$host\"}[5m])))", "legendFormat": "{{route}}" }
+        { "expr": "histogram_quantile(0.95, sum by (le, route) (rate(gfe_request_duration_seconds_bucket{instance=~\"$instance\", vhost=~\"$vhost\"}[5m])))", "legendFormat": "{{route}}" }
       ]
     },
     {
@@ -168,7 +168,7 @@
       "fieldConfig": { "defaults": { "unit": "reqps" } },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "sum by (by, route) (rate(gfe_requests_aborted_total{instance=~\"$instance\", host=~\"$host\"}[5m]))", "legendFormat": "{{by}} · {{route}}" }
+        { "expr": "sum by (by, route) (rate(gfe_requests_aborted_total{instance=~\"$instance\", vhost=~\"$vhost\"}[5m]))", "legendFormat": "{{by}} · {{route}}" }
       ]
     },
     {
@@ -258,7 +258,7 @@
       "fieldConfig": { "defaults": { "unit": "reqps" } },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
-        { "expr": "sum by (route, grpc_status) (rate(gfe_grpc_responses_total{instance=~\"$instance\", host=~\"$host\"}[5m]))", "legendFormat": "{{route}} · {{grpc_status}}" }
+        { "expr": "sum by (route, grpc_status) (rate(gfe_grpc_responses_total{instance=~\"$instance\", vhost=~\"$vhost\"}[5m]))", "legendFormat": "{{route}} · {{grpc_status}}" }
       ]
     },
     {

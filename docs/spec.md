@@ -824,12 +824,12 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`.
 | `gfe_tls_connections_total` | Counter | TLS connections established (labels: version, cipher, alpn, resumed) |
 | `gfe_tls_handshake_duration_seconds` | Histogram | Handshake latency |
 | `gfe_tls_sni_no_cert_total` | Counter | Handshakes with no matching certificate |
-| `gfe_requests_total` | Counter | Finished requests (labels: listener, host, route, status). `host` is the matched route's configured pattern, never the raw `Host`. Status `499` = abandoned by the client before GFE had a response |
+| `gfe_requests_total` | Counter | Finished requests (labels: listener, vhost, route, status). `vhost` is the matched route's configured host pattern, never the raw `Host`; it is not called `host`, which monitoring systems commonly use for the machine a series comes from. Status `499` = abandoned by the client before GFE had a response |
 | `gfe_requests_in_flight` | Gauge | Requests received whose response is not finished yet |
-| `gfe_requests_aborted_total` | Counter | Requests broken off before completion (labels: listener, host, route, by ∈ {client, upstream}) |
-| `gfe_request_duration_seconds` | Histogram | Time from the request head to the last byte of the response (labels: listener, host, route) |
-| `gfe_request_body_bytes_total` / `gfe_response_body_bytes_total` | Counter | Body bytes received from / sent to clients (labels: listener, host, route) |
-| `gfe_grpc_responses_total` | Counter | Finished gRPC calls (labels: listener, host, route, grpc_status = the numeric gRPC status code, 0 is OK) |
+| `gfe_requests_aborted_total` | Counter | Requests broken off before completion (labels: listener, vhost, route, by ∈ {client, upstream}) |
+| `gfe_request_duration_seconds` | Histogram | Time from the request head to the last byte of the response (labels: listener, vhost, route) |
+| `gfe_request_body_bytes_total` / `gfe_response_body_bytes_total` | Counter | Body bytes received from / sent to clients (labels: listener, vhost, route) |
+| `gfe_grpc_responses_total` | Counter | Finished gRPC calls (labels: listener, vhost, route, grpc_status = the numeric gRPC status code, 0 is OK) |
 | `gfe_no_route_total` | Counter | Requests matching no route (404) |
 | `gfe_no_healthy_upstream_total` | Counter | Requests with no healthy upstream (503) |
 | `gfe_upstream_requests_total` | Counter | Upstream requests (labels: pool, backend, status) |

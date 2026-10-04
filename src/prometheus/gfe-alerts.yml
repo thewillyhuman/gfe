@@ -20,9 +20,9 @@ groups:
 
       - alert: GfeHighServerErrorRatio
         expr: |
-          sum by (listener, host, route) (rate(gfe_requests_total{status=~"5.."}[5m]))
+          sum by (listener, vhost, route) (rate(gfe_requests_total{status=~"5.."}[5m]))
             /
-          sum by (listener, host, route) (rate(gfe_requests_total[5m]))
+          sum by (listener, vhost, route) (rate(gfe_requests_total[5m]))
             > 0.05
         for: 5m
         labels: { severity: critical }
@@ -54,9 +54,9 @@ groups:
 
       - alert: GfeGrpcErrorRatio
         expr: |
-          sum by (host, route) (rate(gfe_grpc_responses_total{grpc_status!="0"}[5m]))
+          sum by (vhost, route) (rate(gfe_grpc_responses_total{grpc_status!="0"}[5m]))
             /
-          sum by (host, route) (rate(gfe_grpc_responses_total[5m]))
+          sum by (vhost, route) (rate(gfe_grpc_responses_total[5m]))
             > 0.05
         for: 5m
         labels: { severity: warning }
@@ -69,7 +69,7 @@ groups:
       - alert: GfeHighRequestLatency
         expr: |
           histogram_quantile(0.99,
-            sum by (le, host, route) (rate(gfe_request_duration_seconds_bucket[5m]))
+            sum by (le, vhost, route) (rate(gfe_request_duration_seconds_bucket[5m]))
           ) > 1
         for: 10m
         labels: { severity: warning }
@@ -132,9 +132,9 @@ groups:
     rules:
       - alert: GfeClientAborts
         expr: |
-          sum by (host, route) (rate(gfe_requests_aborted_total{by="client"}[5m]))
+          sum by (vhost, route) (rate(gfe_requests_aborted_total{by="client"}[5m]))
             /
-          sum by (host, route) (rate(gfe_requests_total[5m]))
+          sum by (vhost, route) (rate(gfe_requests_total[5m]))
             > 0.1
         for: 10m
         labels: { severity: warning }
@@ -143,7 +143,7 @@ groups:
           description: "Clients give up before the response completes: usually a slow backend running into client timeouts, or a network problem on the client path (check the host-network alerts)."
 
       - alert: GfeUpstreamAborts
-        expr: sum by (host, route) (rate(gfe_requests_aborted_total{by="upstream"}[5m])) > 0.1
+        expr: sum by (vhost, route) (rate(gfe_requests_aborted_total{by="upstream"}[5m])) > 0.1
         for: 5m
         labels: { severity: warning }
         annotations:

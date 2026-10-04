@@ -45,12 +45,14 @@ pub struct TlsResultLabel {
     pub result: String,
 }
 
-/// Labels for completed requests. `host` is the matched route's configured
+/// Labels for completed requests. `vhost` is the matched route's configured
 /// host *pattern* (bounded by config), never the raw client `Host` header.
+/// It is not called `host`: monitoring systems commonly put the machine a
+/// series comes from under that name, and the two would collide.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct RequestLabels {
     pub listener: String,
-    pub host: String,
+    pub vhost: String,
     pub route: String,
     pub status: String,
 }
@@ -60,7 +62,7 @@ pub struct RequestLabels {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct RouteLabels {
     pub listener: String,
-    pub host: String,
+    pub vhost: String,
     pub route: String,
 }
 
@@ -69,7 +71,7 @@ pub struct RouteLabels {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct AbortLabels {
     pub listener: String,
-    pub host: String,
+    pub vhost: String,
     pub route: String,
     pub by: String,
 }
@@ -79,7 +81,7 @@ pub struct AbortLabels {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct GrpcLabels {
     pub listener: String,
-    pub host: String,
+    pub vhost: String,
     pub route: String,
     pub grpc_status: String,
 }

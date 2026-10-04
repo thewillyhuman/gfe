@@ -243,7 +243,7 @@ impl Drop for RequestRecord {
         };
         let per_route = RouteLabels {
             listener: listener.clone(),
-            host: host_pattern.clone(),
+            vhost: host_pattern.clone(),
             route: route.clone(),
         };
 
@@ -252,7 +252,7 @@ impl Drop for RequestRecord {
             .requests
             .get_or_create(&RequestLabels {
                 listener: listener.clone(),
-                host: host_pattern.clone(),
+                vhost: host_pattern.clone(),
                 route: route.clone(),
                 status: status.to_string(),
             })
@@ -279,7 +279,7 @@ impl Drop for RequestRecord {
                 .grpc_responses
                 .get_or_create(&GrpcLabels {
                     listener: listener.clone(),
-                    host: host_pattern.clone(),
+                    vhost: host_pattern.clone(),
                     route: route.clone(),
                     grpc_status: grpc_status.to_string(),
                 })
@@ -290,7 +290,7 @@ impl Drop for RequestRecord {
                 .requests_aborted
                 .get_or_create(&AbortLabels {
                     listener,
-                    host: host_pattern,
+                    vhost: host_pattern,
                     route: route.clone(),
                     by: by.to_string(),
                 })
