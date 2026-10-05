@@ -41,6 +41,31 @@ fn is_traffic(target: &str) -> bool {
     target.starts_with(TRAFFIC_TARGETS)
 }
 
+/// The level of the log when `RUST_LOG` does not say.
+const DEFAULT_LEVEL: &str = "info";
+
+/// What Pingora logs, at error level, about a client that misbehaves: one
+/// that leaves halfway through a request head or a response, or whose
+/// HTTP/2 handshake fails. The node's own events already say so (the reason
+/// of `gfe::conn`, the termination of `gfe::access`), and a line per such
+/// connection would let any scanner fill the journal, which then drops
+/// lines that matter. Off unless `RUST_LOG` names these targets.
+const QUIET_UNLESS_ASKED: &str = "pingora_proxy=off,pingora_core::apps=off";
+
+/// The filter of the log: `rust_log`'s directives (the value of `RUST_LOG`;
+/// [`DEFAULT_LEVEL`] without one, or with one that cannot be parsed), after
+/// the targets that stay quiet unless it names them.
+fn filter(rust_log: Option<&str>) -> tracing_subscriber::EnvFilter {
+    use tracing_subscriber::EnvFilter;
+
+    let with_default = || EnvFilter::new(format!("{QUIET_UNLESS_ASKED},{DEFAULT_LEVEL}"));
+    match rust_log.map(str::trim).filter(|asked| !asked.is_empty()) {
+        Some(asked) => EnvFilter::try_new(format!("{QUIET_UNLESS_ASKED},{asked}"))
+            .unwrap_or_else(|_| with_default()),
+        None => with_default(),
+    }
+}
+
 /// The node's log. Dropping it writes out what is still queued, so it is
 /// kept until the process exits.
 pub struct Log {
@@ -51,13 +76,16 @@ impl Log {
     /// Start logging: from here on events are written as JSON lines,
     /// filtered by `RUST_LOG` (default `info`), to standard output and to
     /// `file`, if one is given. Fails if that file cannot be opened.
+    ///
+    /// What Pingora logs about clients that misbehave is left out unless
+    /// `RUST_LOG` asks for it, e.g. `RUST_LOG=info,pingora_proxy=error`.
     pub fn start(file: Option<&Path>) -> io::Result<Log> {
         use tracing_subscriber::filter::filter_fn;
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
-        use tracing_subscriber::{EnvFilter, Layer, fmt};
+        use tracing_subscriber::{Layer, fmt};
 
-        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let filter = filter(std::env::var("RUST_LOG").ok().as_deref());
         let mut destinations = Vec::new();
 
         let log_file = file

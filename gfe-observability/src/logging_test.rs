@@ -149,3 +149,84 @@ fn traffic_events_are_the_ones_under_the_gfe_targets() {
         assert!(!is_traffic(target), "{target}");
     }
 }
+
+/// Counts the events a filter lets through.
+#[derive(Clone, Default)]
+struct Counted(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Counted {
+    fn on_event(&self, _: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// How many of `emit`'s events get through the filter built from `rust_log`.
+fn let_through(rust_log: Option<&str>, emit: impl FnOnce()) -> usize {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let counted = Counted::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(filter(rust_log))
+        .with(counted.clone());
+    tracing::subscriber::with_default(subscriber, emit);
+    counted.0.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[test]
+fn logs_at_info_unless_told_otherwise() {
+    let through = let_through(None, || {
+        tracing::info!(target: "gfe_node", "ready");
+        tracing::debug!(target: "gfe_node", "detail");
+    });
+
+    assert_eq!(through, 1);
+}
+
+#[test]
+fn what_pingora_logs_about_a_client_that_misbehaves_is_off_by_default() {
+    let through = let_through(None, || {
+        tracing::error!(target: "pingora_proxy", "Fail to proxy: connection closed");
+        tracing::error!(target: "pingora_core::apps", "H2 handshake error");
+    });
+
+    assert_eq!(through, 0);
+}
+
+#[test]
+fn the_rest_of_what_pingora_logs_is_kept() {
+    let through = let_through(None, || {
+        tracing::warn!(target: "pingora_core::connectors", "something about a backend");
+    });
+
+    assert_eq!(through, 1);
+}
+
+#[test]
+fn rust_log_turns_pingoras_lines_about_clients_back_on() {
+    let through = let_through(Some("info,pingora_proxy=error"), || {
+        tracing::error!(target: "pingora_proxy", "Fail to proxy: connection closed");
+    });
+
+    assert_eq!(through, 1);
+}
+
+#[test]
+fn rust_log_sets_the_level_of_everything_else() {
+    let through = let_through(Some("warn"), || {
+        tracing::info!(target: "gfe_node", "ready");
+        tracing::warn!(target: "gfe_node", "careful");
+        tracing::error!(target: "pingora_proxy", "Fail to proxy: connection closed");
+    });
+
+    assert_eq!(through, 1);
+}
+
+#[test]
+fn a_rust_log_that_cannot_be_parsed_falls_back_to_info() {
+    let through = let_through(Some("not a level=="), || {
+        tracing::info!(target: "gfe_node", "ready");
+        tracing::debug!(target: "gfe_node", "detail");
+    });
+
+    assert_eq!(through, 1);
+}
