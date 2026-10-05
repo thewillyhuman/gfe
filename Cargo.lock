@@ -600,7 +600,10 @@ dependencies = [
 name = "gfe-node"
 version = "0.1.0"
 dependencies = [
- "gfe-core",
+ "anyhow",
+ "rustix",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
