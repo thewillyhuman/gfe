@@ -1,16 +1,16 @@
 # GFE — General Front End
 
-A high-performance L7 TLS-terminating HTTP reverse proxy written in Rust,
-inspired by Google's Front End (GFE) service. GFE is the layer-7 tier designed
-to sit directly behind the [`lb`](https://github.com/thewillyhuman/lb)
-Maglev L4 load balancer — the component its specification (Section 11) calls
-*"Frontend (GFE) Integration"* but deliberately leaves unspecified.
+A high-performance L7 TLS-terminating HTTP reverse proxy, written in Rust on
+top of [Cloudflare Pingora](https://github.com/cloudflare/pingora) and built
+to be observed and operated.
 
-GFE terminates TLS for every service behind a shared set of VIPs, routes HTTP
-by host and path to upstream pools, pools long-lived upstream connections,
-health-checks backends at L7, and is configured entirely from a hot-reloadable
-local file. It is **stateless**: any node is interchangeable, so the L4 LB can
-spread connections across a fleet with no coordination.
+GFE terminates TLS for every service behind a shared set of addresses, routes
+HTTP by host and path to upstream pools, pools long-lived upstream
+connections, health-checks backends at L7, and is configured entirely from a
+hot-reloadable local file. It is **stateless**: any node is interchangeable,
+so whatever spreads traffic over a fleet of them (an L4 load balancer, DNS,
+anycast) needs no coordination with it, and nothing in GFE assumes how
+traffic reaches a node.
 
 ## Features
 
@@ -27,9 +27,9 @@ spread connections across a fleet with no coordination.
   proxy timeouts, and a call GFE cannot serve fails with a proper `grpc-status`.
 - **Upstream load balancing** — `round_robin`, `least_request` (fewest in-flight),
   and `ring_hash` (consistent-hash session affinity), over the healthy set only.
-- **Connection pooling** — long-lived pooled h1/h2 upstream connections via
-  `hyper-util`, keyed per backend; TLS to upstreams validated against webpki
-  roots (+ optional extra CA), with optional **mTLS** client certificates.
+- **Connection pooling** — long-lived pooled HTTP/1.1 and HTTP/2 upstream
+  connections; TLS to upstreams validated against the system's trust store
+  (+ optional extra CA), with optional **mTLS** client certificates.
 - **L7 health checking** — TCP / HTTP / HTTPS / gRPC (`grpc.health.v1`) probes
   with thresholds and a per-backend state machine; deduplicated across pools;
   drives selection live.
@@ -38,24 +38,21 @@ spread connections across a fleet with no coordination.
 - **Stateless + file config** — bootstrap TOML + hot-reloadable dynamic JSON
   (listeners/routes/pools/certs), watched via inotify, validated wholesale, and
   swapped atomically with `ArcSwap` — in-flight requests never drop, and
-  listeners are bound and released on reload without a restart
-  ([ADR-001](https://github.com/thewillyhuman/lb/blob/main/.docs/adr-001-configuration-model.md)
-  model, inherited from `lb`).
+  listeners are bound and released on reload without a restart.
 - **Last-known-good cache** — a restarted node serves immediately even if the
   config source is briefly unavailable.
 - **Conservative retries** — only bodyless idempotent requests, only on
   pre-response failures, against a freshly selected backend; never after any
   response byte is forwarded.
-- **Graceful drain** — `SIGTERM` fails `/readyz` (so the L4 LB withdraws the
-  node), stops accepting, and asks clients to leave without losing a request
-  (`GOAWAY` on HTTP/2, `Connection: close` on HTTP/1), up to a deadline.
+- **Graceful drain** — `SIGTERM` fails `/readyz` (so whatever sends the node
+  traffic withdraws it), stops accepting, and asks clients to leave without
+  losing a request (`GOAWAY` on HTTP/2, `Connection: close` on HTTP/1), up to
+  a deadline. The node exits as soon as the last client has left.
 - **Upgrades in place** — `systemctl reload gfe-node` (`SIGUSR2`) replaces
   the running node with the binary now on disk without closing a listening
   socket: no connection is refused, and the old process drains while its
   successor serves. A successor that does not start changes nothing.
   `SIGHUP` and `SIGUSR1` are logged and ignored, never fatal.
-- **ACME http-01** — serves `/.well-known/acme-challenge/*` from a challenge
-  store (the CA-ordering driver is a documented integration point).
 - **Observability** — Prometheus metrics for requests, latency, status and gRPC
   codes, body and wire bytes, broken-off exchanges, connection close reasons,
   TLS parameters and handshake failures, upstream failures by kind, and node
@@ -64,210 +61,255 @@ spread connections across a fleet with no coordination.
   up a request and counts what it had to drop; `/healthz` `/readyz`
   `/metrics`; alert rules and a dashboard. See the
   [observability guide](docs/observability.md).
-- **Kernel view (optional, eBPF)** — accept-queue wait, round-trip time,
+- **Kernel view (eBPF)** — accept-queue wait, round-trip time,
   retransmissions and how connections end, per listener and per backend,
   from a small eBPF program attached to the node's own cgroup. It watches
-  sockets, so it works the same whether traffic arrives through `lb` or
-  directly. Off by default; needs `CAP_BPF` and `CAP_NET_ADMIN`.
+  sockets, not packets, so it does not care how traffic reaches the node.
+  Part of every node: the systemd unit grants what it needs (`CAP_BPF`,
+  `CAP_NET_ADMIN`), and a node that cannot attach it says so (its log,
+  `gfe_ebpf_attached`, an alert) and serves without it.
 
-## How it fits with `lb`
+## Built on Pingora
+
+Pingora is the HTTP engine: HTTP/1.1 and HTTP/2 on both legs, the proxy state
+machine, and the pooled, TLS-capable connections to backends. GFE is what a
+node adds around it.
 
 ```
-            clients ── BGP/ECMP ──> [ lb: Maglev L4 nodes ] ──GRE──> [ GFE nodes ]
-                                                                          │  TLS terminate, route,
-                                                                          │  pool, L7 health-check
-                                                                          ▼
-                                                                  application backends
-        Responses: GFE → client directly (DSR; the L4 LB is never on the return path).
+ clients ──► listening sockets ──► TLS termination ──► Pingora HTTP proxy ──► backends
+             (gfe-core: listener)   (gfe-tls, rustls)   │  calls into gfe-core: proxy
+                                                        │    host rules, routing      (gfe-core: routing)
+                                                        │    backend selection        (gfe-load-balancing)
+                                                        │    over the healthy set     (gfe-health-checking)
+                                                        │    retries, timeouts, the answers GFE writes itself
+                                                        └──► metrics and one event per request (gfe-observability)
 ```
 
-GFE registers as a backend pool in `lb`. Each GFE node runs a GRE tunnel and
-holds the service VIP on its loopback (see
-[section 11 of the spec](docs/spec.md#11-l4-load-balancer-integration)), so
-GRE-decapsulated packets reach GFE's socket and responses return via DSR.
+The edge (listening sockets, accept loops, TLS termination, what is counted
+and logged about every connection, draining) and the process lifecycle
+(signals, upgrade in place) are GFE's own rather than Pingora's listening
+service and server, because of what a node promises its operators: listeners
+that come and go with a reload, a count and a reason for every handshake that
+fails and every connection that closes, a drain that ends when the last
+client has left, and an upgrade that changes nothing when the successor does
+not start.
 
 ## Performance
 
-All numbers from `cargo bench` (criterion, release profile, single-threaded, Apple M-series). Reproduce, from `src/rust`, with `cargo bench -p gfe-proxy --bench routing`, `-p gfe-load-balancing --bench selection`, `-p gfe-core --bench handshake`.
+All numbers below were measured on one laptop (Apple M-series), where the
+load client and the mock backend compete with the node for the same cores:
+read them as relative costs and lower bounds, not as a tuned benchmark.
 
-**Routing (`gfe-proxy`)** — match cost is **O(1) in the number of routes** (exact-host hashmap + bounded per-host prefix list):
+### Micro-benchmarks
 
-```
-route_match_hit/10        71.7 ns
-route_match_hit/100       72.8 ns
-route_match_hit/1000      74.8 ns      ← flat from 10 → 1000 routes
-route_match_miss/1000     59.2 ns
-route_table_compile/10     4.22 µs
-route_table_compile/100   40.5 µs
-route_table_compile/1000   444 µs      (control plane, on reload only)
-```
+`cargo bench` (criterion, release profile, single thread):
 
-**Load-balancer selection (`gfe-load-balancing`, 20 backends)**:
+**Routing (`gfe-core`)** — matching is **O(1) in the number of routes** (an
+exact-host map and a bounded list of prefixes per host):
 
 ```
-select_round_robin/20          849 ns
-select_weighted_round_robin/20 932 ns
-select_least_request/20       1.07 µs
-select_ring_hash/20           1.21 µs
-ring_build/20                  216 µs   (control plane, on reload only)
-hash64                        22.9 ns
+route_match_hit/10        48.7 ns
+route_match_hit/100       47.7 ns
+route_match_hit/1000      47.5 ns      ← flat from 10 to 1000 routes
+route_match_miss/1000     35.3 ns
+route_table_compile/10    3.57 µs
+route_table_compile/100   36.5 µs
+route_table_compile/1000   418 µs      (on reload only)
 ```
 
-**TLS (`gfe-core`)**:
+**Backend selection (`gfe-load-balancing`, 20 backends)**:
 
 ```
-tls13_full_handshake_ecdsa_p256   133 µs   (full client+server handshake, in-process)
-sni_cert_resolve                 52.4 ns   (per-ClientHello certificate lookup)
+select_round_robin/20           800 ns
+select_weighted_round_robin/20  861 ns
+select_least_request/20        1.09 µs
+select_ring_hash/20            1.12 µs
+ring_build/20                   211 µs   (on reload only)
+hash64                         23.6 ns
 ```
 
-### Throughput analysis
+**TLS (`gfe-tls`)**:
 
-The dominant cost at the GFE tier is **TLS handshakes**, not request processing or bandwidth:
+```
+tls13_full_handshake_ecdsa_p256   134 µs   (client and server sides, in one thread)
+sni_cert_resolve                 38.1 ns   (certificate lookup per ClientHello)
+```
 
-| Operation | Cost | Relative |
-|---|---|---|
-| SNI cert resolve | 52 ns | 1× |
-| Route match | 72 ns | 1.4× |
-| LB selection | ~0.9 µs | ~17× |
-| **Full TLS 1.3 handshake (ECDSA P-256)** | **133 µs** | **~2500×** |
-
-- **Established connections are request-bound, not GFE-bound.** On a warm keep-alive / HTTP-2 connection, GFE's own per-request work is route match (72 ns) + LB selection (~0.9 µs) ≈ **~1 µs**; the rest is hyper's HTTP parse/serialize. So steady-state request throughput is effectively hyper-limited — comfortably **>100k req/s/core** on warm connections.
-- **New HTTPS connections are handshake-bound.** A full TLS 1.3 handshake measures ~133 µs here (both sides, in one thread); the server's share — the ECDSA signature + ECDHE — is what consumes a serving core. That puts a single core in the order of **10–15k new ECDSA-P256 handshakes/s**, scaling ~linearly with cores. This is exactly why **session resumption tickets** and **ECDSA (not RSA-2048) certificates** are the levers that matter — an RSA-2048 server signature is several× more expensive per handshake.
-- **Capacity planning is handshakes/sec and concurrent connections, not Gbps.** Bandwidth is bounded by the kernel/NIC and body streaming is zero-copy through hyper; the CPU budget goes to handshakes.
-
-**Key findings:**
-
-- **O(1) routing**: match time is flat (72 ns) from 10 to 1000 routes — the exact-host map means added routes don't slow matching.
-- **Selection is ~150× cheaper than a handshake**, so the LB policy choice is never the bottleneck. (The per-call health lookup does allocate per backend; it could be made allocation-free if selection ever dominated, but at ~0.9 µs vs a 133 µs handshake it is far from the critical path.)
-- **All O(n) work is on the control plane** (`route_table_compile`, `ring_build`) — it runs on config reload via a shadow copy + atomic swap, never on the request path.
-- **`ring_hash` adds ~0.3 µs over round-robin** for full session-affinity — cheap enough to use wherever stickiness is wanted.
+What they say: routing (48 ns) and selection (about 1 µs) are noise next to a
+full TLS handshake (134 µs for both sides; the server's share, an ECDSA
+signature and a key exchange, is what costs a serving core). Everything that
+grows with the size of the config (`route_table_compile`, `ring_build`) runs
+on reload, on a copy that is then swapped in, never on the path of a request.
 
 ### End-to-end load test
 
-A self-contained harness (`src/rust/gfe-loadtest` + `hack/loadtest.sh`) drives the **real `gfe-node` binary** over loopback in front of a mock upstream, layer by layer. Reproduce with `./hack/loadtest.sh 64 6` (64 connections, 6 s/scenario):
+`hack/loadtest.sh` runs the **real `gfe-node` binary** on loopback in front of
+a mock backend (`gfe-loadtest`), one scenario after the other. `./hack/loadtest.sh 64 6`
+(64 connections, 6 s per scenario):
 
 ```
 scenario                          mode        result
-http  · fixed (GFE overhead)      keepalive   159421 req/s   p50 392µs  p99 701µs   errors=0
-http  · proxy (+upstream)         keepalive    71662 req/s   p50 877µs  p99 1.29ms  errors=0
-https · proxy (warm TLS)          keepalive    70960 req/s   p50 883µs  p99 1.33ms  errors=0
-https · proxy (new TLS/req, c=8)  reconnect    12231 req/s   p50 632µs  p99 874µs   errors=0
+http  · fixed (GFE overhead)      keepalive   120856 req/s   p50 506µs  p99 1.06ms  errors=0
+http  · proxy (+upstream)         keepalive    64509 req/s   p50 958µs  p99 1.95ms  errors=0
+https · proxy (warm TLS)          keepalive    63891 req/s   p50 966µs  p99 1.99ms  errors=0
+https · proxy (new TLS/req, c=8)  reconnect    11918 req/s   p50 649µs  p99 901µs   errors=0
 ```
 
-What each row shows (Apple M-series, all processes sharing the host's cores — these are **conservative, comparative** loopback numbers, not a tuned NIC benchmark):
+- **The node's own work is small.** Answering a request itself (routing and
+  a fixed response, no backend) runs at about 120k req/s on kept
+  connections.
+- **The hop to the backend is the main cost of a proxied request**, not TLS:
+  adding the backend roughly halves the throughput (121k → 65k), and TLS on
+  a connection that is already established costs about 1% more (65k → 64k).
+- **A new TLS connection per request runs at about 12k req/s with 8 client
+  workers.** The load client resumes its TLS sessions, so this row is the
+  price of a connection (TCP, a resumed handshake, one request), not of a
+  full handshake: a client that cannot resume pays the 134 µs above, most of
+  it on the node.
 
-- **GFE request overhead is tiny.** Pure proxy work (route + select + relay) sustains **~159k req/s** on warm connections; the proxy itself is not the bottleneck.
-- **The upstream hop, not TLS, is the main steady-state cost.** Adding the backend leg roughly halves throughput (159k → 72k); enabling TLS on the warm connection costs **~1%** more (72k → 71k) — because the handshake is amortized once and never repeated.
-- **New-TLS-per-request lands at ~12k handshakes/s** even at just 8 connections — which **matches the 133 µs micro-benchmark prediction** (≈10–15k/core). This is the number that scales with cores and is the real capacity lever, reinforcing why session resumption matters.
-- **Loopback caveat:** the `reconnect` row uses low concurrency on purpose — hammering brand-new connections at high concurrency exhausts loopback ephemeral ports (TIME_WAIT), an artifact of the test host, not GFE.
+### Sizing a node
 
-### What can a single instance handle?
+- **Clients that reuse connections** (keep-alive, HTTP/2: the normal case)
+  make a node request-bound, at tens of thousands of requests per second per
+  node on this laptop: the backends or the network saturate first.
+- **Clients that open a connection per request** make it handshake-bound.
+  This is the regime to size for, and why **session resumption** and
+  **ECDSA rather than RSA certificates** matter: an RSA-2048 signature costs
+  several times an ECDSA P-256 one, an RSA-4096 one far more.
+- **Large uploads and many idle connections** are bound by bytes and by
+  memory, not by request rate: bodies are streamed, never buffered whole, and
+  an idle TLS connection costs memory and a file descriptor (the unit sets
+  `LimitNOFILE=1048576`; `max_connections` defaults to 100,000).
 
-Reading the numbers above as operator capacity. **These are lower bounds**: in this test the load client *and* the mock upstream ran on the same laptop, competing with `gfe-node` for the same cores — a dedicated instance on server hardware does strictly better.
-
-| Dimension | One instance (measured, this test host) | What bounds it |
-|---|---|---|
-| **HTTPS req/s, warm connections** (real path: TLS terminate → route → pooled upstream) | **~71,000 req/s** | upstream hop + HTTP processing (CPU) |
-| **Plain proxy req/s** (no TLS) | ~72,000 req/s | upstream hop (TLS adds only ~1% when warm) |
-| **GFE-only req/s** (fixed response, no upstream) | ~159,000 req/s | hyper HTTP parse/serialize (headroom above) |
-| **New HTTPS connections/s** (full TLS handshake each) | **~12,000 handshakes/s** | ECDSA-P256 sign + ECDHE (CPU), scales ~linearly with cores |
-| **Concurrent connections held** | ~100,000 (default `max_connections`) | FD limit (`LimitNOFILE`, 1M in the unit) + memory |
-| **Request latency @ 64 in-flight** | p50 ≈ 0.88 ms, p99 ≈ 1.33 ms | — |
-
-Put differently, **a single GFE instance sustained ~71k fully-terminated HTTPS requests per second** to a live backend on a laptop — on the order of **6 billion requests/day** at that rate — while *also* hosting the load generator and backend. Two practical rules of thumb fall out of this:
-
-- **If clients reuse connections** (HTTP-keepalive / HTTP-2, the normal case), an instance is **request-bound** and serves tens of thousands of req/s per core — you'll saturate the upstream or the NIC before GFE.
-- **If clients open a fresh TLS connection per request** (no keepalive, no resumption), an instance is **handshake-bound** at ~12k/s/core. This is the regime to size for, and the reason **session-resumption tickets** and **ECDSA (not RSA-2048) certificates** matter — RSA-2048 server signatures are several× costlier per handshake.
-
-**Scaling is horizontal and linear.** GFE nodes are stateless and sit behind the `lb` L4 Maglev layer, which spreads connections across them with no coordination — so *N* instances deliver ≈ *N×* this capacity. Size the fleet with N+1 headroom (any N−1 nodes must carry peak), driven by your **handshake rate** and **peak concurrent connections**, not bandwidth.
+Nodes are stateless, so capacity grows with their number: size a fleet so
+that it carries its peak with one node missing, by its **handshake rate**,
+its **concurrent connections** and its **bytes**, rather than by requests
+per second alone.
 
 ## Quick start
 
+Building needs Rust (1.88 or later), a C compiler and `cmake` (Pingora builds
+zlib-ng) and, on Linux, `clang` (the eBPF program of the kernel view).
+
 ```bash
-# Build (the Cargo workspace is in src/rust)
-cargo build --release --manifest-path src/rust/Cargo.toml
+cargo build --release
 
 # Validate config (with the dynamic config it names, /etc/gfe/gfe-dynamic.json)
-./src/rust/target/release/gfe-node --config docs/examples/gfe.example.toml --check-config
+./target/release/gfe-node --config docs/examples/gfe.example.toml --check-config
 
 # Validate a candidate dynamic config before it replaces the deployed one
-./src/rust/target/release/gfe-node --config docs/examples/gfe.example.toml --check-config \
+./target/release/gfe-node --config docs/examples/gfe.example.toml --check-config \
     --dynamic-config /tmp/gfe-dynamic.candidate.json
 
 # Run (binds the listeners in the dynamic config; serves /metrics on metrics_addr)
-./src/rust/target/release/gfe-node --config docs/examples/gfe.example.toml
+./target/release/gfe-node --config docs/examples/gfe.example.toml
 ```
 
 ## See it running
 
-[`src/docker/demo/`](src/docker/demo/) is a local playground: one node, HTTP
-and gRPC backends, clients that misbehave, and Prometheus, Loki and Grafana
-with the dashboards loaded. The [demo guide](docs/demo.md) says what runs in
-it and what to try.
+[`hack/demo/`](hack/demo/) is a local playground: one node, HTTP and gRPC
+backends, clients that misbehave, and Prometheus, Loki and Grafana with the
+dashboards loaded. The [demo guide](docs/demo.md) says what runs in it and
+what to try.
 
 ```bash
-cd src/docker/demo && docker compose up -d --build   # then open http://localhost:13000
+cd hack/demo && docker compose up -d --build   # then open http://localhost:13000
 ```
 
 ## Project structure
 
+A Cargo workspace with one crate per capability, each named after what it
+does, at the root of the repository.
+
 ```
-src/rust/               The Cargo workspace
-  gfe-core/             The server, whatever it serves: config files (types,
-                        loading, validation), TLS termination, serving
-                        connections, the pooled client for backends
-  gfe-health-checking/  Which backends are alive: probes, state machine,
-                        checker, health map
-  gfe-load-balancing/   Which backend gets a request: pools, selection policies
-  gfe-limits/           Counting and capping what a node holds at once
-  gfe-observability/    What a node tells about itself: Prometheus metrics,
-                        the non-blocking log
-  gfe-proxy/            What happens to a request: routing, forwarding,
-                        accounting; applying a config and reloading it
-  gfe-node/             The binary: wiring, signals, ops server, upgrade in place
-  gfe-ebpf/             Optional kernel view of the node's TCP connections
-  gfe-loadtest/         Load generator for benchmarks (not shipped)
-src/c/                  The eBPF program gfe-ebpf loads, compiled by its build
-src/docker/             The image of gfe-node
-  demo/                 Local playground: node, backends, traffic, monitoring
-src/systemd/
-  gfe-node.service      systemd unit (hardened, CAP_NET_BIND_SERVICE only)
-  gfe-node-ebpf.conf    Drop-in granting what the eBPF kernel view needs
-src/grafana/            Prebuilt dashboard
-src/prometheus/         Alerting rules (GFE + host network)
-docs/examples/
-  gfe.example.toml            Bootstrap node config
-  gfe-dynamic.example.json    Dynamic config (listeners/routes/pools/certs)
+gfe-core/             The reverse proxy, on Pingora: serving the connections of
+                      clients (listeners, TLS termination, limits, drain),
+                      what happens to a request (routing, forwarding, retries,
+                      errors, accounting), and keeping in step with the config
+gfe-tls/              TLS termination: certificates by SNI, the TLS policy,
+                      the handshake and what it negotiated
+gfe-load-balancing/   Which backend gets a request: pools, selection policies
+gfe-health-checking/  Which backends are alive: probes, state machine, checker
+gfe-config/           The two config files: their schema, loading, validation
+gfe-observability/    What a node tells about itself: Prometheus metrics, the
+                      log that never blocks
+gfe-limits/           Counting and capping what a node holds at once
+gfe-ebpf/             The kernel view: the eBPF program (bpf/) and its loader
+gfe-node/             The binary: CLI, wiring, signals, the ops endpoints,
+                      upgrade in place
+gfe-loadtest/         Load generator for benchmarks (not shipped)
+
+distribution/         What ships besides the binary
+  systemd/            The unit of gfe-node
+  docker/             The image of gfe-node
+  grafana/            Prebuilt dashboard
+  prometheus/         Alerting rules (GFE + host network)
+docs/                 Specification, guides, and the example configs
 hack/
-  create-tag.sh         Tag a release, listing the commits since the last one
-  loadtest.sh           End-to-end load test of the real binary
-  rpm/                  What the RPM runs when installed and removed
+  create-tag.sh       Tag a release, listing the commits since the last one
+  loadtest.sh         End-to-end load test of the real binary
+  demo/               Local playground: node, backends, traffic, monitoring
+  rpm/                What the RPM runs when installed and removed
 ```
+
+Dependencies go one way: `gfe-node` → `gfe-core` → the capability crates →
+`gfe-config`, `gfe-observability`, `gfe-limits`. No crate contains `unsafe`.
 
 ## Development
 
 ```bash
-cd src/rust                     # the Cargo workspace: cargo runs from here
-cargo test --workspace          # unit + integration tests
-cargo clippy --workspace --all-targets
-cargo bench -p gfe-proxy --bench routing
-cargo bench -p gfe-load-balancing --bench selection
-cargo bench -p gfe-core --bench handshake
-../../hack/loadtest.sh 64 6     # end-to-end load test (mock upstream + real node)
+cargo test --workspace          # unit + functional tests
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
+cargo deny check                # advisories, licenses, sources
+```
+
+Tests are the only thing that stands between a change and a regression, and
+there are three kinds:
+
+- **Unit tests** sit next to the code: `foo.rs` has its tests in
+  `foo_test.rs`.
+- **Functional tests** are in each crate's `tests/` directory, one file per
+  feature. Those of `gfe-core` run a whole proxy in-process, with real TLS
+  termination, in front of mock backends.
+- **Tests of the binary** are in `gfe-node/tests/`: they start `gfe-node` as
+  an operator would and cover what only the process can show (its flags, its
+  log, the ops endpoints, signals, draining, upgrading in place), and a
+  smoke test walks through the product end to end.
+
+Every feature listed above has at least one functional test, or test of the
+binary, that fails when the feature breaks.
+
+The kernel view needs Linux and privileges. Its tests skip themselves where
+they cannot run and say so; CI runs them as root. On a development machine
+that is not Linux, run the suite in a container as well:
+
+```bash
+docker run --rm -v "$PWD":/gfe:ro -w /gfe -e CARGO_TARGET_DIR=/tmp/target \
+    --cap-add BPF --cap-add NET_ADMIN rust:1 bash -c \
+    'apt-get update -qq && apt-get install -y -qq cmake clang >/dev/null && cargo test --workspace'
 ```
 
 CI runs the tests with [cargo-nextest](https://nexte.st), which reports the
-whole workspace as one result instead of one per test binary. From `src/rust`
-too:
+whole workspace as one result instead of one per test binary:
 
 ```bash
 cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
 cargo test --workspace --doc    # doctests, which nextest does not run
 ```
 
+Benchmarks and the load test:
+
+```bash
+cargo bench -p gfe-core --bench routing
+cargo bench -p gfe-load-balancing --bench selection
+cargo bench -p gfe-tls --bench handshake
+./hack/loadtest.sh 64 6         # end-to-end load test (mock upstream + real node)
+```
+
 ## Documentation
 
-- **[Data-plane spec](docs/spec.md)** — proxy architecture and protocol details.
+- **[Specification](docs/spec.md)** — architecture and behaviour, in detail.
 - **[Observability guide](docs/observability.md)** — which signal answers which question.
 - **[Demo guide](docs/demo.md)** — the local playground and what to try in it.
 - **[RPM guide](docs/rpm.md)** — building the package and managing a node with Puppet.
