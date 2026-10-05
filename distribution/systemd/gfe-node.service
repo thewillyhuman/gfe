@@ -98,7 +98,11 @@ StandardError=journal
 SyslogIdentifier=gfe-node
 
 Environment=RUST_LOG=info
+# A panic is logged with its backtrace. An error the node exits with (a
+# gfe.toml it cannot read, say) is not: its message says what is wrong, and
+# twenty lines of stack frames after it in the journal say nothing more.
 Environment=RUST_BACKTRACE=1
+Environment=RUST_LIB_BACKTRACE=0
 
 [Install]
 WantedBy=multi-user.target
