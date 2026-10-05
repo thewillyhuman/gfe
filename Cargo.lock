@@ -1071,7 +1071,18 @@ name = "gfe-node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "bytes",
+ "clap",
+ "gfe-config",
+ "gfe-core",
+ "gfe-observability",
+ "pingora-core",
+ "pingora-http",
+ "rcgen",
  "rustix",
+ "rustls",
+ "serde_json",
  "tokio",
  "tracing",
 ]
