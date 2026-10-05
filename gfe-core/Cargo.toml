@@ -15,6 +15,33 @@ gfe-ebpf = { workspace = true }
 gfe-tls = { workspace = true }
 gfe-health-checking = { workspace = true }
 gfe-load-balancing = { workspace = true }
+pingora-core = { workspace = true }
+pingora-proxy = { workspace = true }
+pingora-http = { workspace = true }
+pingora-error = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+rustls-native-certs = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+arc-swap = { workspace = true }
+dashmap = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+notify = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+rcgen = { workspace = true }
+tracing-subscriber = { workspace = true }
+criterion = { workspace = true }
 
 [lints]
 workspace = true
