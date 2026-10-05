@@ -10,5 +10,14 @@ publish.workspace = true
 [dependencies]
 thiserror = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { workspace = true }
+# The monotonic clock the kernel program stamps its records with.
+rustix = { workspace = true, features = ["time"] }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
 [lints]
 workspace = true
