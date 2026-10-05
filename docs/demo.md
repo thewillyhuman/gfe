@@ -6,7 +6,7 @@ Loki and Grafana with the dashboards loaded. It exists to explore what GFE
 reports, not to measure it.
 
 ```bash
-cd src/docker/demo
+cd hack/demo
 docker compose up -d --build     # first run builds gfe-node: a few minutes
 open http://localhost:13000      # Grafana, no login
 docker compose down -v           # remove everything, volumes included
@@ -27,8 +27,8 @@ Every port is published on `127.0.0.1` only.
 ## What is running
 
 **The node.** `gfe` is built from this repository and configured by
-[`gfe/gfe.toml`](../src/docker/demo/gfe/gfe.toml) and
-[`gfe/gfe-dynamic.json`](../src/docker/demo/gfe/gfe-dynamic.json):
+[`gfe/gfe.toml`](../hack/demo/gfe/gfe.toml) and
+[`gfe/gfe-dynamic.json`](../hack/demo/gfe/gfe-dynamic.json):
 three listeners, eleven routes, seven pools.
 
 | Host | Listener | Goes to |
@@ -48,7 +48,7 @@ The HTTP backends are [go-httpbin](https://github.com/mccutchen/go-httpbin):
 status, latency or size on demand.
 
 **The clients.** Three containers (three client addresses) run
-[`traffic/traffic.sh`](../src/docker/demo/traffic/traffic.sh): about two thirds healthy requests
+[`traffic/traffic.sh`](../hack/demo/traffic/traffic.sh): about two thirds healthy requests
 over HTTP/1.1, HTTP/2 and gRPC, and one third of what an edge sees every day.
 Two of them (`traffic`) sit next to the node. The third (`traffic-far`) is the
 same client behind a worse network: 40 ms away and losing 3% of its packets.
@@ -67,20 +67,20 @@ same client behind a worse network: 40 ms away and losing 3% of its packets.
 | a 10-second gRPC server stream | long durations on the `grpcbin` route: streams, not slowness |
 | the same requests from the far client | the *Kernel* panels: its round-trip time and retransmissions, which no request metric shows |
 
-**The kernel view.** The node runs with `[ebpf] enabled = true`: a small eBPF
-program attached to its cgroup reports, for every TCP connection of the node,
+**The kernel view.** Like every node, this one attaches a small eBPF program
+to its cgroup, which reports, for every TCP connection of the node,
 how long it waited to be accepted, its round-trip time, its retransmissions
 and how it ended. The panels titled *Kernel: …* on both dashboards are built
 on it, and each closed connection is logged as a `gfe::tcp` event. The
 container runs as root with `CAP_BPF` and `CAP_NET_ADMIN` for this, because
 Docker gives added capabilities to root only; under systemd the unprivileged
-service user gets them through the drop-in in
-[`src/systemd/gfe-node-ebpf.conf`](../src/systemd/gfe-node-ebpf.conf).
+service user gets them from the unit,
+[`distribution/systemd/gfe-node.service`](../distribution/systemd/gfe-node.service).
 
 **The monitoring.**
 
 - **Prometheus** scrapes the node every 5 s and evaluates
-  [`src/prometheus/gfe-alerts.yml`](../src/prometheus/gfe-alerts.yml).
+  [`distribution/prometheus/gfe-alerts.yml`](../distribution/prometheus/gfe-alerts.yml).
   Several alerts are meant to fire here; see them under *Alerts* in Prometheus
   or *Alerting* in Grafana.
 - **node_exporter** runs inside the node's network namespace, so the packet,
@@ -90,7 +90,7 @@ service user gets them through the drop-in in
   needs access to the Docker socket.
 - **Grafana** has both data sources and two dashboards provisioned:
   - *GFE — General Front End*: the metrics dashboard shipped in
-    [`src/grafana`](../src/grafana).
+    [`distribution/grafana`](../distribution/grafana).
   - *GFE — Logs*: built from the access, connection and kernel logs, which is
     where the client addresses are. It ranks clients by traffic and by what
     goes wrong for them, and narrows every panel to one client; see
@@ -158,7 +158,7 @@ docker compose exec traffic-far tc qdisc del dev eth0 root
 ROTATE=1 docker compose run --rm setup
 ```
 
-**Hot reload.** Edit [`gfe/gfe-dynamic.json`](../src/docker/demo/gfe/gfe-dynamic.json) while the
+**Hot reload.** Edit [`gfe/gfe-dynamic.json`](../hack/demo/gfe/gfe-dynamic.json) while the
 stack runs: change the `/ping` body, add a route, add a listener. The node
 reloads within a second (*Node events* in the logs dashboard). Break the file
 on purpose (a route to a pool that does not exist) and the node keeps serving
@@ -175,7 +175,8 @@ the previous config, counts a reload error and raises
   recreated with it.
 - The kernel view needs the Docker VM's kernel to allow eBPF, which Docker
   Desktop's does. Where it does not, the node logs why, `gfe_ebpf_attached`
-  stays at 0 and the *Kernel* panels stay empty; everything else works.
+  stays at 0, `GfeKernelViewNotAttached` fires after five minutes and the
+  *Kernel* panels stay empty; everything else works.
 - The log file grows for as long as the stack runs; `docker compose down -v`
   removes it.
 - Grafana runs without a login and with admin rights. That is acceptable for a

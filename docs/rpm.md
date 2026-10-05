@@ -6,8 +6,8 @@ it: the binary in `/usr/bin`, a systemd unit, and no configuration.
 | Path | Content |
 |---|---|
 | `/usr/bin/gfe-node` | The proxy |
-| `/usr/lib/systemd/system/gfe-node.service` | Hardened unit (not enabled by the package) |
-| `/usr/share/gfe/` | The eBPF drop-in, the Grafana dashboard and the alert rules |
+| `/usr/lib/systemd/system/gfe-node.service` | Hardened unit, with the capabilities the node needs (not enabled by the package) |
+| `/usr/share/gfe/` | The Grafana dashboard and the alert rules |
 | `/usr/share/doc/gfe/` | README and example configs |
 
 The package creates the `gfe-node` system user. It does **not** ship
@@ -17,15 +17,18 @@ creates `/var/lib/gfe` (the last-known-good config cache) on start.
 
 ## Building
 
-The metadata lives in `src/rust/gfe-node/Cargo.toml` under
-`[package.metadata.generate-rpm]`; the scriptlets are in `hack/rpm/`. The
-package is assembled from the already-built release binary by
+The metadata lives in `gfe-node/Cargo.toml` under
+`[package.metadata.generate-rpm]`; the scriptlets are in `hack/rpm/`, and the
+unit, the dashboard and the alert rules in `distribution/`. The package is
+assembled from the already-built release binary by
 [`cargo-generate-rpm`](https://github.com/cat-in-136/cargo-generate-rpm), so
-no `rpmbuild` is needed:
+no `rpmbuild` is needed. Building the binary needs Rust (1.88 or later), a C
+compiler, `cmake` (Pingora builds zlib-ng) and `clang` (the eBPF program of
+the kernel view; a Linux build fails without it). From the root of the
+repository:
 
 ```bash
 cargo install cargo-generate-rpm --locked
-cd src/rust
 cargo build --release --bin gfe-node
 cargo generate-rpm -p gfe-node
 ls target/generate-rpm/gfe-*.rpm
@@ -109,12 +112,24 @@ Notes:
   }
   ```
 
-- The kernel TCP statistics (`[ebpf] enabled = true`) need two more
-  capabilities than the unit grants. `/usr/share/gfe/gfe-node-ebpf.conf` is a
-  drop-in for `/etc/systemd/system/gfe-node.service.d/` that grants them. The
-  RPM must also have been built with clang available, or the binary has no
-  eBPF program in it and says so when asked to attach. The RPMs attached to
-  a release are built with it.
+- The kernel view (the node's TCP statistics from eBPF) is part of every
+  node, and the unit grants what it needs: `CAP_BPF` and `CAP_NET_ADMIN`
+  besides `CAP_NET_BIND_SERVICE`, and the `bpf` system call. There is no
+  drop-in any more, and the package no longer ships
+  `/usr/share/gfe/gfe-node-ebpf.conf`. A fleet whose config management
+  installed that file as a drop-in in
+  `/etc/systemd/system/gfe-node.service.d/` must stop doing so, and remove
+  what it installed: a copy only repeats what the unit now grants, and a
+  symlink to the packaged file now points at nothing. The change to the unit
+  takes effect with `systemctl restart gfe-node`, not with a reload (below). A node that cannot attach the program (the
+  capabilities removed from the unit, an old kernel) logs why, reports
+  `gfe_ebpf_attached 0`, raises `GfeKernelViewNotAttached`, and serves
+  without it.
+- `[node] loopback_vip`, `[ebpf]` and `[upstream] idle_per_host` are still
+  accepted in the bootstrap TOML but ignored, and the node logs a warning for
+  each one it finds when it starts. Remove them from the template; use
+  `[upstream] idle_connections` for the cap on idle upstream connections
+  (all backends together).
 - Listeners, routes, pools and certificates are all in the dynamic config
   and are reconciled when the file changes, including binding and releasing
   listening sockets. Only the binary and the bootstrap TOML need a new
@@ -123,9 +138,13 @@ Notes:
   does: Puppet reports the refresh as done either way. A node that could not
   be replaced keeps serving as it was, says why in `systemctl status
   gfe-node`, and raises `GfeUpgradeFailed` through `gfe_upgrade_failures_total`.
+  The successor's own reason (a `gfe.toml` that does not parse, say) is in
+  the journal as one line: the unit sets `RUST_BACKTRACE=1`, so a panic keeps
+  its backtrace, and `RUST_LIB_BACKTRACE=0`, so an error is not followed by
+  a stack trace.
 - A reload does not apply a change to the unit itself: the new process is
   started by the old one and keeps its capabilities, limits and environment.
-  After changing the unit or a drop-in (the eBPF one included), use
+  After changing the unit or a drop-in, use
   `systemctl restart gfe-node`, which closes the listening sockets while the
   node drains and starts again.
 - The first update from a version without upgrades in place must be a

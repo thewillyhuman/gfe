@@ -2,7 +2,7 @@
 
 How to answer operational questions about GFE: which signal holds the answer,
 where it comes from, and what GFE deliberately does not record. The exhaustive
-metric and log-field reference is [section 12 of the spec](spec.md#12-observability).
+metric and log-field reference is [section 11 of the spec](spec.md#11-observability).
 
 ## Three sources
 
@@ -19,6 +19,18 @@ the logs only, so a client cannot inflate the metric series.
 Both logs are JSON lines, emitted when the request or connection is **over**,
 so sizes, durations and outcomes are final. Each target can be silenced on
 its own, e.g. `RUST_LOG=info,gfe::conn=off`.
+
+What Pingora, the HTTP engine, logs is written as JSON lines too, with the
+Pingora module as `target` and `log.target`, `log.module_path`, `log.file`
+and `log.line` in `fields`. Healthy traffic produces none at the default
+level. What it logs at error level about a client that misbehaves (a client
+that leaves halfway through a request head or a response, a failed HTTP/2
+handshake; targets `pingora_proxy` and `pingora_core::apps`) is not written
+by default: the connection and access logs already say so, and a line per
+such client would let a scanner fill the journal.
+`RUST_LOG=info,pingora_proxy=error,pingora_core::apps=error` turns it back
+on. Why a failed request failed, as Pingora tells it, is at debug level under
+`gfe::proxy`.
 
 Where they go is set by `[log] file` in the bootstrap config:
 
@@ -78,6 +90,34 @@ So a `502` with `error=upstream_connect_refused` is GFE reporting a dead
 backend, a `502` without `error` is the backend's own answer, and a `200` with
 `termination=client_abort` is a download the client never finished.
 
+A few requests never reach GFE's request path and have no access event at
+all: Pingora answers them itself with a `400` (a malformed request head, more
+than 256 headers, a head that does not end within 1 MiB, a target authority
+that differs from `Host`). They show only in the connection log, as
+`reason=protocol_error` when the request was the connection's first.
+
+### Reading why a connection ended
+
+Pingora does not say why it gave a connection up, so the connection log's
+`reason` (and `gfe_connections_closed_total{reason}`) is derived from what
+the node observes on the connection: the handshake, how reading the client's
+side ended, whether the node was draining, whether a request was in flight,
+and what the node's own timers did. The full table is in
+[section 11.1 of the spec](spec.md#111-metrics). Where two causes cannot be
+told apart the more general reason is given, never a guess:
+
+- `closed` is an orderly end: the client closed with nothing in flight, or
+  the connection ended after at least one request. It also covers a client
+  that left while sending a request head.
+- `client_abort` is a reset or a broken pipe from the client, or the client
+  closing with a request still in flight.
+- `idle_timeout`, `header_timeout` and `drain` are the node closing the
+  connection on its own timers; `shutdown` is a connection still open at the
+  drain deadline, cut.
+- `protocol_error` is a connection Pingora gave up before any request reached
+  GFE: a malformed head, a broken HTTP/2 preface.
+- `error` is any other I/O or TLS error, in the `error` field.
+
 ### Querying the logs
 
 With the JSON lines in the log file, or piped from
@@ -109,14 +149,13 @@ followed by a filter on the extracted fields, e.g.
 
 ## The kernel's view of the node's connections
 
-Optional (`[ebpf] enabled = true`). A small eBPF program attached to the
-node's cgroup reports what only the kernel knows about each of the node's TCP
+Part of every node. A small eBPF program attached to the node's cgroup
+reports what only the kernel knows about each of the node's TCP
 connections: how long it waited to be accepted, its round-trip time, how many
 segments had to be retransmitted, and whether it ended with an orderly close.
 
 It watches the node's **sockets**, not packets on an interface, so it works
-the same way whether clients reach the node through `lb` and its tunnel or
-directly, for instance behind a DNS load balancer.
+the same way however clients reach the node.
 
 Each closed connection is counted in the `gfe_client_tcp_*` or
 `gfe_upstream_tcp_*` metrics and logged as a `gfe::tcp` event. For a client
@@ -135,13 +174,13 @@ stops reporting the moment its successor takes over, so nothing is reported
 twice. The connections it is still draining then have a `gfe::conn` event but
 no `gfe::tcp` event.
 
-It needs Linux, `CAP_BPF` and `CAP_NET_ADMIN` (the drop-in
-`src/systemd/gfe-node-ebpf.conf` grants them under systemd). If it cannot be
-attached, the node logs why, sets `gfe_ebpf_attached` to 0 and runs without it.
-`gfe_ebpf_enabled` is 1 whenever the config asks for it, attached or not, so
-`gfe_ebpf_enabled == 1 and gfe_ebpf_attached == 0` is a node that should have
-the kernel view and does not; the shipped rules alert on it
-(`GfeKernelViewNotAttached`).
+It needs Linux with cgroup v2, `CAP_BPF` and `CAP_NET_ADMIN`; the shipped
+systemd unit grants both capabilities. Every node attempts to attach it. If
+it cannot be attached, the node logs why at error level, sets
+`gfe_ebpf_attached` to 0 and serves without it: the kernel metrics,
+`accept_wait_ms` and the `gfe::tcp` events are then missing, and nothing
+else changes. `gfe_ebpf_attached == 0` is a node without its kernel view;
+the shipped rules alert on it (`GfeKernelViewNotAttached`).
 
 ## Below the proxy: packets, drops, interfaces
 
@@ -159,7 +198,7 @@ collectors needed are enabled by default:
 |---|---|---|
 | Packets and bytes per interface | `netdev` | `node_network_{receive,transmit}_{packets,bytes}_total` |
 | Interface errors and drops | `netdev` | `node_network_{receive,transmit}_{errs,drop}_total` |
-| Link state (including the GRE tunnel from the L4 LB) | `netclass` | `node_network_info{adminstate,operstate}`, `node_network_carrier_changes_total` |
+| Link state (including any tunnel interface) | `netclass` | `node_network_info{adminstate,operstate}`, `node_network_carrier_changes_total` |
 | TCP retransmissions and resets | `netstat` | `node_netstat_Tcp_RetransSegs`, `node_netstat_Tcp_OutSegs`, `node_netstat_Tcp_OutRsts` |
 | Listen queue overflows (lost connections) | `netstat` | `node_netstat_TcpExt_ListenOverflows`, `node_netstat_TcpExt_ListenDrops` |
 | UDP errors (name resolution) | `netstat` | `node_netstat_Udp_InErrors`, `node_netstat_Udp_RcvbufErrors` |
@@ -201,11 +240,11 @@ backend shows for those series. Prometheus itself needs none of this.
 
 ## Alerts and dashboard
 
-- [`src/prometheus/gfe-alerts.yml`](../src/prometheus/gfe-alerts.yml) —
+- [`distribution/prometheus/gfe-alerts.yml`](../distribution/prometheus/gfe-alerts.yml) —
   alerting rules for availability, latency, saturation, client-side breakage,
   config and certificates, and the host-level network signals above. It
   expects the scrape job to be called `gfe`.
-- [`src/grafana/gfe-dashboard.json`](../src/grafana/gfe-dashboard.json) —
+- [`distribution/grafana/gfe-dashboard.json`](../distribution/grafana/gfe-dashboard.json) —
   the same signals as panels, filterable by instance, virtual host and pool.
 
 ## What is not recorded, and why
@@ -214,9 +253,11 @@ backend shows for those series. Prometheus itself needs none of this.
   tokens and personal data. The access log has the path only.
 - **Request and response bodies.**
 - **Per-connection TCP statistics without the kernel view.** Round-trip
-  time, retransmissions and the accept-queue wait come from the optional eBPF
-  program (`[ebpf] enabled = true`). Without it, only the host-level
-  retransmission ratio from node_exporter is available.
+  time, retransmissions and the accept-queue wait come from the eBPF
+  program. On a node that could not attach it (`gfe_ebpf_attached == 0`),
+  only the host-level retransmission ratio from node_exporter is available.
+- **Requests Pingora answers itself** (a malformed head, a host conflict):
+  no access event and no request metric; the connection log has them.
 - **Distributed traces.** `X-Request-Id` is propagated and logged at both
   ends, which correlates a request across GFE and the backend, but GFE does
   not emit spans.
