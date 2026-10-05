@@ -236,3 +236,91 @@ async fn an_idle_http2_connection_is_asked_to_leave_before_being_cut() {
 }
 
 const H2_PREFACE_FOR_TEST: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+
+/// An application that takes one request from a connection and leaves it
+/// while a task of its own still reports that request for `lingers`: what
+/// Pingora does with the streams of an HTTP/2 connection.
+struct LeavesBeforeItsRequestEnds {
+    connections: Arc<Connections>,
+    lingers: Duration,
+}
+
+#[async_trait::async_trait]
+impl ServerApp for LeavesBeforeItsRequestEnds {
+    async fn process_new(
+        self: &Arc<Self>,
+        stream: Stream,
+        _shutdown: &pingora_core::server::ShutdownWatch,
+    ) -> Option<Stream> {
+        let digest = stream.get_socket_digest().unwrap();
+        let client = *digest.peer_addr().and_then(|a| a.as_inet()).unwrap();
+        let local = *digest.local_addr().and_then(|a| a.as_inet()).unwrap();
+        let request = self
+            .connections
+            .lookup(client, local)
+            .unwrap()
+            .begin_request();
+        let lingers = self.lingers;
+        tokio::spawn(async move {
+            tokio::time::sleep(lingers).await;
+            drop(request);
+        });
+        None
+    }
+}
+
+/// Serve one connection with an application whose request outlives it by
+/// `lingers`, and return the node's metrics once the connection is accounted.
+async fn served_by_an_app_whose_request_lingers(lingers: Duration) -> String {
+    use crate::listener::test_support::{TestCert, acceptor, shared};
+
+    let shared = shared(TimeoutsConfig::default());
+    let connections = Connections::new();
+    let cert = TestCert::new("a.example.org");
+    let edge = Edge {
+        shared: Arc::clone(&shared),
+        app: Arc::new(LeavesBeforeItsRequestEnds {
+            connections: Arc::clone(&connections),
+            lingers,
+        }),
+        tls: acceptor(&[&cert]).0,
+        connections,
+    };
+    let (client, server) = tcp_pair().await;
+    let listener = Arc::new(ArcSwap::from_pointee(Listener {
+        id: ListenerId("http".into()),
+        address: "127.0.0.1".parse().unwrap(),
+        port: 0,
+        protocol: ListenProtocol::Http,
+    }));
+    let (_drain, shutdown) = watch::channel(false);
+    let peer = client.local_addr().unwrap();
+
+    serve(&edge, server, peer, listener, shutdown).await;
+
+    drop(client);
+    shared.metrics().encode()
+}
+
+/// The streams of an HTTP/2 connection end in tasks of their own, a moment
+/// after the connection: a connection that ended in order is not an error
+/// because its last request was still being reported.
+#[tokio::test]
+async fn a_request_reported_just_after_its_connection_ended_is_not_an_error() {
+    let metrics = served_by_an_app_whose_request_lingers(Duration::from_millis(50)).await;
+
+    assert!(
+        metrics.contains(r#"gfe_connections_closed_total{listener="http",reason="closed"} 1"#),
+        "{metrics}"
+    );
+}
+
+#[tokio::test]
+async fn a_connection_left_with_a_request_that_never_ends_is_an_error() {
+    let metrics = served_by_an_app_whose_request_lingers(Duration::from_secs(30)).await;
+
+    assert!(
+        metrics.contains(r#"gfe_connections_closed_total{listener="http",reason="error"} 1"#),
+        "{metrics}"
+    );
+}

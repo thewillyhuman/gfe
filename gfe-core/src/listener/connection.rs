@@ -31,6 +31,14 @@ const CLOSE_GRACE: Duration = Duration::from_secs(5);
 /// for gone.
 const KEEPALIVE_PROBES: usize = 3;
 
+/// How long a connection the application is done with waits for its requests
+/// to be reported before it is accounted for. Pingora runs the streams of an
+/// HTTP/2 connection in tasks of their own, which end a moment after the
+/// connection does: without the wait, a connection that ended in order with
+/// its last response is taken for one given up in the middle of a request.
+/// The socket is closed by then; only the record waits.
+const REQUESTS_GRACE: Duration = Duration::from_millis(500);
+
 /// What serving a connection of the proxy's listeners needs.
 pub(crate) struct Edge<A> {
     pub(crate) shared: Arc<Shared>,
@@ -92,6 +100,19 @@ where
     while let Some(stream) = next {
         next = app.process_new(stream, shutdown).await;
     }
+}
+
+/// Wait, for at most [`REQUESTS_GRACE`], until no request of `conn` is in
+/// flight.
+async fn requests_reported(conn: &ConnInfo) {
+    let reported = async {
+        // A wake-up may be left over from a request that ended earlier:
+        // look again after each one.
+        while conn.has_request_in_flight() {
+            conn.went_idle().await;
+        }
+    };
+    let _ = tokio::time::timeout(REQUESTS_GRACE, reported).await;
 }
 
 /// Serve one connection accepted from `peer` on `listener` (as configured
@@ -161,7 +182,10 @@ pub(crate) async fn serve<A>(
     let (leave_tx, leave) = watch::channel(*shutdown.borrow());
     let stream_state = Arc::clone(record.stream());
     tokio::select! {
-        () = run_app(&edge.app, Box::new(stream), &leave) => record.served(),
+        () = async {
+            run_app(&edge.app, Box::new(stream), &leave).await;
+            requests_reported(&conn).await;
+        } => record.served(),
         never = watchdog(&conn, &stream_state, shared.timeouts(), shutdown, &leave_tx) => {
             match never {}
         }
