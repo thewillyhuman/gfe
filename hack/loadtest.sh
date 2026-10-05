@@ -80,9 +80,10 @@ echo ">> starting gfe-node"
 RUST_LOG=warn "$NODE" --config "$TMP/node.toml" >"$TMP/node.log" 2>&1 &
 NODE_PID=$!
 
-# Wait for readiness.
+# Wait for readiness: the ops endpoints answer before the listeners are
+# bound, with a 503 until they are.
 for _ in $(seq 1 50); do
-  if curl -s -o /dev/null "http://$METRICS/readyz"; then break; fi
+  if curl -sf -o /dev/null "http://$METRICS/readyz"; then break; fi
   sleep 0.1
 done
 echo ">> ready; running scenarios (connections=$CONNS, duration=${DUR}s each)"
