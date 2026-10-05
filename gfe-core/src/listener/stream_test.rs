@@ -357,3 +357,38 @@ async fn counts_tls_bytes_on_the_wire() {
     // A record carries more than its payload.
     assert!(stream.state.bytes_in() > handshake_in + 4);
 }
+
+#[tokio::test]
+async fn a_tls_connection_given_up_tells_the_client_it_is_closing() {
+    let (stream, mut client) = tls_stream(&[b"http/1.1"]).await;
+
+    drop(stream);
+
+    // rustls reports an end that no `close_notify` announced as an error.
+    let mut rest = Vec::new();
+    let ended = client.read_to_end(&mut rest).await;
+    assert!(ended.is_ok(), "closed without close_notify: {ended:?}");
+}
+
+#[tokio::test]
+async fn a_tls_connection_shut_down_then_dropped_still_ends_in_order() {
+    let (mut stream, mut client) = tls_stream(&[b"http/1.1"]).await;
+
+    Shutdown::shutdown(&mut stream).await;
+    drop(stream);
+
+    let mut rest = Vec::new();
+    let ended = client.read_to_end(&mut rest).await;
+    assert!(ended.is_ok(), "closed without close_notify: {ended:?}");
+    assert!(rest.is_empty());
+}
+
+#[tokio::test]
+async fn a_plain_connection_given_up_is_simply_closed() {
+    let (stream, mut client) = plain_stream().await;
+
+    drop(stream);
+
+    let mut rest = Vec::new();
+    assert_eq!(client.read_to_end(&mut rest).await.unwrap(), 0);
+}

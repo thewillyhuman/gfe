@@ -413,6 +413,28 @@ impl AsyncWrite for ClientStream {
     }
 }
 
+impl Drop for ClientStream {
+    /// Tell a TLS client that the node is closing (`close_notify`) when the
+    /// connection is given up without having been shut down, which is what
+    /// Pingora does when the client closed its side first, and what a cut
+    /// connection gets.
+    ///
+    /// Without it the client cannot tell an orderly end from a connection
+    /// cut short, and one that waits for the answer to its own
+    /// `close_notify` reports an error. It also keeps the client's port
+    /// reusable at once: a client that has already closed its socket answers
+    /// the alert with a reset, instead of holding the port in `TIME_WAIT`.
+    ///
+    /// One attempt, without waiting: a socket whose buffer is full (the
+    /// client is not reading) is closed without the goodbye.
+    fn drop(&mut self) {
+        if let Inner::Tls(stream) = &mut self.inner {
+            let mut cx = Context::from_waker(std::task::Waker::noop());
+            let _ = Pin::new(stream.as_mut()).poll_shutdown(&mut cx);
+        }
+    }
+}
+
 #[async_trait]
 impl Shutdown for ClientStream {
     async fn shutdown(&mut self) {

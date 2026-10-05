@@ -363,3 +363,64 @@ async fn a_plaintext_client_of_an_https_listener_is_refused_and_counted() {
     node.wait_for_metric("gfe_tls_handshake_failures_total{reason=")
         .await;
 }
+
+/// Read one HTTP/1.1 response with a `content-length` off `stream`.
+async fn read_response<S: tokio::io::AsyncRead + Unpin>(stream: &mut S) -> String {
+    use tokio::io::AsyncReadExt;
+
+    let mut received = Vec::new();
+    let mut buf = [0u8; 1024];
+    loop {
+        let n = stream.read(&mut buf).await.unwrap();
+        assert!(n > 0, "the connection ended before the response did");
+        received.extend_from_slice(&buf[..n]);
+        let text = String::from_utf8_lossy(&received);
+        if let Some(head_end) = text.find("\r\n\r\n") {
+            let length = text[..head_end]
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(str::trim)
+                        .map(str::to_string)
+                })
+                .map_or(0, |length| length.parse::<usize>().unwrap());
+            if received.len() >= head_end + 4 + length {
+                return text.into_owned();
+            }
+        }
+    }
+}
+
+/// A client that closes its side of a TLS connection is answered in kind
+/// (`close_notify`) before the node closes its own. Without it the client
+/// cannot tell an orderly end from a connection cut short, and a client that
+/// waits for the answer reports an error.
+#[tokio::test]
+async fn answers_a_clients_close_notify_with_its_own() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (entry, root) = certificate(&["a.example.org"], false);
+    let node = Node::serving("close-notify", &https_config(vec![entry]));
+    let mut stream = tls_connect(&h1_tls_client(&[root]), node.addr("https"), "a.example.org")
+        .await
+        .unwrap();
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nhost: a.example.org\r\n\r\n")
+        .await
+        .unwrap();
+    let response = read_response(&mut stream).await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+    stream.shutdown().await.unwrap();
+    let mut rest = Vec::new();
+    let ended = stream.read_to_end(&mut rest).await;
+
+    // rustls reports the end of a connection that was not announced by a
+    // `close_notify` as an error (`UnexpectedEof`).
+    assert!(
+        ended.is_ok(),
+        "the node closed without close_notify: {ended:?}"
+    );
+    assert!(rest.is_empty());
+}
