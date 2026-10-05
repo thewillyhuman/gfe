@@ -116,7 +116,7 @@ pub struct UpstreamConfig {
     #[serde(default)]
     pub client_key_file: Option<PathBuf>,
     /// Additional CA bundle (PEM) trusted for upstream TLS, on top of the
-    /// system/webpki roots.
+    /// system's trust store.
     #[serde(default)]
     pub extra_ca_file: Option<PathBuf>,
 }
