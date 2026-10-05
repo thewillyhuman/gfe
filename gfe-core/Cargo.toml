@@ -1,0 +1,20 @@
+[package]
+name = "gfe-core"
+description = "The reverse proxy: serving client connections and proxying their requests, on Pingora"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gfe-config = { workspace = true }
+gfe-observability = { workspace = true }
+gfe-limits = { workspace = true }
+gfe-ebpf = { workspace = true }
+gfe-tls = { workspace = true }
+gfe-health-checking = { workspace = true }
+gfe-load-balancing = { workspace = true }
+
+[lints]
+workspace = true

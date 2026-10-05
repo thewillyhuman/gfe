@@ -1,0 +1,17 @@
+[package]
+name = "gfe-config"
+description = "The two files a node is configured from: their schema, reading and validating them"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

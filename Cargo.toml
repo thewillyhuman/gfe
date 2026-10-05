@@ -1,0 +1,112 @@
+[workspace]
+members = [
+    # What a node is told and what it tells: no dependency on the rest.
+    "gfe-config",
+    "gfe-observability",
+    "gfe-limits",
+    "gfe-ebpf",
+    # What the proxy is made of, one capability per crate.
+    "gfe-tls",
+    "gfe-health-checking",
+    "gfe-load-balancing",
+    # The reverse proxy, and the binary a node runs.
+    "gfe-core",
+    "gfe-node",
+    # Development tools: not part of what a node runs or a package ships.
+    "gfe-loadtest",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+# A product, not a library: nothing here is published to crates.io.
+publish = false
+# Minimum supported Rust version (floor, not target). CI tracks stable.
+rust-version = "1.88"
+
+# The workspace's own code contains no `unsafe`: what needs it (system calls,
+# eBPF maps) goes through crates whose job that is. Enforced, so that it
+# stays a decision and does not become an accident.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+# Workspace crates
+gfe-config = { path = "gfe-config" }
+gfe-observability = { path = "gfe-observability" }
+gfe-limits = { path = "gfe-limits" }
+gfe-ebpf = { path = "gfe-ebpf" }
+gfe-tls = { path = "gfe-tls" }
+gfe-health-checking = { path = "gfe-health-checking" }
+gfe-load-balancing = { path = "gfe-load-balancing" }
+gfe-core = { path = "gfe-core" }
+
+# The HTTP proxy engine: HTTP/1 and HTTP/2 on both legs, the proxy state
+# machine, and the pooled, TLS-capable connections to backends. Built with
+# rustls, so no C TLS library is linked.
+pingora-core = { version = "0.9", default-features = false, features = ["rustls"] }
+pingora-proxy = { version = "0.9", default-features = false, features = ["rustls"] }
+pingora-http = "0.9"
+pingora-error = "0.9"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+bytes = "1"
+http = "1"
+
+# TLS. The `ring` crypto provider (default-features off) keeps the build to
+# "Rust + a C compiler for ring's asm": no aws-lc-rs, no cmake.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pemfile = "2"
+rustls-native-certs = "0.8"
+x509-parser = "0.16"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+# Hands log lines to a writer thread, so that a slow log never slows a request.
+tracing-appender = "0.2"
+
+# Metrics
+prometheus-client = "0.23"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Concurrency
+arc-swap = "1"
+dashmap = "6"
+
+# File watching (hot reload)
+notify = "7"
+
+# eBPF, user-space side: loads the kernel program and reads its maps. Pure
+# Rust (no libbpf, no libelf), so static musl builds keep working. Linux only.
+aya = "0.14"
+# Safe wrappers over the system calls the standard library does not offer:
+# the monotonic clock, passing sockets between processes, socket options.
+rustix = "1"
+
+# Utilities
+rand = "0.8"
+
+# Tests, benchmarks and the load generator only: none of these is linked
+# into gfe-node.
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+rcgen = "0.13"
+criterion = { version = "0.5", features = ["html_reports"] }

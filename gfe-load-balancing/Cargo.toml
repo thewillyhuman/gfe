@@ -1,0 +1,15 @@
+[package]
+name = "gfe-load-balancing"
+description = "Which backend gets a request: pools and selection policies"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gfe-config = { workspace = true }
+gfe-health-checking = { workspace = true }
+
+[lints]
+workspace = true
