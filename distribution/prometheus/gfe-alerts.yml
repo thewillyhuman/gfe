@@ -16,7 +16,7 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "GFE node {{ $labels.instance }} is not being scraped"
-          description: "The node is down or its ops server is unreachable. The L4 LB withdraws it once /readyz fails."
+          description: "The node is down or its ops server is unreachable. Whatever probes /readyz in front of it (a load balancer, DNS) should have withdrawn it."
 
       - alert: GfeHighServerErrorRatio
         expr: |
@@ -297,14 +297,13 @@ groups:
 
       - alert: GfeHostInterfaceDown
         # Only interfaces that are meant to be up. The kernel creates fallback
-        # tunnel devices (gre0, tunl0, sit0, ...) that are always down, on a
-        # node with GRE tunnels in particular.
+        # tunnel devices (gre0, tunl0, sit0, ...) that are always down.
         expr: node_network_info{adminstate="up", operstate=~"down|lowerlayerdown", device!~"docker.*|veth.*"} == 1
         for: 2m
         labels: { severity: critical }
         annotations:
           summary: "Interface {{ $labels.device }} on {{ $labels.instance }} has no link"
-          description: "The interface is administratively up but not operational. Includes the GRE tunnel the L4 LB delivers traffic through."
+          description: "The interface is administratively up but not operational."
 
       - alert: GfeHostTcpRetransmissions
         expr: |
