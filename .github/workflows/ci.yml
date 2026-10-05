@@ -13,11 +13,6 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
-# The Cargo workspace is not at the root of the repository.
-defaults:
-  run:
-    working-directory: src/rust
-
 jobs:
   fmt:
     name: rustfmt
@@ -40,10 +35,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      # cmake builds zlib-ng, which Pingora links; clang compiles the eBPF
+      # program of `gfe-ebpf`. The runner image has both: installing them
+      # states the requirement and keeps the job independent of the image.
+      - name: Install the build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends cmake clang
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src/rust
       # `--locked` everywhere: CI must build what Cargo.lock says, as the
       # release does, so a lockfile that no longer matches fails here and not
       # at tag time.
@@ -61,13 +59,11 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      - name: Install the build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends cmake clang
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src/rust
       # Tests are the source of truth — run the whole workspace on every PR.
-      # GFE is a pure-userspace proxy (tokio + hyper + rustls/ring), so there
-      # are no platform-gated features to toggle here.
       - name: cargo build --locked --workspace --all-targets
         run: cargo build --locked --workspace --all-targets --verbose
       # nextest reports the workspace as one result: a line per test and a
@@ -88,10 +84,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install the build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends cmake clang
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src/rust
       # Catches broken doc links / examples without publishing anything.
       - name: cargo doc --locked --workspace --no-deps
         run: cargo doc --locked --workspace --no-deps
@@ -107,13 +103,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src/rust
       - name: Install cargo-deny
         # 0.16.4+ pulls in rustsec >= 0.30 which understands CVSS v4.0 vectors.
         run: cargo install cargo-deny --locked --version '>=0.16.4'
       # Advisories, licenses, bans and sources, as configured in
-      # `src/rust/deny.toml`. Also run weekly by supply-chain.yml, but a
+      # `deny.toml`. Also run weekly by supply-chain.yml, but a
       # scheduled workflow is switched off by GitHub when a repository goes
       # quiet; this one is not.
       - name: cargo deny check

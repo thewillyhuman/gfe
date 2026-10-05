@@ -30,5 +30,33 @@ rcgen = { workspace = true }
 rustls = { workspace = true }
 serde_json = { workspace = true }
 
+# RPM packaging, built by `cargo generate-rpm -p gfe-node` from the
+# release binary (see docs/rpm.md). The package is named `gfe` and carries
+# the node, the systemd unit, the dashboard and the alert rules.
+# Configuration under /etc/gfe is left to config management.
+[package.metadata.generate-rpm]
+name = "gfe"
+summary = "General Front End - L7 TLS-terminating HTTP reverse proxy"
+url = "https://github.com/thewillyhuman/gfe"
+assets = [
+    { source = "target/release/gfe-node", dest = "/usr/bin/gfe-node", mode = "755" },
+    { source = "../distribution/systemd/gfe-node.service", dest = "/usr/lib/systemd/system/gfe-node.service", mode = "644" },
+    { source = "../distribution/systemd/gfe-node-ebpf.conf", dest = "/usr/share/gfe/gfe-node-ebpf.conf", mode = "644" },
+    { source = "../distribution/grafana/gfe-dashboard.json", dest = "/usr/share/gfe/grafana/gfe-dashboard.json", mode = "644" },
+    { source = "../distribution/prometheus/gfe-alerts.yml", dest = "/usr/share/gfe/prometheus/gfe-alerts.yml", mode = "644" },
+    { source = "../docs/examples/gfe.example.toml", dest = "/usr/share/doc/gfe/gfe.example.toml", mode = "644", doc = true },
+    { source = "../docs/examples/gfe-dynamic.example.json", dest = "/usr/share/doc/gfe/gfe-dynamic.example.json", mode = "644", doc = true },
+    { source = "../README.md", dest = "/usr/share/doc/gfe/README.md", mode = "644", doc = true },
+    { source = "../LICENSE", dest = "/usr/share/licenses/gfe/LICENSE", mode = "644" },
+]
+pre_install_script = "../hack/rpm/pre-install.sh"
+post_install_script = "../hack/rpm/post-install.sh"
+pre_uninstall_script = "../hack/rpm/pre-uninstall.sh"
+post_uninstall_script = "../hack/rpm/post-uninstall.sh"
+
+[package.metadata.generate-rpm.requires]
+systemd = "*"
+shadow-utils = "*"
+
 [lints]
 workspace = true

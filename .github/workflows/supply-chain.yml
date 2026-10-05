@@ -26,11 +26,6 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
-# The Cargo workspace is not at the root of the repository.
-defaults:
-  run:
-    working-directory: src/rust
-
 jobs:
   audit:
     name: cargo-audit
@@ -41,8 +36,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src/rust
       - name: Install cargo-audit
         # 0.21+ understands CVSS v4.0 vectors. Older versions choke parsing
         # 2026-era advisories that ship `cvss = "CVSS:4.0/..."`.
@@ -50,7 +43,7 @@ jobs:
         run: cargo install cargo-audit --locked --version '>=0.21.2'
       # `--deny warnings` so unmaintained-crate notices fail the build, not
       # just RUSTSEC vulnerabilities. Each `--ignore` below is also listed
-      # in `src/rust/deny.toml` with the same justification — keep the two
+      # in `deny.toml` with the same justification — keep the two
       # in sync when a new transitive unmaintained advisory has to be
       # accepted.
       - name: cargo audit
@@ -69,14 +62,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src/rust
       - name: Install cargo-deny
         # 0.16.4+ pulls in rustsec >= 0.30 which understands CVSS v4.0 vectors.
         run: cargo install cargo-deny --locked --version '>=0.16.4'
       - name: cargo deny check
         # `bans`, `licenses`, `sources`, `advisories`. Configured in
-        # `src/rust/deny.toml`.
+        # `deny.toml`.
         run: cargo deny check
 
   coverage:
@@ -93,8 +84,6 @@ jobs:
           components: llvm-tools-preview
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src/rust
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked --version ^0.6
       - name: Generate coverage (LCOV)
@@ -111,6 +100,6 @@ jobs:
         with:
           name: coverage-lcov
           path: |
-            src/rust/lcov.info
-            src/rust/coverage-summary.txt
+            lcov.info
+            coverage-summary.txt
           retention-days: 14

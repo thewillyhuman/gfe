@@ -1,0 +1,13 @@
+# What the build of the Dockerfile next to this file takes from its context.
+# Docker reads it because it carries that Dockerfile's name.
+#
+# Nothing, except what is listed: a file that appears in the repository (a
+# local config with its keys, say) stays out of the image unless it is named
+# here.
+*
+!Cargo.toml
+!Cargo.lock
+!gfe-*/
+!distribution/systemd/gfe-node.service
+!prebuilt/
+**/target/

@@ -45,12 +45,12 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      - name: Install the build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends cmake clang
       # The same two steps as the test job of ci.yml.
       - name: cargo nextest run --locked --workspace
-        working-directory: src/rust
         run: cargo nextest run --locked --workspace --no-fail-fast --failure-output immediate-final
       - name: cargo test --locked --workspace --doc
-        working-directory: src/rust
         run: cargo test --locked --workspace --doc
 
   build-binaries:
@@ -74,26 +74,25 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Install the C toolchains
-        # musl-gcc compiles the C and assembly of the TLS library for the
-        # musl target. clang compiles the kernel program of `gfe-ebpf`:
-        # without it the build succeeds, and the binary has no kernel TCP
-        # statistics in it. It needs kernel headers that know the ring
+        # musl-gcc compiles the C and assembly the binary links for the musl
+        # target (the TLS library, and zlib-ng, which cmake builds for
+        # Pingora). clang compiles the kernel program of `gfe-ebpf`, without
+        # which the build fails. It needs kernel headers that know the ring
         # buffer (5.8), which this distribution has.
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends musl-tools clang
+          sudo apt-get install --yes --no-install-recommends musl-tools cmake clang
       - name: Build gfe-node
-        working-directory: src/rust
         run: cargo build --release --locked --target ${{ matrix.target }} --bin gfe-node
       - name: Run the built binary
         # Catches a binary that links but does not start.
-        run: src/rust/target/${{ matrix.target }}/release/gfe-node --version
+        run: target/${{ matrix.target }}/release/gfe-node --version
       - name: Package
         run: |
           set -euo pipefail
           stage=$(mktemp -d)
-          cp src/rust/target/${{ matrix.target }}/release/gfe-node "$stage/"
-          cp src/systemd/gfe-node.service "$stage/"
+          cp target/${{ matrix.target }}/release/gfe-node "$stage/"
+          cp distribution/systemd/gfe-node.service "$stage/"
           cp README.md "$stage/" 2>/dev/null || true
           tarball="gfe-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
           tar -czf "$tarball" -C "$stage" .
@@ -138,18 +137,16 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           version="${version//-/\~}"
           mkdir rpms
-          # The tool runs from the Cargo workspace.
-          cd src/rust
           for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
             # Where `cargo generate-rpm --target` looks for the binary.
             mkdir -p "target/$target/release"
-            tar -xzf ../../dist/"$target"/gfe-*.tar.gz -C "target/$target/release" ./gfe-node
+            tar -xzf dist/"$target"/gfe-*.tar.gz -C "target/$target/release" ./gfe-node
             cargo generate-rpm -p gfe-node --target "$target" -s "version = '${version}'"
-            mv "target/$target"/generate-rpm/gfe-*.rpm ../../rpms/
+            mv "target/$target"/generate-rpm/gfe-*.rpm rpms/
           done
           # Written from the RPMs' directory, so that each checksum names
           # the file alone: it is checked next to a downloaded RPM.
-          cd ../../rpms
+          cd rpms
           for rpm in gfe-*.rpm; do
             sha256sum "$rpm" > "$rpm.sha256"
           done
@@ -210,7 +207,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: src/docker/Dockerfile
+          file: distribution/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

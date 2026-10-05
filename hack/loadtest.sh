@@ -19,7 +19,7 @@ HTTPS=127.0.0.1:18443
 METRICS=127.0.0.1:19191
 
 echo ">> building release binaries"
-cargo build --release -q --manifest-path src/rust/Cargo.toml -p gfe-node -p gfe-loadtest
+cargo build --release -q -p gfe-node -p gfe-loadtest
 
 TMP="$(mktemp -d)"
 cleanup() { kill "${UP_PID:-}" "${NODE_PID:-}" 2>/dev/null || true; rm -rf "$TMP"; }
@@ -65,8 +65,8 @@ local_cache = "$TMP/cache.json"
 [health_check_defaults]
 TOML
 
-LT=./src/rust/target/release/gfe-loadtest
-NODE=./src/rust/target/release/gfe-node
+LT=./target/release/gfe-loadtest
+NODE=./target/release/gfe-node
 
 echo ">> starting mock upstream ($UPSTREAM)"
 "$LT" upstream --listen "$UPSTREAM" --body-bytes 64 >/dev/null 2>&1 &
