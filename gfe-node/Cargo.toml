@@ -41,7 +41,6 @@ url = "https://github.com/thewillyhuman/gfe"
 assets = [
     { source = "target/release/gfe-node", dest = "/usr/bin/gfe-node", mode = "755" },
     { source = "../distribution/systemd/gfe-node.service", dest = "/usr/lib/systemd/system/gfe-node.service", mode = "644" },
-    { source = "../distribution/systemd/gfe-node-ebpf.conf", dest = "/usr/share/gfe/gfe-node-ebpf.conf", mode = "644" },
     { source = "../distribution/grafana/gfe-dashboard.json", dest = "/usr/share/gfe/grafana/gfe-dashboard.json", mode = "644" },
     { source = "../distribution/prometheus/gfe-alerts.yml", dest = "/usr/share/gfe/prometheus/gfe-alerts.yml", mode = "644" },
     { source = "../docs/examples/gfe.example.toml", dest = "/usr/share/doc/gfe/gfe.example.toml", mode = "644", doc = true },

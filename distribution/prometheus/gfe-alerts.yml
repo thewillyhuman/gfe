@@ -210,18 +210,18 @@ groups:
         annotations:
           summary: "{{ $labels.instance }} restarted more than once in 15 minutes"
 
-  # From the node's own kernel view (eBPF, `[ebpf] enabled = true`). These
-  # never fire on a node that runs without it: the series stay empty. The
-  # first one says when a node asked for it runs without it all the same.
+  # From the node's own kernel view (eBPF). Every node attempts to attach it;
+  # on one that could not, the series stay empty and only the first alert of
+  # the group can fire, which says exactly that.
   - name: gfe-kernel
     rules:
       - alert: GfeKernelViewNotAttached
-        expr: gfe_ebpf_enabled == 1 and gfe_ebpf_attached == 0
+        expr: gfe_ebpf_attached == 0
         for: 5m
         labels: { severity: warning }
         annotations:
-          summary: "{{ $labels.instance }} is configured for the kernel view but runs without it"
-          description: "The eBPF program could not be attached (capabilities missing, a binary built without the program, a verifier rejection); the node log says why at startup. Until it is, the gfe_*_tcp_* metrics stay empty and the other alerts of this group cannot fire."
+          summary: "{{ $labels.instance }} runs without its kernel view"
+          description: "The eBPF program could not be attached (CAP_BPF or CAP_NET_ADMIN missing, a kernel that is too old, a verifier rejection); the node log says why at startup. Until it is, the gfe_*_tcp_* metrics stay empty and the other alerts of this group cannot fire."
 
       - alert: GfeAcceptQueueWait
         expr: |

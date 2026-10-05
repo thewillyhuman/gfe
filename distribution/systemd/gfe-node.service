@@ -1,5 +1,5 @@
 [Unit]
-Description=GFE Node - General Front End (L7 TLS-terminating reverse proxy)
+Description=GFE Node - General Front End (L7 TLS-terminating HTTP reverse proxy)
 Documentation=https://github.com/thewillyhuman/gfe
 After=network-online.target
 Wants=network-online.target
@@ -45,12 +45,21 @@ RestartSec=5s
 # Many concurrent client + upstream connections need a high FD ceiling.
 LimitNOFILE=1048576
 
-# GFE is a userspace proxy: the only elevated privilege it needs is binding
-# low ports (443/80) for its listeners. GRE decapsulation and the loopback VIP
-# are set up on the host (section 11 of the specification) and handled by the
-# kernel, not GFE.
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# What the node needs beyond an unprivileged user:
+#
+#   CAP_NET_BIND_SERVICE   binding low ports (443/80) for its listeners.
+#   CAP_BPF, CAP_NET_ADMIN loading the eBPF program behind its kernel view
+#                          (accept-queue wait, round-trip time,
+#                          retransmissions, how connections end) and
+#                          attaching it to the service's own cgroup.
+#
+# CAP_NET_ADMIN is a real widening of what a compromised node could do: it
+# can reconfigure the host's network. To run without it, drop the two eBPF
+# capabilities and the `bpf` system call below: the node then logs that it
+# is not permitted to load eBPF, reports `gfe_ebpf_attached 0`, and serves
+# without the kernel view.
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_BPF CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_BPF CAP_NET_ADMIN
 
 # Security hardening.
 NoNewPrivileges=yes
@@ -76,6 +85,8 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @reboot @swap @debug
+# Allowed back after the exclusions above: loading the eBPF program.
+SystemCallFilter=bpf
 
 # Graceful drain: GFE drains in-flight requests on SIGTERM up to its
 # drain_deadline; give systemd enough time before SIGKILL.

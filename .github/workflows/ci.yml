@@ -77,6 +77,33 @@ jobs:
       - name: cargo test --locked --workspace --doc
         run: cargo test --locked --workspace --doc
 
+  # The kernel view needs privileges the test job does not have, where its
+  # test only reports that it was skipped. Here it runs as root and must
+  # really attach the eBPF program: a kernel view that no longer loads is a
+  # regression like any other.
+  kernel-view:
+    name: kernel view (eBPF, as root)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install the build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends cmake clang
+      # Built as the runner's user, run as root: nothing root-owned is left
+      # in the build directory.
+      - name: Build the kernel test
+        run: cargo test --locked -p gfe-ebpf --test kernel --no-run
+      - name: Run it as root
+        run: |
+          set -euo pipefail
+          binary=$(find target/debug/deps -maxdepth 1 -type f -executable -name 'kernel-*' | head -n 1)
+          sudo "$binary" --nocapture 2>&1 | tee kernel-test.log
+          if grep -q '^skipped:' kernel-test.log; then
+            echo "the kernel test skipped itself: the eBPF program was not attached" >&2
+            exit 1
+          fi
+
   docs:
     name: docs build
     runs-on: ubuntu-latest
