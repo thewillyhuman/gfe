@@ -13,10 +13,15 @@ DUR="${2:-6}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-UPSTREAM=127.0.0.1:9000
-HTTP=127.0.0.1:18080
-HTTPS=127.0.0.1:18443
-METRICS=127.0.0.1:19191
+# Loopback ports of the run. They stay clear of the ones the demo publishes
+# (hack/demo: 18080, 18443, 19000, 19101), so both can run at once.
+UPSTREAM_PORT=29000
+HTTP_PORT=28080
+HTTPS_PORT=28443
+UPSTREAM=127.0.0.1:$UPSTREAM_PORT
+HTTP=127.0.0.1:$HTTP_PORT
+HTTPS=127.0.0.1:$HTTPS_PORT
+METRICS=127.0.0.1:29101
 
 echo ">> building release binaries"
 cargo build --release -q -p gfe-node -p gfe-loadtest
@@ -37,8 +42,8 @@ cat > "$TMP/dynamic.json" <<JSON
       "key_file": "$TMP/key.pem" }
   ],
   "listeners": [
-    { "id": "http",  "address": "127.0.0.1", "port": 18080, "protocol": "http"  },
-    { "id": "https", "address": "127.0.0.1", "port": 18443, "protocol": "https" }
+    { "id": "http",  "address": "127.0.0.1", "port": $HTTP_PORT, "protocol": "http"  },
+    { "id": "https", "address": "127.0.0.1", "port": $HTTPS_PORT, "protocol": "https" }
   ],
   "routes": [
     { "id": "http-fixed",  "listener": "http",  "host": "*", "path_prefix": "/fixed",  "action": { "fixed": { "status": 200, "body": "ok" } } },
@@ -48,7 +53,7 @@ cat > "$TMP/dynamic.json" <<JSON
   ],
   "pools": [
     { "id": "demo-pool", "scheme": "http", "lb_policy": "round_robin",
-      "upstreams": [ { "host": "127.0.0.1", "port": 9000, "weight": 1 } ],
+      "upstreams": [ { "host": "127.0.0.1", "port": $UPSTREAM_PORT, "weight": 1 } ],
       "health_check": { "type": "tcp", "interval": "2s", "timeout": "1s", "healthy_threshold": 1, "unhealthy_threshold": 3 } }
   ]
 }
