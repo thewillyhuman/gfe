@@ -16,6 +16,8 @@ use gfe_tls::TlsInfo;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 
 /// One client connection the node is serving.
 #[derive(Debug)]
@@ -28,6 +30,15 @@ pub struct ConnInfo {
     tls: Option<TlsInfo>,
     requests: AtomicU64,
     in_flight: AtomicUsize,
+    /// When the connection was registered: once established, and past its
+    /// TLS handshake. The first request is waited for from then on.
+    established: Instant,
+    /// When the last request in flight ended, in milliseconds since
+    /// `established`. Only meaningful while no request is in flight.
+    idle_since_ms: AtomicU64,
+    /// Woken when the last request in flight ends, for whoever enforces the
+    /// client timeouts, which only run while the connection is idle.
+    idle: Notify,
 }
 
 impl ConnInfo {
@@ -47,6 +58,9 @@ impl ConnInfo {
             tls,
             requests: AtomicU64::new(0),
             in_flight: AtomicUsize::new(0),
+            established: Instant::now(),
+            idle_since_ms: AtomicU64::new(0),
+            idle: Notify::new(),
         })
     }
 
@@ -100,7 +114,26 @@ impl ConnInfo {
 
     /// Whether a request is in flight: received, and not answered to its end.
     pub fn has_request_in_flight(&self) -> bool {
-        self.in_flight.load(Ordering::Relaxed) > 0
+        self.in_flight.load(Ordering::Acquire) > 0
+    }
+
+    /// When the connection was established (past its TLS handshake, if any).
+    pub(crate) fn established(&self) -> Instant {
+        self.established
+    }
+
+    /// Since when no request has been in flight: the end of the last one, or
+    /// [`established`](Self::established) before the first. Only meaningful
+    /// while [`has_request_in_flight`](Self::has_request_in_flight) is false.
+    pub(crate) fn idle_since(&self) -> Instant {
+        self.established + Duration::from_millis(self.idle_since_ms.load(Ordering::Relaxed))
+    }
+
+    /// Resolves once the last request in flight has ended. A request that
+    /// ended before this is called still counts: the wake-up is kept for the
+    /// next waiter, which then only has to look again.
+    pub(crate) async fn went_idle(&self) {
+        self.idle.notified().await;
     }
 }
 
@@ -110,7 +143,14 @@ pub struct RequestGuard(Arc<ConnInfo>);
 
 impl Drop for RequestGuard {
     fn drop(&mut self) {
-        self.0.in_flight.fetch_sub(1, Ordering::Relaxed);
+        let conn = &self.0;
+        let idle_since = u64::try_from(conn.established.elapsed().as_millis()).unwrap_or(u64::MAX);
+        // Stored before the count is released, so that whoever sees no
+        // request in flight also sees when the connection went idle.
+        conn.idle_since_ms.store(idle_since, Ordering::Relaxed);
+        if conn.in_flight.fetch_sub(1, Ordering::Release) == 1 {
+            conn.idle.notify_one();
+        }
     }
 }
 

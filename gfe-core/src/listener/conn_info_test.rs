@@ -154,3 +154,35 @@ fn a_connection_tells_both_of_its_addresses() {
     assert_eq!(conn.client(), addr(40000));
     assert_eq!(conn.local(), addr(443));
 }
+
+#[test]
+fn a_connection_that_served_no_request_has_been_idle_since_it_was_established() {
+    let conn = plaintext(40000);
+
+    assert_eq!(conn.idle_since(), conn.established());
+}
+
+#[test]
+fn a_connection_goes_idle_when_its_last_request_ends() {
+    let conn = plaintext(40000);
+    let request = conn.begin_request();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    drop(request);
+
+    assert!(conn.idle_since() >= conn.established() + std::time::Duration::from_millis(5));
+}
+
+#[tokio::test]
+async fn whoever_waits_for_the_connection_to_go_idle_is_woken_by_its_last_request() {
+    let conn = plaintext(40000);
+    let first = conn.begin_request();
+    let second = conn.begin_request();
+    drop(first);
+
+    drop(second);
+
+    // The wake-up is kept for a waiter that comes after it.
+    let woken = tokio::time::timeout(std::time::Duration::from_secs(1), conn.went_idle()).await;
+    assert!(woken.is_ok());
+}
