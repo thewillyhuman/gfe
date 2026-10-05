@@ -10,6 +10,15 @@ publish.workspace = true
 [dependencies]
 gfe-config = { workspace = true }
 gfe-health-checking = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "selection"
+harness = false
 
 [lints]
 workspace = true

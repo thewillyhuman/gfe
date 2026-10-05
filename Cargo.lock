@@ -887,8 +887,11 @@ version = "0.1.0"
 name = "gfe-load-balancing"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "gfe-config",
  "gfe-health-checking",
+ "rand",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
