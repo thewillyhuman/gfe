@@ -25,16 +25,10 @@ fn app_lets_connect_through_for_gfe_to_refuse() {
 }
 
 #[test]
-fn app_closes_http2_connections_idle_for_client_idle() {
-    let state = state();
-    let client_idle = state.timeouts.client_idle;
+fn app_leaves_closing_idle_http2_connections_to_the_edge() {
+    let app = app(state());
 
-    let app = app(state);
-
-    assert_eq!(
-        app.server_options.as_ref().unwrap().h2_idle_timeout,
-        Some(client_idle)
-    );
+    assert_eq!(app.server_options.as_ref().unwrap().h2_idle_timeout, None);
     assert!(app.h2_options.is_some());
 }
 

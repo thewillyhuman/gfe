@@ -76,8 +76,12 @@ pub type App = HttpProxy<GfeProxy>;
 /// This is the one place the node configures Pingora: its idle upstream
 /// pool (`[upstream] idle_connections`, which Pingora multiplies by its
 /// worker count, so it is divided by it here), how many attempts a request
-/// may get, cleartext HTTP/2 by prior knowledge, the HTTP/2 idle timeout
-/// (`client_idle`), and the HTTP/2 stream and header-list limits.
+/// may get, cleartext HTTP/2 by prior knowledge, and the HTTP/2 stream and
+/// header-list limits.
+///
+/// Pingora's own HTTP/2 idle timeout is deliberately left unset: it drops
+/// an idle connection without a `GOAWAY`. The edge asks an HTTP/2
+/// connection idle for `client_idle` to leave instead, and records why.
 /// `CONNECT` reaches GFE, which refuses it itself (`400`,
 /// `unsupported_request_target`) rather than leaving Pingora to answer `405`.
 pub fn app(state: Arc<State>) -> Arc<App> {
@@ -90,7 +94,6 @@ pub fn app(state: Arc<State>) -> Arc<App> {
     let mut server = HttpServerOptions::default();
     server.h2c = true;
     server.allow_connect_method_proxying = true;
-    server.h2_idle_timeout = Some(state.timeouts.client_idle);
     let mut h2 = default_h2_options();
     h2.max_concurrent_streams(state.max_h2_concurrent_streams);
     h2.max_header_list_size(u32::try_from(state.max_header_bytes).unwrap_or(u32::MAX));
