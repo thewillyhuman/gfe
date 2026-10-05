@@ -41,7 +41,7 @@ mod respond;
 mod retry;
 mod state;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 pub use context::RequestCtx;
 pub use error::ProxyError;
@@ -214,6 +214,18 @@ impl GfeProxy {
         }
     }
 
+    /// End keep-alive on the response about to be written if the node
+    /// drains. Pingora does so by itself only for requests that arrived
+    /// after the drain began; without this, a request already in flight
+    /// would be answered `Connection: keep-alive`, and its connection
+    /// closed only when idle connections are, at half the drain deadline.
+    /// HTTP/2 connections are told by a `GOAWAY` instead.
+    fn end_keepalive_if_draining(&self, session: &mut Session) {
+        if self.state.is_draining() {
+            session.set_keepalive(None);
+        }
+    }
+
     /// Answer the request with `answer`, which GFE writes itself.
     async fn answer(
         &self,
@@ -221,6 +233,7 @@ impl GfeProxy {
         ctx: &mut RequestCtx,
         answer: Answer,
     ) -> Result<bool> {
+        self.end_keepalive_if_draining(session);
         ctx.answering(&answer);
         respond::send(session, answer).await?;
         ctx.answered = true;
@@ -601,10 +614,11 @@ impl ProxyHttp for GfeProxy {
 
     async fn response_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut RequestCtx,
     ) -> Result<()> {
+        self.end_keepalive_if_draining(session);
         forward::strip_response_hop_by_hop(upstream_response);
         let record = ctx.record();
         if record.arrival.is_tls {
@@ -663,6 +677,7 @@ impl ProxyHttp for GfeProxy {
         record.error = Some(refusal.reason());
         let answer = respond::refusal(refusal, &record.request_id, record.is_grpc);
         let status = answer.status();
+        self.end_keepalive_if_draining(session);
         ctx.answering(&answer);
         if respond::send(session, answer).await.is_ok() {
             ctx.answered = true;

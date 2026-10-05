@@ -13,6 +13,7 @@ use gfe_load_balancing::PoolSet;
 use gfe_observability::GfeMetrics;
 use gfe_tls::{CertStore, SniResolver};
 use std::sync::Arc;
+use tokio::sync::watch;
 
 /// What a config is compiled into for the proxy: the routes and the pools
 /// they forward to. Swapped as one, so that no request sees routes of one
@@ -37,6 +38,8 @@ pub struct State {
     health: Arc<HealthMap>,
     metrics: Arc<GfeMetrics>,
     connections: Arc<Connections>,
+    /// The node's shutdown signal: `true` once it drains.
+    drain: watch::Receiver<bool>,
     /// The `Strict-Transport-Security` value of responses over TLS; empty
     /// for none.
     pub(crate) hsts: String,
@@ -68,10 +71,15 @@ impl State {
     /// every backend presumed healthy until probed. Loads the upstream TLS
     /// files `[upstream]` names, and fails, naming the file, if one cannot
     /// be used.
+    ///
+    /// `drain` is the node's shutdown signal
+    /// ([`Drain::subscribe`](crate::listener::Drain::subscribe)): while it is
+    /// `true`, responses end keep-alive.
     pub fn new(
         config: &NodeConfig,
         metrics: Arc<GfeMetrics>,
         connections: Arc<Connections>,
+        drain: watch::Receiver<bool>,
     ) -> Result<Arc<State>, ProxyError> {
         let limits = &config.limits;
         let upstream_tls = UpstreamTls::load(&config.upstream)?;
@@ -93,6 +101,7 @@ impl State {
             health: Arc::new(HealthMap::new(true)),
             metrics,
             connections,
+            drain,
             hsts: config.tls.hsts.clone(),
             timeouts: config.timeouts.clone(),
             max_header_bytes: limits.max_header_bytes,
@@ -135,5 +144,11 @@ impl State {
     /// The connections the node serves, which the edge registers.
     pub fn connections(&self) -> &Arc<Connections> {
         &self.connections
+    }
+
+    /// Whether the node drains. The value is read without waiting, and no
+    /// lock is held past the call.
+    pub(crate) fn is_draining(&self) -> bool {
+        *self.drain.borrow()
     }
 }

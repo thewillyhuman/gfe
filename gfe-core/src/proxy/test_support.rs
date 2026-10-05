@@ -37,6 +37,7 @@ pub(crate) fn state() -> Arc<State> {
         &node_config(),
         Arc::new(GfeMetrics::new()),
         Connections::new(),
+        tokio::sync::watch::channel(false).1,
     )
     .unwrap()
 }

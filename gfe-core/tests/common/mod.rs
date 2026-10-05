@@ -1,14 +1,20 @@
 //! What the functional tests share: a proxy serving a config, mock backends
 //! and clients on hyper, certificates by rcgen, and the access log captured.
 //!
-//! The edge of the node (listeners, TLS termination) is not used: the proxy
-//! is served by a minimal accept loop of its own, which registers every
-//! connection the way the edge does. A test that needs "a TLS connection
-//! with SNI x" registers its connections with a [`TlsInfo`] and talks
-//! cleartext to the proxy: the proxy learns everything about a connection
-//! from its registration.
+//! There are two ways to run the proxy:
+//!
+//! - [`node::Node`] is a whole front end, as a node runs it: the edge
+//!   (listeners, TLS termination, connection accounting, drain), the proxy,
+//!   and the config it follows. Tests of what crosses those parts use it.
+//! - [`Proxy`] is the proxy alone, served by a minimal accept loop of its
+//!   own, which registers every connection the way the edge does. A test
+//!   that needs "a TLS connection with SNI x" registers its connections with
+//!   a [`TlsInfo`] and talks cleartext to the proxy: the proxy learns
+//!   everything about a connection from its registration.
 
 #![allow(dead_code)]
+
+pub mod node;
 
 use arc_swap::ArcSwap;
 use bytes::Bytes;
@@ -88,8 +94,14 @@ impl Proxy {
     /// Serve the first listener of `cfg` under `node`. Every connection is
     /// registered as having negotiated `tls`, though it is cleartext.
     pub async fn start_with(cfg: &DynamicConfig, node: NodeConfig, tls: Option<TlsInfo>) -> Proxy {
-        let state = State::new(&node, Arc::new(GfeMetrics::new()), Connections::new())
-            .expect("the node config is valid");
+        let (shutdown, watching) = watch::channel(false);
+        let state = State::new(
+            &node,
+            Arc::new(GfeMetrics::new()),
+            Connections::new(),
+            watching.clone(),
+        )
+        .expect("the node config is valid");
         state
             .resolver()
             .swap(CertStore::build(&cfg.certificates).expect("certificates load"));
@@ -102,7 +114,6 @@ impl Proxy {
         let addr = socket.local_addr().unwrap();
         let listener = Arc::new(ArcSwap::from_pointee(cfg.listeners[0].clone()));
         let connections = Arc::clone(state.connections());
-        let (shutdown, watching) = watch::channel(false);
         tokio::spawn(async move {
             loop {
                 let Ok((tcp, client)) = socket.accept().await else {
@@ -931,13 +942,43 @@ impl CapturedLogs {
 
     /// Every access event logged so far.
     pub fn access_events(&self) -> Vec<serde_json::Value> {
+        self.events("gfe::access")
+    }
+
+    /// The fields of every event of `target` logged so far.
+    pub fn events(&self, target: &str) -> Vec<serde_json::Value> {
+        self.lines()
+            .into_iter()
+            .filter(|event| event["target"] == target)
+            .map(|event| event["fields"].clone())
+            .collect()
+    }
+
+    /// Every line logged so far, whole: level, target and fields.
+    pub fn lines(&self) -> Vec<serde_json::Value> {
         let raw = self.0.lock().unwrap().clone();
         String::from_utf8_lossy(&raw)
             .lines()
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-            .filter(|event| event["target"] == "gfe::access")
-            .map(|event| event["fields"].clone())
             .collect()
+    }
+
+    /// The events of `target` once there are `count` of them, failing the
+    /// test if there are not within a few seconds.
+    pub async fn wait_for_events(&self, target: &str, count: usize) -> Vec<serde_json::Value> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let events = self.events(target);
+            if events.len() >= count {
+                return events;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{} {target} events, expected {count}: {events:?}",
+                events.len()
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// Wait a moment and fail if a second access event shows up: a request

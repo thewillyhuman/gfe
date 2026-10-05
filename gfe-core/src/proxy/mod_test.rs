@@ -2,6 +2,7 @@ use super::*;
 use crate::listener::Connections;
 use crate::proxy::test_support::{node_config, state};
 use gfe_observability::GfeMetrics;
+use tokio::sync::watch;
 
 #[test]
 fn app_serves_cleartext_http2_by_prior_knowledge() {
@@ -43,7 +44,13 @@ fn state_says_how_many_upstream_connections_the_node_may_open() {
     config.limits.max_upstream_connections = 7;
     let metrics = Arc::new(GfeMetrics::new());
 
-    State::new(&config, Arc::clone(&metrics), Connections::new()).unwrap();
+    State::new(
+        &config,
+        Arc::clone(&metrics),
+        Connections::new(),
+        watch::channel(false).1,
+    )
+    .unwrap();
 
     assert!(
         metrics
@@ -57,7 +64,13 @@ fn state_refuses_an_unreadable_extra_ca_file() {
     let mut config = node_config();
     config.upstream.extra_ca_file = Some("/nonexistent/ca.pem".into());
 
-    let error = State::new(&config, Arc::new(GfeMetrics::new()), Connections::new()).unwrap_err();
+    let error = State::new(
+        &config,
+        Arc::new(GfeMetrics::new()),
+        Connections::new(),
+        watch::channel(false).1,
+    )
+    .unwrap_err();
 
     assert!(error.to_string().contains("/nonexistent/ca.pem"), "{error}");
 }

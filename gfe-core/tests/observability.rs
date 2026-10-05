@@ -293,3 +293,83 @@ async fn counts_every_request_of_a_keep_alive_connection_once() {
         .await;
     logs.assert_no_more_than(3).await;
 }
+
+/// The connection event and the access events of one TLS connection
+/// through a whole front end tell the same story: the same client,
+/// listener and TLS parameters, as many requests as access events, and at
+/// least as many bytes on the wire as in the bodies.
+#[tokio::test]
+async fn connection_and_access_events_of_a_connection_agree() {
+    use common::node::{Node, h1_tls_client, tls_connect};
+    use hyper_util::rt::TokioIo;
+
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_upload_upstream().await;
+    let (cert_file, key_file, cert) = certificate_files(&["a.example.org"]);
+    let mut config = forwarding_config(upstream);
+    config.listeners[0].protocol = gfe_config::ListenProtocol::Https;
+    config.certificates = vec![gfe_config::CertEntry {
+        sni: vec!["a.example.org".into()],
+        default: false,
+        cert_file,
+        key_file,
+    }];
+    let node = Node::serving("events-agree", &config);
+    let stream = tls_connect(
+        &h1_tls_client(&[cert.cert.der().clone()]),
+        node.addr("http"),
+        "a.example.org",
+    )
+    .await
+    .unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    let connection = tokio::spawn(conn);
+
+    for size in [10, 1000, 100_000] {
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/upload/{size}"))
+            .header("host", "a.example.org")
+            .body(Full::new(Bytes::from(vec![b'x'; size])))
+            .unwrap();
+        let answer = collect(sender.send_request(req).await.unwrap()).await;
+        assert_eq!(answer.body, format!("received {size}"));
+    }
+    drop(sender);
+    connection.await.unwrap().unwrap();
+
+    let conn = logs.wait_for_events("gfe::conn", 1).await.remove(0);
+    let access = logs.access_events();
+    assert_eq!(access.len(), 3, "{access:?}");
+    assert_eq!(conn["requests"], 3, "{conn}");
+    for event in &access {
+        for field in [
+            "client",
+            "client_port",
+            "listener",
+            "sni",
+            "tls_version",
+            "tls_cipher",
+        ] {
+            assert_eq!(event[field], conn[field], "{field}: {event} {conn}");
+        }
+        assert_eq!(event["proto"], "https");
+    }
+    let total = |field: &str| -> u64 {
+        access
+            .iter()
+            .map(|event| event[field].as_u64().unwrap())
+            .sum()
+    };
+    assert_eq!(total("request_bytes"), 101_010);
+    assert!(
+        conn["bytes_in"].as_u64().unwrap() > total("request_bytes"),
+        "{conn}"
+    );
+    assert!(
+        conn["bytes_out"].as_u64().unwrap() > total("response_bytes"),
+        "{conn}"
+    );
+}

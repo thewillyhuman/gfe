@@ -305,3 +305,62 @@ async fn backend_stays_in_flight_for_the_whole_response() {
     assert!(during.contains(&in_flight(1)), "{during}");
     proxy.wait_for_metric(&in_flight(0)).await;
 }
+
+/// The whole way a gRPC call takes on a node: TLS terminated at the edge
+/// (HTTP/2 by ALPN), the call relayed message by message to an `https`
+/// backend over HTTP/2, and the trailers back.
+#[tokio::test]
+async fn relays_a_call_through_tls_termination_to_an_https_backend() {
+    use common::node::{Node, tls_client, tls_connect};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let (upstream, ca_pem) = spawn_tls_upstream("127.0.0.1", ClientAuth::None).await;
+    let (cert_file, key_file, cert) = certificate_files(&["grpc.example.org"]);
+    let mut config = grpc_config(upstream);
+    config.pools[0].scheme = Scheme::Https;
+    config.listeners[0].protocol = gfe_config::ListenProtocol::Https;
+    config.certificates = vec![gfe_config::CertEntry {
+        sni: vec!["grpc.example.org".into()],
+        default: true,
+        cert_file,
+        key_file,
+    }];
+    let node = Node::serving_with("grpc-tls", &config, |node| {
+        node.upstream.extra_ca_file = Some(pem_file(&ca_pem));
+    });
+    let client = tls_client(
+        &[cert.cert.der().clone()],
+        rustls::DEFAULT_VERSIONS,
+        &[b"h2"],
+    );
+    let stream = tls_connect(&client, node.addr("http"), "grpc.example.org")
+        .await
+        .unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .unwrap();
+    tokio::spawn(conn);
+    let (request, rx) = tokio::sync::mpsc::channel(1);
+    let req = Request::builder()
+        .method("POST")
+        .uri("https://grpc.example.org/echo.Echo/Stream")
+        .header("content-type", "application/grpc")
+        .header("te", "trailers")
+        .body(ChannelBody(rx))
+        .unwrap();
+    let response = sender.send_request(req).await.unwrap();
+    let mut call = GrpcCall { request, response };
+
+    call.send("ping").await;
+    assert_eq!(call.next_message().await, "ping");
+    call.send("pong").await;
+    assert_eq!(call.next_message().await, "pong");
+    let trailers = call.finish().await;
+
+    assert_eq!(trailers["grpc-status"], "0");
+    node.wait_for_metric(
+        r#"gfe_grpc_responses_total{listener="http",vhost="*",route="grpc",grpc_status="0"} 1"#,
+    )
+    .await;
+}
