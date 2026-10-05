@@ -57,7 +57,6 @@ JSON
 cat > "$TMP/node.toml" <<TOML
 [node]
 id = "gfe-load"
-loopback_vip = "127.0.0.1"
 metrics_addr = "$METRICS"
 [control_plane]
 config_file = "$TMP/dynamic.json"

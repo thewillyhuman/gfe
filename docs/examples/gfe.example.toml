@@ -1,5 +1,5 @@
 # GFE Node Configuration (bootstrap)
-# Deserialized by gfe-core/src/config/mod.rs (NodeConfig).
+# Deserialized by gfe-config (NodeConfig, in gfe-config/src/node.rs).
 #
 # The hot-reloadable part (listeners, routes, pools, certificates) lives in the
 # JSON file referenced by [control_plane].config_file — see
@@ -7,7 +7,6 @@
 
 [node]
 id            = "gfe-node-01"
-loopback_vip  = "188.184.100.10"      # service VIP on this node's loopback (DSR; see spec §11)
 metrics_addr  = "127.0.0.1:9101"      # /healthz, /readyz, /metrics; use 0.0.0.0:9101 for remote scrape
 worker_threads = 0                     # 0 = Tokio default (= number of CPUs)
 
@@ -19,7 +18,7 @@ reload_debounce = "250ms"
 [tls]
 min_version = "1.2"                     # "1.2" or "1.3"
 hsts        = "max-age=31536000; includeSubDomains"
-# ticket_key_file = "/etc/gfe/tls-ticket-keys"   # fleet-shared resumption keys (Phase 3)
+# ticket_key_file = "/etc/gfe/tls-ticket-keys"   # fleet-shared resumption keys (accepted, not used yet)
 
 # Every limit must be greater than 0: 0 is not "unlimited", it refuses
 # everything. Leave a setting out to use its default.
@@ -35,23 +34,20 @@ max_upstream_connections  = 20000    # open upstream connections, all backends t
 tls_handshake       = "10s"
 request_header      = "10s"   # first request head must arrive within this of connecting
 upstream_connect    = "3s"
-upstream_first_byte = "30s"   # per attempt: backend silent this long after the last thing sent to it
-request_total       = "60s"   # all attempts together, from the request being sent in full
+upstream_first_byte = "30s"   # backend silent this long, before or during its response: 504, or cut
+request_total       = "60s"   # no new attempt (retry) starts this long after the request arrived
                               # (gRPC calls are bounded by their client's deadline instead)
 client_idle         = "75s"   # close a connection with no request in flight for this long;
-                              # also probe a client silent this long (HTTP/2 PING, TCP keepalive)
+                              # also probe a client silent this long (TCP keepalive)
 drain_deadline      = "30s"   # on shutdown: how long open connections get to finish; one with no
                               # request in flight is closed after half of it
 
 [upstream]
-idle_timeout = "60s"          # close a pooled upstream connection idle for this long
-
-# Kernel-side TCP statistics (accept-queue wait, round-trip time,
-# retransmissions, how connections end), collected by an eBPF program. Linux
-# only; needs CAP_BPF and CAP_NET_ADMIN (see src/systemd/gfe-node-ebpf.conf).
-# Where it cannot be attached the node says so and runs without it.
-[ebpf]
-enabled = false
+idle_connections = 1024       # idle pooled upstream connections kept, all backends together
+idle_timeout     = "60s"      # close a pooled upstream connection idle for this long
+# client_cert_file = "/etc/gfe/upstream-client.pem"   # mTLS: the certificate shown to https backends
+# client_key_file  = "/etc/gfe/upstream-client.key"
+# extra_ca_file    = "/etc/gfe/upstream-ca.pem"       # trusted for https backends, besides the system's CAs
 
 # Where the log goes. With a file, every line is appended to it and standard
 # output (the journal, under systemd) keeps the node's own log only: the

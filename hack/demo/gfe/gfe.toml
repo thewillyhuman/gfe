@@ -2,7 +2,6 @@
 
 [node]
 id           = "gfe-demo"
-loopback_vip = "127.0.0.1"
 metrics_addr = "0.0.0.0:9101"       # scraped by Prometheus over the demo network
 
 [control_plane]
@@ -16,9 +15,6 @@ hsts        = "max-age=3600"
 [timeouts]
 upstream_first_byte = "3s"          # short, so the traffic's slow requests time out
 client_idle         = "30s"
-
-[ebpf]
-enabled = true                      # kernel TCP statistics; the container gets CAP_BPF and CAP_NET_ADMIN
 
 [health_check_defaults]
 type                = "http"
