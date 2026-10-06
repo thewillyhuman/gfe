@@ -15,7 +15,7 @@ use netkit_http::{HeaderName, HeaderValue, Response, StatusCode};
 /// Why GFE answers a request itself instead of relaying a backend's answer.
 /// Each says how it is answered and what the access log's `error` is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Refusal {
+pub(crate) enum Refusal {
     /// The request target's authority and `Host` disagree.
     HostConflict,
     /// Nothing names the host.
@@ -43,7 +43,7 @@ pub enum Refusal {
 
 impl Refusal {
     /// The HTTP status GFE answers with.
-    pub fn status(self) -> StatusCode {
+    pub(crate) fn status(self) -> StatusCode {
         match self {
             Refusal::HostConflict | Refusal::HostMissing | Refusal::UnsupportedTarget => {
                 StatusCode::BAD_REQUEST
@@ -62,7 +62,7 @@ impl Refusal {
     }
 
     /// The access log's `error`.
-    pub fn reason(self) -> &'static str {
+    pub(crate) fn reason(self) -> &'static str {
         match self {
             Refusal::HostConflict => "host_conflict",
             Refusal::HostMissing => "host_missing",
@@ -79,7 +79,7 @@ impl Refusal {
     }
 
     /// The few words the answer says.
-    pub fn message(self) -> &'static str {
+    pub(crate) fn message(self) -> &'static str {
         match self {
             Refusal::HostConflict => "conflicting host",
             Refusal::HostMissing => "missing host",
@@ -102,7 +102,7 @@ impl Refusal {
 /// to a gRPC call (`grpc`), a gRPC failure carrying the same reason. A gRPC
 /// client reads a call's outcome from `grpc-status`, not from the HTTP
 /// status.
-pub fn refusal(refusal: Refusal, request_id: &str, grpc: bool) -> Response<BoxBody> {
+pub(crate) fn refusal(refusal: Refusal, request_id: &str, grpc: bool) -> Response<BoxBody> {
     if grpc {
         let message = format!("gfe: {}", refusal.reason());
         grpc_failure(
@@ -116,7 +116,7 @@ pub fn refusal(refusal: Refusal, request_id: &str, grpc: bool) -> Response<BoxBo
 }
 
 /// A compact `text/plain` answer carrying the request id for correlation.
-pub fn synthetic(status: StatusCode, message: &str, request_id: &str) -> Response<BoxBody> {
+pub(crate) fn synthetic(status: StatusCode, message: &str, request_id: &str) -> Response<BoxBody> {
     let text = format!(
         "{} {}\nrequest-id: {}\n",
         status.as_u16(),
@@ -133,7 +133,7 @@ pub fn synthetic(status: StatusCode, message: &str, request_id: &str) -> Respons
 
 /// The gRPC status codes GFE answers with when it fails a call itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GrpcCode {
+pub(crate) enum GrpcCode {
     Unknown = 2,
     PermissionDenied = 7,
     Unimplemented = 12,
@@ -147,7 +147,7 @@ impl GrpcCode {
     /// carries no `grpc-status` of its own (gRPC's HTTP-to-gRPC status
     /// mapping). Answering with it directly tells clients the same thing,
     /// without relying on each of them to implement the fallback.
-    pub fn for_http_status(status: StatusCode) -> GrpcCode {
+    pub(crate) fn for_http_status(status: StatusCode) -> GrpcCode {
         match status.as_u16() {
             400 => GrpcCode::Internal,
             401 => GrpcCode::Unauthenticated,
@@ -162,7 +162,7 @@ impl GrpcCode {
 /// A gRPC "trailers-only" response: an HTTP 200 with no body whose headers
 /// carry the call's status. This is how a call is failed before any message
 /// has been sent. `message` must be printable ASCII without `%`.
-pub fn grpc_failure(code: GrpcCode, message: &str, request_id: &str) -> Response<BoxBody> {
+pub(crate) fn grpc_failure(code: GrpcCode, message: &str, request_id: &str) -> Response<BoxBody> {
     let mut response = answer(StatusCode::OK, body::empty(), request_id);
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/grpc"));
@@ -178,7 +178,7 @@ pub fn grpc_failure(code: GrpcCode, message: &str, request_id: &str) -> Response
 
 /// A redirect to the same host and path under `scheme` (e.g. HTTP to
 /// HTTPS). A status that is not a valid HTTP status redirects with `308`.
-pub fn redirect(
+pub(crate) fn redirect(
     scheme: &str,
     status: u16,
     host: &str,
@@ -195,7 +195,7 @@ pub fn redirect(
 
 /// A route's fixed answer. A status that is not a valid HTTP status
 /// answers `200`.
-pub fn fixed(status: u16, text: &str, request_id: &str) -> Response<BoxBody> {
+pub(crate) fn fixed(status: u16, text: &str, request_id: &str) -> Response<BoxBody> {
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
     answer(status, body::full(text.to_string()), request_id)
 }

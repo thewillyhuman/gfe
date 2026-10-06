@@ -30,7 +30,7 @@ const HOP_BY_HOP: [&str; 9] = [
 
 /// The client's `X-Request-Id` if it is a usable one (non-empty, printable
 /// ASCII, at most 128 bytes), else a new random 128-bit id in hex.
-pub fn request_id(headers: &HeaderMap) -> String {
+pub(crate) fn request_id(headers: &HeaderMap) -> String {
     let supplied = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok())
@@ -46,7 +46,7 @@ pub fn request_id(headers: &HeaderMap) -> String {
 }
 
 /// Whether the request is a gRPC call, going by its content type.
-pub fn is_grpc(headers: &HeaderMap) -> bool {
+pub(crate) fn is_grpc(headers: &HeaderMap) -> bool {
     headers
         .get(CONTENT_TYPE)
         .is_some_and(|value| value.as_bytes().starts_with(b"application/grpc"))
@@ -56,7 +56,7 @@ pub fn is_grpc(headers: &HeaderMap) -> bool {
 /// (`/path`) or absolute form (`http://host/path`). The asterisk form of
 /// `OPTIONS *` and the authority form of `CONNECT` do not, and GFE forwards
 /// neither.
-pub fn names_a_path(target: &Uri) -> bool {
+pub(crate) fn names_a_path(target: &Uri) -> bool {
     target.path().starts_with('/')
 }
 
@@ -68,7 +68,7 @@ pub fn names_a_path(target: &Uri) -> bool {
 /// to a cleartext URL) is not one: the client expects a server that does not
 /// take it up to answer over HTTP/1.1, which is what happens once the
 /// hop-by-hop headers are stripped.
-pub fn asks_for_upgrade(headers: &HeaderMap) -> bool {
+pub(crate) fn asks_for_upgrade(headers: &HeaderMap) -> bool {
     let names_upgrade = headers
         .get_all(CONNECTION)
         .iter()
@@ -89,7 +89,7 @@ pub fn asks_for_upgrade(headers: &HeaderMap) -> bool {
 /// `TE` is a hop-by-hop header, but `trailers` is the one value HTTP/2
 /// permits (RFC 9113 §8.2.2), and it is not optional for gRPC: clients must
 /// send it and servers use it to detect proxies that cannot relay trailers.
-pub fn asks_for_trailers(headers: &HeaderMap) -> bool {
+pub(crate) fn asks_for_trailers(headers: &HeaderMap) -> bool {
     let mut values = headers.get_all(TE).iter();
     match (values.next(), values.next()) {
         (Some(only), None) => only.as_bytes().eq_ignore_ascii_case(b"trailers"),
@@ -100,7 +100,7 @@ pub fn asks_for_trailers(headers: &HeaderMap) -> bool {
 /// Remove the hop-by-hop headers of a request or response head, and those
 /// its `Connection` header names, whatever they are: a header the sender
 /// says is for this hop only does not cross it.
-pub fn strip_hop_by_hop(headers: &mut HeaderMap) {
+pub(crate) fn strip_hop_by_hop(headers: &mut HeaderMap) {
     let named: Vec<HeaderName> = headers
         .get_all(CONNECTION)
         .iter()
@@ -118,15 +118,15 @@ pub fn strip_hop_by_hop(headers: &mut HeaderMap) {
 
 /// What the forwarding headers say about a request.
 #[derive(Debug)]
-pub struct Forwarding<'a> {
+pub(crate) struct Forwarding<'a> {
     /// The client's address.
-    pub client: IpAddr,
+    pub(crate) client: IpAddr,
     /// `https` when the request arrived over TLS, else `http`.
-    pub proto: &'static str,
+    pub(crate) proto: &'static str,
     /// The host the request is for, as routed.
-    pub host: &'a str,
+    pub(crate) host: &'a str,
     /// The request's id, given to the backend when the client sent none.
-    pub request_id: &'a str,
+    pub(crate) request_id: &'a str,
 }
 
 /// Turn the head of a client's request into the head the backend gets.
@@ -143,7 +143,7 @@ pub struct Forwarding<'a> {
 /// when there is one (always over HTTP/2, where it is `:authority`; an
 /// HTTP/1.1 request in absolute form), else the `Host` header as the client
 /// sent it, port included.
-pub fn to_backend(head: &mut Parts, forwarding: &Forwarding<'_>) {
+pub(crate) fn to_backend(head: &mut Parts, forwarding: &Forwarding<'_>) {
     let asks_for_trailers = asks_for_trailers(&head.headers);
     let headers = &mut head.headers;
     strip_hop_by_hop(headers);

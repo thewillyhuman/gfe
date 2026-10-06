@@ -38,13 +38,13 @@ const MAX_GRPC_STATUS: u8 = 16;
 const NO_ROUTE: &str = "none";
 
 /// The `grpc-status` in a set of response headers or trailers, if valid.
-pub fn grpc_status(headers: &HeaderMap) -> Option<u8> {
+pub(crate) fn grpc_status(headers: &HeaderMap) -> Option<u8> {
     let status: u8 = headers.get("grpc-status")?.to_str().ok()?.parse().ok()?;
     (status <= MAX_GRPC_STATUS).then_some(status)
 }
 
 /// A duration in milliseconds, to the microsecond.
-pub fn millis(duration: Duration) -> f64 {
+pub(crate) fn millis(duration: Duration) -> f64 {
     duration.as_micros() as f64 / 1000.0
 }
 
@@ -93,7 +93,7 @@ struct UpstreamLeg {
 }
 
 /// One request, from its parsed head to the end of its exchange.
-pub struct RequestRecord {
+pub(crate) struct RequestRecord {
     metrics: Arc<GfeMetrics>,
     started: Instant,
     conn: Arc<ConnInfo>,
@@ -124,7 +124,7 @@ pub struct RequestRecord {
 impl RequestRecord {
     /// Start accounting for `request`, which arrived on `conn` for `host`
     /// and is known as `request_id`, counting it in `metrics` as in flight.
-    pub fn begin<B>(
+    pub(crate) fn begin<B>(
         metrics: Arc<GfeMetrics>,
         conn: Arc<ConnInfo>,
         request: &Request<B>,
@@ -162,34 +162,29 @@ impl RequestRecord {
     }
 
     /// The request's id.
-    pub fn request_id(&self) -> &str {
+    pub(crate) fn request_id(&self) -> &str {
         &self.request_id
     }
 
     /// The host the request is for, as used for routing.
-    pub fn host(&self) -> &str {
+    pub(crate) fn host(&self) -> &str {
         &self.host
     }
 
     /// Whether the request is a gRPC call.
-    pub fn is_grpc(&self) -> bool {
+    pub(crate) fn is_grpc(&self) -> bool {
         self.is_grpc
     }
 
-    /// Why GFE is answering the request itself, if it is.
-    pub fn failure(&self) -> Option<&'static str> {
-        self.error
-    }
-
     /// The request matched `route`.
-    pub fn matched(&mut self, route: Arc<CompiledRoute>) {
+    pub(crate) fn matched(&mut self, route: Arc<CompiledRoute>) {
         self.route = Some(route);
     }
 
     /// GFE is answering the request itself, because of `reason` (the access
     /// log's `error`). A backend the request was being sent to is done with
     /// it.
-    pub fn failed(&mut self, reason: &'static str) {
+    pub(crate) fn failed(&mut self, reason: &'static str) {
         self.error = Some(reason);
         if let Some(upstream) = &mut self.upstream {
             upstream.busy = None;
@@ -197,7 +192,7 @@ impl RequestRecord {
     }
 
     /// The request is being forwarded to `pool`.
-    pub fn forwarding_to(&mut self, pool: String) {
+    pub(crate) fn forwarding_to(&mut self, pool: String) {
         self.upstream = Some(UpstreamLeg {
             pool,
             backend: None,
@@ -210,7 +205,7 @@ impl RequestRecord {
     /// An attempt is being made against `backend`. `busy` is dropped when
     /// the backend is done with the request: when the response ends, the
     /// attempt fails, or another attempt is made.
-    pub fn attempting(&mut self, backend: String, busy: impl Any + Send + Sync) {
+    pub(crate) fn attempting(&mut self, backend: String, busy: impl Any + Send + Sync) {
         if let Some(upstream) = &mut self.upstream {
             upstream.backend = Some(backend);
             upstream.attempts += 1;
@@ -220,20 +215,20 @@ impl RequestRecord {
 
     /// The backend answered with a response head, `elapsed` after the first
     /// attempt started.
-    pub fn upstream_responded(&mut self, elapsed: Duration) {
+    pub(crate) fn upstream_responded(&mut self, elapsed: Duration) {
         if let Some(upstream) = &mut self.upstream {
             upstream.time_to_first_byte = Some(elapsed);
         }
     }
 
     /// The counter the request body's bytes are added to as they are read.
-    pub fn request_bytes(&self) -> Arc<AtomicU64> {
+    pub(crate) fn request_bytes(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.request_bytes)
     }
 
     /// Hand the record over to `response`: it is reported when the response
     /// body has been written out or abandoned.
-    pub fn respond(mut self, response: Response<BoxBody>) -> Response<BoxBody> {
+    pub(crate) fn respond(mut self, response: Response<BoxBody>) -> Response<BoxBody> {
         self.status = Some(response.status().as_u16());
         if self.is_grpc {
             self.grpc_status = grpc_status(response.headers());

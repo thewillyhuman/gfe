@@ -37,7 +37,7 @@ const NOT_COMPLETED: u64 = u64::MAX;
 /// The sending side of one forwarded request, shared by the request body
 /// (which notes its progress) and whoever waits for the response.
 #[derive(Debug)]
-pub struct SendProgress {
+pub(crate) struct SendProgress {
     started: Instant,
     /// When the backend was last sent something, in ms since `started`.
     last_sent_ms: AtomicU64,
@@ -51,7 +51,7 @@ pub struct SendProgress {
 impl SendProgress {
     /// Start tracking a request being forwarded from `now` on. A request
     /// without a body (`has_body` false) is complete from the start.
-    pub fn begin(now: Instant, has_body: bool) -> Arc<Self> {
+    pub(crate) fn begin(now: Instant, has_body: bool) -> Arc<Self> {
         Arc::new(SendProgress {
             started: now,
             last_sent_ms: AtomicU64::new(0),
@@ -65,19 +65,19 @@ impl SendProgress {
     }
 
     /// An attempt against a backend starts at `now`.
-    pub fn attempt_started(&self, now: Instant) {
+    pub(crate) fn attempt_started(&self, now: Instant) {
         self.last_sent_ms
             .store(self.elapsed_ms(now), Ordering::Relaxed);
     }
 
     /// A piece of the request body was forwarded at `now`.
-    pub fn body_progressed(&self, now: Instant) {
+    pub(crate) fn body_progressed(&self, now: Instant) {
         self.last_sent_ms
             .store(self.elapsed_ms(now), Ordering::Relaxed);
     }
 
     /// The request body ended at `now`: the request has been sent in full.
-    pub fn body_ended(&self, now: Instant) {
+    pub(crate) fn body_ended(&self, now: Instant) {
         let now_ms = self.elapsed_ms(now);
         self.last_sent_ms.store(now_ms, Ordering::Relaxed);
         self.completed_ms.store(now_ms, Ordering::Relaxed);
@@ -85,23 +85,25 @@ impl SendProgress {
 
     /// The client was asked for more of the request body; `pending` says
     /// whether it had nothing to give yet.
-    pub fn body_polled(&self, pending: bool) {
+    pub(crate) fn body_polled(&self, pending: bool) {
         self.waiting_for_client.store(pending, Ordering::Relaxed);
     }
 
     /// Whether the client is what holds the request up: it had nothing to
     /// give when last asked for more of the request body.
-    pub fn waiting_for_client(&self) -> bool {
+    pub(crate) fn waiting_for_client(&self) -> bool {
         self.waiting_for_client.load(Ordering::Relaxed)
     }
 
-    /// Whether the request has been sent in full.
-    pub fn request_complete(&self) -> bool {
+    /// Whether the request has been sent in full. Only the tests ask: the
+    /// deadline ([`SendProgress::response_deadline`]) is what tells.
+    #[cfg(test)]
+    pub(crate) fn request_complete(&self) -> bool {
         self.completed_ms.load(Ordering::Relaxed) != NOT_COMPLETED
     }
 
     /// The instant by which the response head must have arrived.
-    pub fn response_deadline(&self, timeouts: &TimeoutsConfig) -> Instant {
+    pub(crate) fn response_deadline(&self, timeouts: &TimeoutsConfig) -> Instant {
         let since_start = |ms: u64| self.started + Duration::from_millis(ms);
         let first_byte =
             since_start(self.last_sent_ms.load(Ordering::Relaxed)) + timeouts.upstream_first_byte;
@@ -114,7 +116,7 @@ impl SendProgress {
     /// Resolves once the backend is overdue. Sending more of the request
     /// while this is pending moves the deadline, which is read again on
     /// waking.
-    pub async fn overdue(&self, timeouts: &TimeoutsConfig) {
+    pub(crate) async fn overdue(&self, timeouts: &TimeoutsConfig) {
         loop {
             let deadline = self.response_deadline(timeouts);
             if Instant::now() >= deadline {
@@ -130,7 +132,7 @@ impl SendProgress {
 /// [`SendProgress`], as is whether the client had nothing to give when last
 /// asked for more.
 #[derive(Debug)]
-pub struct CountedBody<B> {
+pub(crate) struct CountedBody<B> {
     inner: B,
     bytes: Arc<AtomicU64>,
     progress: Arc<SendProgress>,
@@ -139,7 +141,7 @@ pub struct CountedBody<B> {
 impl<B: Body> CountedBody<B> {
     /// `inner`, counting its bytes in `bytes` and its progress in
     /// `progress`.
-    pub fn new(inner: B, bytes: Arc<AtomicU64>, progress: Arc<SendProgress>) -> Self {
+    pub(crate) fn new(inner: B, bytes: Arc<AtomicU64>, progress: Arc<SendProgress>) -> Self {
         // A body that is empty from the start is never polled.
         if inner.is_end_stream() {
             progress.body_ended(Instant::now());

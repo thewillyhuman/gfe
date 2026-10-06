@@ -43,7 +43,7 @@ use std::time::Instant;
 /// backend, the time to the response head, and the bytes of the request
 /// body. The backend stays marked busy with the request, through `record`,
 /// until the response ends or the forward fails.
-pub async fn forward(
+pub(crate) async fn forward(
     state: &State,
     conn: &ConnInfo,
     pool: &Arc<Pool<Scheme>>,
@@ -250,7 +250,7 @@ fn client_scheme(scheme: Scheme) -> ClientScheme {
 /// hop-by-hop headers, with `Strict-Transport-Security: hsts` when the
 /// request arrived over TLS (`is_tls`) and `hsts` is not empty, and with
 /// the request id when the backend gave none.
-pub fn to_client(
+pub(crate) fn to_client(
     response: Response<Incoming>,
     is_tls: bool,
     hsts: &str,

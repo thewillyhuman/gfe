@@ -5,18 +5,18 @@
 //!
 //! [`Proxy`] answers every request, in this order (see [`Proxy::handle`]):
 //!
-//! 1. The host the request is for ([`host`]): the target's authority, the
+//! 1. The host the request is for (`host`): the target's authority, the
 //!    `Host` header or the connection's SNI; the two first must agree, and
 //!    over TLS the certificate the client accepted must cover it.
-//! 2. Its record starts ([`record`]): it counts as in flight from here, and
+//! 2. Its record starts (`record`): it counts as in flight from here, and
 //!    is reported once, as metrics and a `gfe::access` event, when its
 //!    response body ends or is dropped, or when the client goes away first.
 //! 3. The route that matches its listener, host and path ([`crate::routing`]).
 //! 4. The route's action: a redirect or a fixed answer GFE writes itself
-//!    ([`respond`]), or a forward to a pool ([`forward`]), which shapes the
-//!    request for the backend ([`request`]), bounds the wait for it
-//!    ([`progress`]), says why it failed ([`failure`]) and retries what may
-//!    be retried ([`retry`]).
+//!    (`respond`), or a forward to a pool (`forward`), which shapes the
+//!    request for the backend (`request`), bounds the wait for it
+//!    (`progress`), says why it failed (`failure`) and retries what may
+//!    be retried (`retry`).
 //!
 //! A request that cannot be served at any step gets a small answer saying
 //! why, in gRPC's terms for a gRPC call. What requests share, and a reload
@@ -30,14 +30,14 @@
 //! which runs on Pingora, when the node switches over.
 
 mod error;
-pub mod failure;
-pub mod forward;
-pub mod host;
-pub mod progress;
-pub mod record;
-pub mod request;
-pub mod respond;
-pub mod retry;
+mod failure;
+mod forward;
+mod host;
+mod progress;
+mod record;
+mod request;
+mod respond;
+mod retry;
 mod state;
 #[cfg(test)]
 pub(crate) mod test_support;

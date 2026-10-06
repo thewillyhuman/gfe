@@ -13,7 +13,7 @@ use netkit_tls::CertStore;
 /// Why a request's host cannot be used to route it. GFE answers such a
 /// request itself.
 #[derive(Debug, PartialEq, Eq)]
-pub enum HostError {
+pub(crate) enum HostError {
     /// The request target's authority and the `Host` header name different
     /// hosts; `target` is the former.
     Conflict { target: String },
@@ -27,7 +27,7 @@ pub enum HostError {
 
 impl HostError {
     /// How GFE answers the request.
-    pub fn refusal(&self) -> Refusal {
+    pub(crate) fn refusal(&self) -> Refusal {
         match self {
             HostError::Conflict { .. } => Refusal::HostConflict,
             HostError::Missing => Refusal::HostMissing,
@@ -36,7 +36,7 @@ impl HostError {
     }
 
     /// The host the request is logged under.
-    pub fn into_host(self) -> String {
+    pub(crate) fn into_host(self) -> String {
         match self {
             HostError::Conflict { target } => target,
             HostError::Missing => String::new(),
@@ -56,7 +56,7 @@ impl HostError {
 /// A request that names no host at all is refused, except over HTTP/1.0,
 /// which has no `Host` header to require: that one is for no host in
 /// particular (the empty host), and only a catch-all route matches it.
-pub fn request_host(
+pub(crate) fn request_host(
     uri: &Uri,
     headers: &HeaderMap,
     version: Version,
@@ -100,7 +100,7 @@ pub fn request_host(
 /// for `host`: that client is reusing the connection for a name it trusts
 /// the connection for (HTTP/2 connection coalescing). Anything else could
 /// reach a tenant over another tenant's certificate.
-pub fn covered_by_sni(
+pub(crate) fn covered_by_sni(
     sni: Option<&str>,
     host: String,
     certificates: &CertStore,

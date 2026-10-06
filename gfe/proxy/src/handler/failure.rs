@@ -21,7 +21,7 @@ const NO_APPLICATION_PROTOCOL: &str = "NoApplicationProtocol";
 /// The kinds of upstream failure GFE tells apart. A bounded set, so it can
 /// label a metric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FailureKind {
+pub(crate) enum FailureKind {
     /// No connection to the backend within `upstream_connect`.
     ConnectTimeout,
     /// The backend refused the TCP connection: nothing listens on the port.
@@ -47,7 +47,7 @@ pub enum FailureKind {
 
 impl FailureKind {
     /// The `kind` label of `gfe_upstream_errors_total`.
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             FailureKind::ConnectTimeout => "connect_timeout",
             FailureKind::ConnectRefused => "connect_refused",
@@ -61,7 +61,7 @@ impl FailureKind {
     }
 
     /// The access log's `error` for a request that failed this way.
-    pub fn reason(self) -> &'static str {
+    pub(crate) fn reason(self) -> &'static str {
         match self {
             FailureKind::ConnectTimeout => "upstream_connect_timeout",
             FailureKind::ConnectRefused => "upstream_connect_refused",
@@ -76,21 +76,21 @@ impl FailureKind {
 
     /// Whether the failure is the backend's: what the node itself refused
     /// (its connection limit) is not counted against the backend.
-    pub fn is_the_backends(self) -> bool {
+    pub(crate) fn is_the_backends(self) -> bool {
         self != FailureKind::ConnectionLimit
     }
 
     /// Whether another attempt could fare better. A node-wide limit is not
     /// something another backend fixes, and a backend that timed out has
     /// already used up the time the request had.
-    pub fn is_retryable(self) -> bool {
+    pub(crate) fn is_retryable(self) -> bool {
         !matches!(self, FailureKind::ConnectionLimit | FailureKind::Timeout)
     }
 }
 
 /// The kind of `failure`, which ended an exchange before any response head
 /// arrived.
-pub fn classify(failure: &Failure) -> FailureKind {
+pub(crate) fn classify(failure: &Failure) -> FailureKind {
     of(failure.kind(), &failure.to_string())
 }
 

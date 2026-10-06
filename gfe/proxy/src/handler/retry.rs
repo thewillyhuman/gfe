@@ -18,11 +18,11 @@ use crate::handler::failure::FailureKind;
 use netkit_http::Method;
 
 /// The most attempts a request gets: the first, and one retry.
-pub const MAX_ATTEMPTS: u32 = 2;
+pub(crate) const MAX_ATTEMPTS: u32 = 2;
 
 /// Whether a request with `method` can be replayed: an idempotent method
 /// (the methods GFE has always retried) and no body.
-pub fn is_replayable(method: &Method, has_body: bool) -> bool {
+pub(crate) fn is_replayable(method: &Method, has_body: bool) -> bool {
     let idempotent = matches!(
         *method,
         Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE | Method::DELETE
@@ -32,19 +32,19 @@ pub fn is_replayable(method: &Method, has_body: bool) -> bool {
 
 /// What the retry decision is made from.
 #[derive(Debug, Clone, Copy)]
-pub struct Attempted {
+pub(crate) struct Attempted {
     /// Whether the request can be replayed ([`is_replayable`]).
-    pub replayable: bool,
+    pub(crate) replayable: bool,
     /// How many attempts have been made, the failed one included.
-    pub attempts: u32,
+    pub(crate) attempts: u32,
     /// Whether any of the response has been sent to the client.
-    pub response_started: bool,
+    pub(crate) response_started: bool,
     /// Why the last attempt failed.
-    pub failure: FailureKind,
+    pub(crate) failure: FailureKind,
 }
 
 /// Whether the request may be attempted again, against a new selection.
-pub fn may_retry(attempted: Attempted) -> bool {
+pub(crate) fn may_retry(attempted: Attempted) -> bool {
     attempted.replayable
         && !attempted.response_started
         && attempted.failure.is_retryable()
