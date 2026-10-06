@@ -1476,8 +1476,15 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "netkit-dns",
+ "netkit-rate-limiting",
+ "netkit-tls",
+ "rcgen",
+ "rustls",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-rustls",
+ "tower-service",
  "tracing",
 ]
 

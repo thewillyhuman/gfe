@@ -14,13 +14,20 @@ http-body = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+netkit-dns = { workspace = true }
+netkit-rate-limiting = { workspace = true }
+netkit-tls = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tower-service = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-# Paused time, for the tests of the connection timers.
+rcgen = { workspace = true }
+rustls = { workspace = true }
+# Paused time, for timers and timeouts tested without waiting for them.
 tokio = { workspace = true, features = ["test-util"] }
+tokio-rustls = { workspace = true }
 
 [lints]
 workspace = true

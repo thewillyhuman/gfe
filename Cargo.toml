@@ -74,6 +74,8 @@ http = "1"
 http-body = "1"
 http-body-util = "0.1"
 bytes = "1"
+# The one trait a connector implements for hyper-util's pooling client.
+tower-service = "0.3"
 
 # TLS. The `ring` crypto provider (default-features off) keeps the build to
 # "Rust + a C compiler for ring's asm": no aws-lc-rs, no cmake.

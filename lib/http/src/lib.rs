@@ -10,6 +10,7 @@
 //! what every HTTP library of the ecosystem speaks, and wrapping it would
 //! only add a conversion at each of this crate's borders.
 pub mod body;
+pub mod client;
 pub mod server;
 
 pub use bytes::Bytes;
