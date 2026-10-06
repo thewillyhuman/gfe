@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 netkit-rate-limiting = { workspace = true }
 arc-swap = { workspace = true }
+socket2 = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 

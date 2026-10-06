@@ -22,8 +22,8 @@
 //! handed to [`Serve::serve`] in a task of its own, as an [`Accepted`]: the
 //! stream, both addresses, the listener's `T` as it is now, and the drain
 //! signal. What happens on the connection (TLS, HTTP, timeouts, logs,
-//! metrics) is the caller's; [`Metered`] counts its bytes on the wire.
-//! [`serve_plain`] does
+//! metrics) is the caller's; [`Metered`] counts its bytes on the wire, and
+//! [`keep_alive`] has the kernel probe a silent peer. [`serve_plain`] does
 //! the same for one socket under one cap, for a process's own small
 //! endpoints.
 //!
@@ -47,6 +47,7 @@
 //! caller gives it; the caller turns that into its own logs and metrics.
 mod accept;
 mod drain;
+mod keep_alive;
 mod listeners;
 mod metered;
 
@@ -55,5 +56,6 @@ mod test_support;
 
 pub use accept::{Accepted, Limit, Limits, Serve, serve_plain};
 pub use drain::Drain;
+pub use keep_alive::keep_alive;
 pub use listeners::{Drained, Listeners, Staged};
 pub use metered::{Meter, Metered};

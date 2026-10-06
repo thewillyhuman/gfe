@@ -117,6 +117,10 @@ aya = "0.14"
 # Safe wrappers over the system calls the standard library does not offer:
 # the monotonic clock, passing sockets between processes, socket options.
 rustix = "1"
+# The socket options tokio does not expose (TCP keepalive timing), without
+# `unsafe`. `all`: the probe count, on Linux and macOS alike. Named by
+# netkit-listen only.
+socket2 = { version = "0.6", features = ["all"] }
 
 # Utilities
 rand = "0.8"

@@ -1496,6 +1496,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "netkit-rate-limiting",
+ "socket2",
  "tokio",
  "tracing",
 ]
