@@ -11,6 +11,7 @@ use server_support::raw_h2::{self, RawH2};
 use server_support::*;
 use std::future::pending;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::Instant;
 
@@ -36,6 +37,27 @@ async fn closes_a_connection_whose_first_head_is_sent_too_slowly() {
 
     assert_eq!(closed.reason, CloseReason::HeaderTimeout);
     assert_about(started.elapsed(), HEADER_TIMEOUT);
+}
+
+/// No timer of the server's own caps the wait for a first head: a header
+/// timeout of minutes is one.
+#[tokio::test(start_paused = true)]
+async fn serves_a_first_head_sent_after_a_minute_within_a_longer_header_timeout() {
+    let minute = Duration::from_secs(60);
+    let (mut client, serving) = serve_pipe(
+        hello(),
+        Options {
+            header_timeout: minute * 2,
+            idle_timeout: minute * 3,
+            ..options()
+        },
+    );
+
+    tokio::time::sleep(minute + Duration::from_secs(30)).await;
+    let response = get(&mut client).await;
+
+    assert!(response.head.starts_with("HTTP/1.1 200"), "{response:?}");
+    assert!(!serving.closed.is_finished());
 }
 
 #[tokio::test(start_paused = true)]
