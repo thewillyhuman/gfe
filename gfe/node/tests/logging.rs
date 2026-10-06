@@ -6,7 +6,7 @@ mod common;
 
 use common::{Launch, Node, eventually, http_get, scratch};
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -168,6 +168,56 @@ fn logs_nothing_from_its_libraries_about_a_client_that_leaves_mid_request() {
         output.contains(r#""target":"gfe::conn""#),
         "the connection is still reported by the node itself: {output}"
     );
+}
+
+/// The dynamic config of a node that terminates TLS on its listener at
+/// `proxy`, with the certificate and key found in `dir`.
+fn tls_config(dir: &Path, proxy: SocketAddr) -> String {
+    format!(
+        r#"{{"certificates":[{{"default":true,"cert_file":"{dir}/quiet.crt","key_file":"{dir}/quiet.key"}}],
+            "listeners":[{{"id":"https","address":"{}","port":{},"protocol":"https"}}],
+            "routes":[{{"id":"fixed","listener":"https","host":"*","path_prefix":"/",
+                        "action":{{"fixed":{{"status":200,"body":"ok"}}}}}}]}}"#,
+        proxy.ip(),
+        proxy.port(),
+        dir = dir.display(),
+    )
+}
+
+/// A TLS record carrying a handshake message that is not a ClientHello: what
+/// a TLS library has something to say about, at warning level.
+const NOT_A_CLIENT_HELLO: &[u8] = &[0x16, 0x03, 0x01, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00];
+
+/// A client that breaks the TLS handshake is reported by the node's own
+/// event of the connection, with the reason, and by nothing else: scanners
+/// do it all day, and a line of the TLS library per such client would fill
+/// the journal.
+#[test]
+fn logs_nothing_from_its_libraries_about_a_client_that_breaks_tls() {
+    let dir = scratch("logging", "tls-quiet");
+    let certified = rcgen::generate_simple_self_signed(vec!["quiet.test".into()]).unwrap();
+    std::fs::write(dir.join("quiet.crt"), certified.cert.pem()).unwrap();
+    std::fs::write(dir.join("quiet.key"), certified.key_pair.serialize_pem()).unwrap();
+    let node = Node::start(
+        &dir,
+        &Launch {
+            dynamic: &|proxy| tls_config(&dir, proxy),
+            command: &piped_output,
+            ..Launch::default()
+        },
+    );
+    let mut client = TcpStream::connect(node.proxy).unwrap();
+    client.write_all(NOT_A_CLIENT_HELLO).unwrap();
+    let mut rest = Vec::new();
+    let _ = client.read_to_end(&mut rest);
+
+    let output = stop(node);
+
+    assert!(
+        output.contains(r#""reason":"tls_handshake_failed""#),
+        "the handshake is still reported by the node itself: {output}"
+    );
+    assert!(from_libraries(&output).is_empty(), "{output}");
 }
 
 /// One request after another over a connection that is kept, then left

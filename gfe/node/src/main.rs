@@ -22,12 +22,18 @@ use tokio::sync::watch;
 /// What a node's log is: its threads are `gfe-log-*`, and the events that
 /// describe traffic (`gfe::access`, `gfe::conn`, `gfe::tcp`, one per request
 /// or connection) go to the log file alone when there is one. The node's
-/// own events carry the name of the module they come from. No target is
-/// muted by default: the libraries under the node log nothing at `info` or
-/// above about healthy traffic or misbehaving clients.
+/// own events carry the name of the module they come from.
+///
+/// rustls warns, through the `log` crate, about every client whose
+/// handshake it finds fault with: a scanner would fill the journal with
+/// its lines, while the node's own event of the connection already says
+/// that the handshake failed, and why. Its warnings are off unless
+/// `RUST_LOG` asks for them (`RUST_LOG=rustls=debug` shows a handshake
+/// step by step); what it logs at `error` is kept. The other libraries
+/// under the node log nothing at `info` or above about traffic.
 const LOG: LogSettings<'static> = LogSettings {
     name: "gfe",
-    quiet_unless_asked: "",
+    quiet_unless_asked: "rustls=error",
     file_only_targets: "gfe::",
 };
 
