@@ -22,21 +22,14 @@ use tokio::sync::watch;
 /// What a node's log is: its threads are `gfe-log-*`, and the events that
 /// describe traffic (`gfe::access`, `gfe::conn`, `gfe::tcp`, one per request
 /// or connection) go to the log file alone when there is one. The node's
-/// own events carry the name of the module they come from.
+/// own events carry the name of the module they come from. No target is
+/// muted by default: the libraries under the node log nothing at `info` or
+/// above about healthy traffic or misbehaving clients.
 const LOG: LogSettings<'static> = LogSettings {
     name: "gfe",
-    quiet_unless_asked: QUIET_UNLESS_ASKED,
+    quiet_unless_asked: "",
     file_only_targets: "gfe::",
 };
-
-/// What Pingora logs, at error level, about a client that misbehaves: one
-/// that leaves halfway through a request head or a response, or whose
-/// HTTP/2 handshake fails. The node's own events already say so (the reason
-/// of `gfe::conn`, the termination of `gfe::access`), and a line per such
-/// connection would let any scanner fill the journal, which then drops
-/// lines that matter. Off unless `RUST_LOG` names these targets, e.g.
-/// `RUST_LOG=info,pingora_proxy=error`.
-const QUIET_UNLESS_ASKED: &str = "pingora_proxy=off,pingora_core::apps=off";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -101,8 +94,9 @@ fn main() -> Result<()> {
     // deployed file cannot be used.
     let node = node.context("--config is required to run a node")?;
     // Kept to the end: dropping it writes out the lines still queued. It
-    // also carries the records of Pingora, which logs through the `log`
-    // crate: starting it installs the bridge from `log` to `tracing`.
+    // also carries the records of the libraries that log through the `log`
+    // crate (rustls): starting it installs the bridge from `log` to
+    // `tracing`.
     let log = Arc::new(Log::start(node.log.file.as_deref(), &LOG)?);
     for deprecation in node.deprecations() {
         tracing::warn!("{deprecation}");

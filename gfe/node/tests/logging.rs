@@ -128,12 +128,19 @@ fn does_not_start_without_the_log_file_it_was_told_to_write() {
     );
 }
 
-/// The lines of `output` that Pingora logged. It logs through the `log`
-/// crate, whose records keep the module they come from as their target.
-fn from_pingora(output: &str) -> Vec<&str> {
+/// The lines of `output` that the libraries under the node logged, rather
+/// than the node itself: every line whose target is not one of GFE's own
+/// (`gfe::*` events, `gfe_*` modules). A library logging through the `log`
+/// crate (rustls does) keeps the module a record comes from as its target.
+fn from_libraries(output: &str) -> Vec<&str> {
     output
         .lines()
-        .filter(|line| line.contains(r#""target":"pingora"#))
+        .filter(|line| {
+            let event: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
+            !event["target"]
+                .as_str()
+                .is_some_and(|target| target.starts_with("gfe"))
+        })
         .collect()
 }
 
@@ -146,18 +153,17 @@ fn leave_halfway_through_a_request(node: &Node) {
     let _ = client.read_to_end(&mut rest);
 }
 
-/// Pingora logs an error about a client that leaves halfway through a
-/// request head. The node's own event of the connection already says so,
-/// and a line per such client would let a scanner fill the journal: by
-/// default that line is not written.
+/// A client that leaves halfway through a request head is reported by the
+/// node's own event of the connection, and by nothing else: a line per
+/// such client would let a scanner fill the journal.
 #[test]
-fn logs_nothing_from_pingora_about_a_client_that_leaves_mid_request() {
-    let node = start("pingora-quiet", "");
+fn logs_nothing_from_its_libraries_about_a_client_that_leaves_mid_request() {
+    let node = start("libraries-quiet", "");
     leave_halfway_through_a_request(&node);
 
     let output = stop(node);
 
-    assert!(from_pingora(&output).is_empty(), "{output}");
+    assert!(from_libraries(&output).is_empty(), "{output}");
     assert!(
         output.contains(r#""target":"gfe::conn""#),
         "the connection is still reported by the node itself: {output}"
@@ -191,7 +197,7 @@ fn requests_over_a_kept_connection(node: &Node) {
 /// idle and close, is in the access and connection logs and nowhere else:
 /// a journal would drown in one line per request.
 #[test]
-fn logs_nothing_from_pingora_about_healthy_traffic() {
+fn logs_nothing_from_its_libraries_about_healthy_traffic() {
     let node = start("quiet", "[timeouts]\nclient_idle = \"1s\"\n");
     for _ in 0..5 {
         assert!(http_get(node.proxy, "/").starts_with("HTTP/1.1 200"));
@@ -213,5 +219,5 @@ fn logs_nothing_from_pingora_about_healthy_traffic() {
     let output = stop(node);
 
     assert!(output.contains("gfe::access"), "{output}");
-    assert!(from_pingora(&output).is_empty(), "{output}");
+    assert!(from_libraries(&output).is_empty(), "{output}");
 }
