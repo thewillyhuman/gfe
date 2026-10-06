@@ -268,6 +268,12 @@ where
 
     let (reason, error) = loop {
         tokio::select! {
+            // In this order, always: the connection is looked at before its
+            // timers. When the runtime is late, bytes that arrived in time
+            // and a timer that has since expired are found together, and
+            // what the client sent in time must be seen before the timer
+            // decides that it sent nothing.
+            biased;
             result = connection.as_mut() => break match result {
                 Ok(()) if told_to_close.load(Ordering::Relaxed) => (CloseReason::Drain, None),
                 Ok(()) => (shut_down_for.unwrap_or(CloseReason::Closed), None),
