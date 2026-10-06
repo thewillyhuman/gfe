@@ -124,10 +124,17 @@ impl Controller {
     /// Calling it again changes nothing.
     pub fn shutdown(&self) {
         self.reloader.tracked().following = false;
-        self.watcher
+        let watcher = self
+            .watcher
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
+        // Stopping a watcher can take most of a second (FSEvents on macOS,
+        // under load), and a leaving node must not wait for it to begin
+        // its drain. Nothing it reports is applied any more.
+        if let Some(watcher) = watcher {
+            std::thread::spawn(move || drop(watcher));
+        }
         self.cert_poller.abort();
         self.reloader.checker.stop_all();
     }
