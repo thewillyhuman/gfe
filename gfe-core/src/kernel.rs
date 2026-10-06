@@ -1,4 +1,4 @@
-//! The kernel's view of the node's TCP connections (`gfe-ebpf`), turned into
+//! The kernel's view of the node's TCP connections (`netkit-kernel`), turned into
 //! what the rest of the node already speaks: an answer to the edge's
 //! accept-queue question, metrics, and one `gfe::tcp` log event per closed
 //! connection.
@@ -10,11 +10,11 @@
 
 use crate::listener::{AcceptQueue, Listeners};
 use gfe_config::NodeConfig;
-use gfe_ebpf::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe};
 use gfe_observability::{
     BackendLabel, ClientEndingLabels, GfeMetrics, KernelMetrics, ListenerLabel,
     UpstreamEndingLabels,
 };
+use netkit_kernel::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe};
 use pingora_core::apps::ServerApp;
 use std::net::SocketAddr;
 use std::sync::Arc;

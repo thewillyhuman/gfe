@@ -5,7 +5,7 @@
 //! failure.
 #![cfg(target_os = "linux")]
 
-use gfe_ebpf::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe, Unavailable};
+use netkit_kernel::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe, Unavailable};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::time::Duration;

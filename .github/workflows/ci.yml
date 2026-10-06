@@ -36,7 +36,7 @@ jobs:
         with:
           components: clippy
       # cmake builds zlib-ng, which Pingora links; clang compiles the eBPF
-      # program of `gfe-ebpf`. The runner image has both: installing them
+      # program of `netkit-kernel`. The runner image has both: installing them
       # states the requirement and keeps the job independent of the image.
       - name: Install the build tools
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends cmake clang
@@ -93,7 +93,7 @@ jobs:
       # Built as the runner's user, run as root: nothing root-owned is left
       # in the build directory.
       - name: Build the kernel test
-        run: cargo test --locked -p gfe-ebpf --test kernel --no-run
+        run: cargo test --locked -p netkit-kernel --test kernel --no-run
       - name: Run it as root
         run: |
           set -euo pipefail

@@ -42,7 +42,7 @@ fn main() {
         Ok(status) => fail(&format!("`{clang}` failed to compile {SOURCE}: {status}")),
         Err(e) => fail(&format!(
             "cannot run `{clang}`: {e}\n\
-             Building gfe-ebpf for Linux needs clang (with the BPF target) and the \
+             Building netkit-kernel for Linux needs clang (with the BPF target) and the \
              kernel's uapi headers to compile its kernel program, {SOURCE}.\n\
              Install clang (Debian/Ubuntu: `apt install clang`; RHEL/Alma: \
              `dnf install clang`), or point CLANG at one, e.g. CLANG=/usr/bin/clang-18."
@@ -52,6 +52,6 @@ fn main() {
 
 /// Stops the build with `message`, without a panic's backtrace noise.
 fn fail(message: &str) -> ! {
-    eprintln!("error: gfe-ebpf: {message}");
+    eprintln!("error: netkit-kernel: {message}");
     process::exit(1);
 }

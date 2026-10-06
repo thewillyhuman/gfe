@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 /*
- * Kernel side of gfe-ebpf.
+ * Kernel side of netkit-kernel.
  *
  * One "sockops" program, attached to the node's cgroup, so it sees exactly
  * the TCP connections of the node: the ones it accepts from clients and the
@@ -15,7 +15,7 @@
  *     the kernel knows about it: round-trip time, retransmissions, and the
  *     TCP state it was closed from.
  *
- * The layouts below are read byte by byte by src/wire.rs of gfe-ebpf.
+ * The layouts below are read byte by byte by src/wire.rs of netkit-kernel.
  * Change both.
  *
  * Deliberately self-contained: it needs clang and the kernel's uapi headers,
@@ -24,7 +24,7 @@
 #include <linux/bpf.h>
 
 #if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "gfe-ebpf decodes these structures as little-endian"
+#error "netkit-kernel decodes these structures as little-endian"
 #endif
 
 #define SEC(name) __attribute__((section(name), used))

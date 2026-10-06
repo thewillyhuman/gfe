@@ -7,7 +7,7 @@ members = [
     "gfe-config",
     "gfe-observability",
     "lib/rate-limiting",
-    "gfe-ebpf",
+    "lib/kernel",
     # What the proxy is made of, one capability per crate.
     "lib/health-checking",
     "lib/load-balancing",
@@ -42,7 +42,7 @@ netkit-tls = { path = "lib/tls" }
 gfe-config = { path = "gfe-config" }
 gfe-observability = { path = "gfe-observability" }
 netkit-rate-limiting = { path = "lib/rate-limiting" }
-gfe-ebpf = { path = "gfe-ebpf" }
+netkit-kernel = { path = "lib/kernel" }
 netkit-health-checking = { path = "lib/health-checking" }
 netkit-load-balancing = { path = "lib/load-balancing" }
 gfe-core = { path = "gfe-core" }

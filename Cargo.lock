@@ -974,13 +974,13 @@ dependencies = [
  "criterion",
  "dashmap 6.2.1",
  "gfe-config",
- "gfe-ebpf",
  "gfe-observability",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
  "netkit-health-checking",
+ "netkit-kernel",
  "netkit-load-balancing",
  "netkit-rate-limiting",
  "netkit-tls",
@@ -1001,16 +1001,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "x509-parser",
-]
-
-[[package]]
-name = "gfe-ebpf"
-version = "0.1.0"
-dependencies = [
- "aya",
- "rustix",
- "thiserror 2.0.21",
- "tokio",
 ]
 
 [[package]]
@@ -1473,6 +1463,16 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
+]
+
+[[package]]
+name = "netkit-kernel"
+version = "0.1.0"
+dependencies = [
+ "aya",
+ "rustix",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

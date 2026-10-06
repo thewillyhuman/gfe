@@ -1,5 +1,5 @@
 [package]
-name = "gfe-ebpf"
+name = "netkit-kernel"
 description = "The kernel's view of the node's TCP connections"
 version.workspace = true
 edition.workspace = true

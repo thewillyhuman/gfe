@@ -76,7 +76,7 @@ jobs:
       - name: Install the C toolchains
         # musl-gcc compiles the C and assembly the binary links for the musl
         # target (the TLS library, and zlib-ng, which cmake builds for
-        # Pingora). clang compiles the kernel program of `gfe-ebpf`, without
+        # Pingora). clang compiles the kernel program of `netkit-kernel`, without
         # which the build fails. It needs kernel headers that know the ring
         # buffer (5.8), which this distribution has.
         run: |

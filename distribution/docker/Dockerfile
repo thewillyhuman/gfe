@@ -34,7 +34,7 @@ FROM rust:1.88-bookworm AS builder
 WORKDIR /gfe
 
 # What the build needs besides Rust and a C compiler: cmake builds zlib-ng,
-# which Pingora links, and clang compiles the eBPF program of `gfe-ebpf`.
+# which Pingora links, and clang compiles the eBPF program of `netkit-kernel`.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends cmake clang \
  && rm -rf /var/lib/apt/lists/*
