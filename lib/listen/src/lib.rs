@@ -71,4 +71,4 @@ pub use accept::{Accepted, Limit, Limits, Serve, serve_plain};
 pub use drain::Drain;
 pub use keep_alive::keep_alive;
 pub use listeners::{Drained, Listeners, Staged};
-pub use metered::{Meter, Metered};
+pub use metered::{Meter, Metered, Tally};

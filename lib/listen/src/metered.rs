@@ -5,6 +5,11 @@
 //! the stream ([`Meter`]), so that whoever accounts for a connection can
 //! read them after the stream has been handed on, or dropped.
 //!
+//! A stream's own counts end with the stream. A total over many streams (all
+//! the bytes of a listener, say) is kept by a [`Tally`], which a stream
+//! tells of its bytes as they flow, so that the total moves while
+//! long-lived connections are still open.
+//!
 //! Wrapped around an accepted TCP stream, underneath any TLS, it counts the
 //! bytes on the wire. It does not interpret them, time them, or say how the
 //! stream ended: that is for the code that serves the connection.
@@ -41,12 +46,36 @@ impl Meter {
     }
 }
 
+/// Told of the bytes of [`Metered`] streams as they flow: a total that
+/// outlives any one stream.
+///
+/// It is called on the task that reads or writes, for every read and every
+/// write that moved bytes, so it must return at once: add to a counter, do
+/// nothing else.
+pub trait Tally: Send + Sync {
+    /// `bytes` were read from a stream.
+    fn read(&self, bytes: u64);
+
+    /// `bytes` were written to a stream.
+    fn written(&self, bytes: u64);
+}
+
 /// A stream that counts the bytes read from and written to it. Reads and
 /// writes pass through unchanged.
-#[derive(Debug)]
 pub struct Metered<S> {
     inner: S,
     counts: Arc<Counts>,
+    tally: Option<Arc<dyn Tally>>,
+}
+
+impl<S: std::fmt::Debug> std::fmt::Debug for Metered<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Metered")
+            .field("inner", &self.inner)
+            .field("counts", &self.counts)
+            .field("tallied", &self.tally.is_some())
+            .finish()
+    }
 }
 
 impl<S> Metered<S> {
@@ -55,6 +84,17 @@ impl<S> Metered<S> {
         Metered {
             inner,
             counts: Arc::default(),
+            tally: None,
+        }
+    }
+
+    /// `inner`, with both counts at zero, and `tally` told of every byte as
+    /// well.
+    pub fn with_tally(inner: S, tally: Arc<dyn Tally>) -> Self {
+        Metered {
+            inner,
+            counts: Arc::default(),
+            tally: Some(tally),
         }
     }
 
@@ -82,11 +122,27 @@ impl<S> Metered<S> {
         self.inner
     }
 
+    fn count_read(&self, read: u64) {
+        if read == 0 {
+            return;
+        }
+        self.counts.read.fetch_add(read, Ordering::Relaxed);
+        if let Some(tally) = &self.tally {
+            tally.read(read);
+        }
+    }
+
     fn count_written(&self, result: &Poll<io::Result<usize>>) {
-        if let Poll::Ready(Ok(written)) = result {
-            self.counts
-                .written
-                .fetch_add(*written as u64, Ordering::Relaxed);
+        let Poll::Ready(Ok(written)) = result else {
+            return;
+        };
+        let written = *written as u64;
+        if written == 0 {
+            return;
+        }
+        self.counts.written.fetch_add(written, Ordering::Relaxed);
+        if let Some(tally) = &self.tally {
+            tally.written(written);
         }
     }
 }
@@ -100,8 +156,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for Metered<S> {
         let before = buf.filled().len();
         let result = Pin::new(&mut self.inner).poll_read(cx, buf);
         if let Poll::Ready(Ok(())) = &result {
-            let read = (buf.filled().len() - before) as u64;
-            self.counts.read.fetch_add(read, Ordering::Relaxed);
+            self.count_read((buf.filled().len() - before) as u64);
         }
         result
     }
