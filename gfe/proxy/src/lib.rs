@@ -27,6 +27,7 @@
 
 pub mod edge;
 mod frontend;
+pub mod handler;
 pub mod kernel;
 pub mod listener;
 pub mod metrics;
