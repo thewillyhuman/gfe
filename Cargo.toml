@@ -10,7 +10,7 @@ members = [
     "gfe-ebpf",
     # What the proxy is made of, one capability per crate.
     "gfe-health-checking",
-    "gfe-load-balancing",
+    "lib/load-balancing",
     # The reverse proxy, and the binary a node runs.
     "gfe-core",
     "gfe-node",
@@ -44,7 +44,7 @@ gfe-observability = { path = "gfe-observability" }
 gfe-limits = { path = "gfe-limits" }
 gfe-ebpf = { path = "gfe-ebpf" }
 gfe-health-checking = { path = "gfe-health-checking" }
-gfe-load-balancing = { path = "gfe-load-balancing" }
+netkit-load-balancing = { path = "lib/load-balancing" }
 gfe-core = { path = "gfe-core" }
 
 # The HTTP proxy engine: HTTP/1 and HTTP/2 on both legs, the proxy state

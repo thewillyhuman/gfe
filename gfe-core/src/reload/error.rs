@@ -1,7 +1,7 @@
 //! What applying a dynamic config can fail at.
 
 use gfe_config::ConfigError;
-use gfe_load_balancing::PoolError;
+use netkit_load_balancing::PoolError;
 use netkit_tls::TlsError;
 use std::path::PathBuf;
 use thiserror::Error;

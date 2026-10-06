@@ -1,5 +1,5 @@
 [package]
-name = "gfe-load-balancing"
+name = "netkit-load-balancing"
 description = "Which backend gets a request: pools and selection policies"
 version.workspace = true
 edition.workspace = true

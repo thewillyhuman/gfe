@@ -977,12 +977,12 @@ dependencies = [
  "gfe-ebpf",
  "gfe-health-checking",
  "gfe-limits",
- "gfe-load-balancing",
  "gfe-observability",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "netkit-load-balancing",
  "netkit-tls",
  "notify",
  "pingora-core",
@@ -1039,17 +1039,6 @@ dependencies = [
 [[package]]
 name = "gfe-limits"
 version = "0.1.0"
-
-[[package]]
-name = "gfe-load-balancing"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "gfe-config",
- "gfe-health-checking",
- "rand",
- "thiserror 2.0.21",
-]
 
 [[package]]
 name = "gfe-loadtest"
@@ -1488,6 +1477,17 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "netkit-load-balancing"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "gfe-config",
+ "gfe-health-checking",
+ "rand",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

@@ -25,13 +25,13 @@ use gfe_config::{
 use gfe_core::listener::{ConnInfo, Connections};
 use gfe_core::proxy::{self, State};
 use gfe_core::routing::RouteTable;
-use gfe_load_balancing::PoolSet;
 use gfe_observability::GfeMetrics;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::{Frame, Incoming};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use netkit_load_balancing::PoolSet;
 use netkit_tls::{CertStore, TlsInfo};
 use pingora_core::apps::ServerApp;
 use pingora_core::protocols::GetSocketDigest;

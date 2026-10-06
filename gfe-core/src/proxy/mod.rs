@@ -411,7 +411,7 @@ impl ProxyHttp for GfeProxy {
             ));
         }
         // The affinity key of `ring_hash` is the client's address.
-        let hash_key = client.map(|client| gfe_load_balancing::policy::hash64(client.ip()));
+        let hash_key = client.map(|client| netkit_load_balancing::policy::hash64(client.ip()));
         let Some(selection) = forward.pool.select(state.health(), hash_key) else {
             state.metrics().proxy.no_healthy_upstream.inc();
             ctx.refusal = Some(Refusal::NoHealthyUpstream);

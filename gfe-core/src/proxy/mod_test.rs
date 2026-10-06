@@ -93,7 +93,7 @@ fn swap_installs_routes_and_pools_together() {
 
     state.swap(
         crate::routing::RouteTable::compile(&config),
-        gfe_load_balancing::PoolSet::build(&config.pools).unwrap(),
+        netkit_load_balancing::PoolSet::build(&config.pools).unwrap(),
     );
 
     let routing = state.routing.load();

@@ -5,8 +5,8 @@ use crate::proxy::State;
 use crate::reload::ReloadError;
 use crate::routing::RouteTable;
 use gfe_config::{DynamicConfig, validate};
-use gfe_load_balancing::PoolSet;
 use gfe_observability::SniLabel;
+use netkit_load_balancing::PoolSet;
 use netkit_tls::CertStore;
 use std::time::{SystemTime, UNIX_EPOCH};
 

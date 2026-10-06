@@ -4,8 +4,8 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use gfe_config::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
 use gfe_health_checking::HealthMap;
-use gfe_load_balancing::PoolSet;
-use gfe_load_balancing::policy::{build_ring, hash64};
+use netkit_load_balancing::PoolSet;
+use netkit_load_balancing::policy::{build_ring, hash64};
 
 fn pool(policy: LbPolicy, n: usize, weighted: bool) -> UpstreamPool {
     let upstreams = (0..n)

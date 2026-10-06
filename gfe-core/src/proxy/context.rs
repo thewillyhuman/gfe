@@ -12,8 +12,8 @@ use crate::listener::{ConnInfo, RequestGuard};
 use crate::proxy::State;
 use crate::proxy::record::{CLIENT_CLOSED_REQUEST, RequestRecord, Termination};
 use crate::proxy::respond::{Answer, Refusal};
-use gfe_load_balancing::{InflightGuard, Pool};
 use gfe_observability::{Gauge, UpstreamDurationLabels};
+use netkit_load_balancing::{InflightGuard, Pool};
 use std::sync::Arc;
 use std::time::Instant;
 
