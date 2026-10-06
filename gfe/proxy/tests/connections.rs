@@ -303,3 +303,47 @@ async fn an_idle_http2_connection_is_sent_goaway_and_logged_as_idle() {
     assert_eq!(events[0]["reason"], "idle_timeout", "{events:?}");
     assert_eq!(events[0]["requests"], 1);
 }
+
+/// The opening of an HTTP/2 connection with prior knowledge, as raw
+/// frames: the preface, empty SETTINGS, and `GET http://a.example.org/`
+/// on stream 1, ending it. The header block is HPACK by hand: `:method
+/// GET`, `:scheme http` and `:path /` from the static table, `:authority`
+/// as a literal.
+fn h2_get_frames() -> Vec<u8> {
+    let authority = b"a.example.org";
+    let mut block = vec![0x82, 0x86, 0x84, 0x41, authority.len() as u8];
+    block.extend_from_slice(authority);
+    let mut frames = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+    // SETTINGS, no flags, stream 0, empty.
+    frames.extend_from_slice(&[0, 0, 0, 0x4, 0, 0, 0, 0, 0]);
+    // HEADERS, END_STREAM | END_HEADERS, stream 1.
+    frames.extend_from_slice(&[0, 0, block.len() as u8, 0x1, 0x5, 0, 0, 0, 1]);
+    frames.extend_from_slice(&block);
+    frames
+}
+
+/// An HTTP/2 client silent for `client_idle` is sent a PING, request in
+/// flight or not, and one that does not acknowledge it within a quarter
+/// of `client_idle` is taken for gone: closed long before its request
+/// would have been answered.
+#[tokio::test]
+async fn an_http2_client_that_does_not_answer_a_ping_is_closed_as_unresponsive() {
+    let (logs, _capturing) = CapturedLogs::start();
+    let upstream = spawn_upstream_answering_after(Duration::from_secs(10)).await;
+    let node = Node::serving_with("h2-ping", &forwarding_config(upstream), |node| {
+        node.timeouts.client_idle = Duration::from_millis(400);
+    });
+    let mut client = TcpStream::connect(node.addr("http")).await.unwrap();
+
+    // Sends its request, then neither reads nor writes again.
+    client.write_all(&h2_get_frames()).await.unwrap();
+    let started = Instant::now();
+    let events = logs.wait_for_events("gfe::conn", 1).await;
+
+    assert_eq!(events[0]["reason"], "client_unresponsive", "{events:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+}
