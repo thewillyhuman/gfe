@@ -1168,14 +1168,14 @@ Building:
 
 - Rust 1.88 or later (edition 2024); clang on Linux, for the eBPF program.
 
-Throughput is the same within the noise of the measurement: `hack/loadtest.sh 64 6`, on one laptop (loopback; the load client and the mock backend share its cores), `v1.1.0` measured on the same machine:
+Throughput is the same within the noise of the measurement: `hack/loadtest.sh 64 6`, on one laptop (loopback; the load client and the mock backend share its cores), the two binaries run minutes apart, each run started once loopback had no sockets left in `TIME_WAIT` from the one before:
 
 | scenario | v1.1.0 | this version |
 |---|---|---|
-| http, fixed response, kept connections | 150,487 req/s | 149,577 req/s |
-| http, proxied, kept connections | 68,940 req/s | 68,042 req/s |
-| https, proxied, kept connections | 66,967 req/s | 67,856 req/s |
-| https, proxied, a new TLS connection per request (8 clients) | 10,337 req/s | 11,452 req/s |
+| http, fixed response, kept connections | 150,597 req/s | 150,342 req/s |
+| http, proxied, kept connections | 67,940 req/s | 66,931 req/s |
+| https, proxied, kept connections | 67,271 req/s | 67,906 req/s |
+| https, proxied, a new TLS connection per request (8 clients) | 11,452 req/s | 11,173 req/s |
 
 ---
 

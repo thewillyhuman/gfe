@@ -172,17 +172,17 @@ a mock backend (`gfe-loadtest`), one scenario after the other. `./hack/loadtest.
 
 ```
 scenario                          mode        result
-http  · fixed (GFE overhead)      keepalive   149577 req/s   p50 413µs  p99 803µs   errors=0
-http  · proxy (+upstream)         keepalive    68042 req/s   p50 911µs  p99 1.61ms  errors=0
-https · proxy (warm TLS)          keepalive    67856 req/s   p50 911µs  p99 1.63ms  errors=0
-https · proxy (new TLS/req, c=8)  reconnect    11452 req/s   p50 668µs  p99 995µs   errors=0
+http  · fixed (GFE overhead)      keepalive   150342 req/s   p50 408µs  p99 819µs   errors=0
+http  · proxy (+upstream)         keepalive    66931 req/s   p50 925µs  p99 1.63ms  errors=0
+https · proxy (warm TLS)          keepalive    67906 req/s   p50 907µs  p99 1.62ms  errors=0
+https · proxy (new TLS/req, c=8)  reconnect    11173 req/s   p50 678µs  p99 1.14ms  errors=0
 ```
 
 - **The node's own work is small.** Answering a request itself (routing and
   a fixed response, no backend) runs at about 150k req/s on kept
   connections.
 - **The hop to the backend is the main cost of a proxied request**, not TLS:
-  adding the backend roughly halves the throughput (150k → 68k), and TLS on
+  adding the backend roughly halves the throughput (150k → 67k), and TLS on
   a connection that is already established costs nothing measurable.
 - **A new TLS connection per request runs at about 11k req/s with 8 client
   workers.** The load client resumes its TLS sessions, so this row is the
@@ -190,9 +190,10 @@ https · proxy (new TLS/req, c=8)  reconnect    11452 req/s   p50 668µs  p99 99
   full handshake: a client that cannot resume pays the 134 µs above, most of
   it on the node.
 
-The released `v1.1.0`, measured the same way on the same laptop, ran the
-four scenarios at 150,487, 68,940, 66,967 and 10,337 req/s. Within the noise
-of such a measurement the two are the same.
+The released `v1.1.0`, run the same way on the same laptop minutes apart
+(each run started once loopback had no sockets left in `TIME_WAIT` from the
+one before), ran the four scenarios at 150,597, 67,940, 67,271 and 11,452
+req/s. Within the noise of such a measurement the two are the same.
 
 ### Sizing a node
 
