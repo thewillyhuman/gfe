@@ -143,7 +143,7 @@ async fn http2_over_tls_fails_on_a_server_that_speaks_only_http11() {
         .err()
         .unwrap();
 
-    assert_eq!(failure.kind(), FailureKind::Tls, "{failure}");
+    assert_eq!(failure.kind(), FailureKind::ProtocolRefused, "{failure}");
 }
 
 #[tokio::test]

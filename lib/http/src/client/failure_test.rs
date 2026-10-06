@@ -96,13 +96,23 @@ fn a_transport_failure_during_the_handshake_is_a_connect_error() {
 }
 
 #[test]
-fn a_protocol_the_server_will_not_speak_is_tls() {
+fn a_protocol_the_server_does_not_choose_is_a_refused_protocol() {
     let error = ConnectError::Alpn {
         server_name: "server.test".into(),
         offered: netkit_tls::Alpn::H2,
     };
 
-    assert_eq!(connecting(error), FailureKind::Tls);
+    assert_eq!(connecting(error), FailureKind::ProtocolRefused);
+}
+
+#[test]
+fn the_alert_of_a_server_with_no_protocol_in_common_is_a_refused_protocol() {
+    let alert = io::Error::new(
+        io::ErrorKind::InvalidData,
+        rustls::Error::AlertReceived(rustls::AlertDescription::NoApplicationProtocol),
+    );
+
+    assert_eq!(connecting(tls(alert)), FailureKind::ProtocolRefused);
 }
 
 #[test]

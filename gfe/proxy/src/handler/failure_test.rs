@@ -7,37 +7,14 @@ fn each_kind_the_client_reports_keeps_its_meaning() {
         (LibraryKind::ConnectRefused, FailureKind::ConnectRefused),
         (LibraryKind::ConnectError, FailureKind::ConnectError),
         (LibraryKind::Tls, FailureKind::Tls),
+        (LibraryKind::ProtocolRefused, FailureKind::Other),
         (LibraryKind::Reset, FailureKind::Reset),
         (LibraryKind::ConnectionLimit, FailureKind::ConnectionLimit),
         (LibraryKind::Other, FailureKind::Other),
     ];
     for (reported, expected) in cases {
-        assert_eq!(of(reported, "whatever happened"), expected, "{reported:?}");
+        assert_eq!(of(reported), expected, "{reported:?}");
     }
-}
-
-#[test]
-fn a_server_that_did_not_agree_to_speak_http2_is_other() {
-    let message = "TLS failure: client error (Connect): TLS handshake with a.example.org: \
-                   the server did not agree to speak H2";
-
-    assert_eq!(of(LibraryKind::Tls, message), FailureKind::Other);
-}
-
-#[test]
-fn a_server_that_refused_every_protocol_offered_is_other() {
-    let message = "TLS failure: client error (Connect): TLS handshake with a.example.org: \
-                   received fatal alert: NoApplicationProtocol";
-
-    assert_eq!(of(LibraryKind::Tls, message), FailureKind::Other);
-}
-
-#[test]
-fn an_untrusted_certificate_stays_a_tls_failure() {
-    let message = "TLS failure: client error (Connect): TLS handshake with a.example.org: \
-                   invalid peer certificate: UnknownIssuer";
-
-    assert_eq!(of(LibraryKind::Tls, message), FailureKind::Tls);
 }
 
 #[test]

@@ -142,7 +142,7 @@ async fn a_request_that_needs_http2_fails_on_a_server_that_speaks_only_http11() 
         .await
         .unwrap_err();
 
-    assert_eq!(failure.kind(), FailureKind::Tls, "{failure}");
+    assert_eq!(failure.kind(), FailureKind::ProtocolRefused, "{failure}");
     assert!(server.seen().is_empty());
 }
 
@@ -158,7 +158,7 @@ async fn a_request_that_needs_http2_fails_on_a_server_without_alpn() {
         .await
         .unwrap_err();
 
-    assert_eq!(failure.kind(), FailureKind::Tls, "{failure}");
+    assert_eq!(failure.kind(), FailureKind::ProtocolRefused, "{failure}");
     assert!(failure.to_string().contains("did not agree"), "{failure}");
 }
 

@@ -11,13 +11,6 @@
 
 use netkit_http::client::{Failure, FailureKind as LibraryKind};
 
-/// What the client says when a server would not speak HTTP/2 after it was
-/// offered nothing else: the server chose no protocol, or chose another.
-const DID_NOT_AGREE: &str = "did not agree to speak";
-
-/// The TLS alert of a server that supports none of the protocols offered.
-const NO_APPLICATION_PROTOCOL: &str = "NoApplicationProtocol";
-
 /// The kinds of upstream failure GFE tells apart. A bounded set, so it can
 /// label a metric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,28 +84,22 @@ impl FailureKind {
 /// The kind of `failure`, which ended an exchange before any response head
 /// arrived.
 pub(crate) fn classify(failure: &Failure) -> FailureKind {
-    of(failure.kind(), &failure.to_string())
+    of(failure.kind())
 }
 
-/// The kind of a failure the client reported as `reported`, described by
-/// `message` (the failure with all its causes).
+/// The kind of a failure the client reported as `reported`.
 ///
 /// A request that needs HTTP/2, sent to an `https` backend that will not
-/// speak it, is a TLS failure to the client, which offers HTTP/2 alone.
-/// `v1.1.0` offered both protocols, was answered over HTTP/1.1 and failed
-/// the request as `other`; operators' dashboards know it so. The client
-/// tells that case apart only in its message, hence the text match.
-fn of(reported: LibraryKind, message: &str) -> FailureKind {
+/// speak it, is refused its protocol by the backend. `v1.1.0` offered both
+/// protocols, was answered over HTTP/1.1 and failed the request as
+/// `other`; operators' dashboards know it so.
+fn of(reported: LibraryKind) -> FailureKind {
     match reported {
         LibraryKind::ConnectTimeout => FailureKind::ConnectTimeout,
         LibraryKind::ConnectRefused => FailureKind::ConnectRefused,
         LibraryKind::ConnectError => FailureKind::ConnectError,
-        LibraryKind::Tls
-            if message.contains(DID_NOT_AGREE) || message.contains(NO_APPLICATION_PROTOCOL) =>
-        {
-            FailureKind::Other
-        }
         LibraryKind::Tls => FailureKind::Tls,
+        LibraryKind::ProtocolRefused => FailureKind::Other,
         LibraryKind::Reset => FailureKind::Reset,
         LibraryKind::ConnectionLimit => FailureKind::ConnectionLimit,
         LibraryKind::Other => FailureKind::Other,

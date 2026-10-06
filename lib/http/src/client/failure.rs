@@ -22,10 +22,14 @@ pub enum FailureKind {
     /// handshake.
     ConnectError,
     /// TLS failed: the server's certificate is not trusted or does not name
-    /// it, the server refused the client's certificate, no version or
-    /// protocol in common (including a server that will not speak HTTP/2
-    /// when the request needs it).
+    /// it, the server refused the client's certificate, no version in
+    /// common.
     Tls,
+    /// The server would not speak the protocol the request needs: offered
+    /// that protocol alone, it chose none, or answered that it has none in
+    /// common. A request that needs HTTP/2, sent to a server that only
+    /// speaks HTTP/1.1, fails this way.
+    ProtocolRefused,
     /// The connection broke before the response head arrived: closed,
     /// reset, or no longer answering HTTP/2 keep-alive pings.
     Reset,
@@ -96,11 +100,14 @@ impl FailureKind {
                 io::ErrorKind::TimedOut => FailureKind::ConnectTimeout,
                 _ => FailureKind::ConnectError,
             },
+            ConnectError::Tls { source, .. } if netkit_tls::is_protocol_refusal(source) => {
+                FailureKind::ProtocolRefused
+            }
             ConnectError::Tls { source, .. } if netkit_tls::is_tls_error(source) => {
                 FailureKind::Tls
             }
             ConnectError::Tls { .. } => FailureKind::ConnectError,
-            ConnectError::Alpn { .. } => FailureKind::Tls,
+            ConnectError::Alpn { .. } => FailureKind::ProtocolRefused,
         }
     }
 }
@@ -112,6 +119,7 @@ impl fmt::Display for FailureKind {
             FailureKind::ConnectRefused => "connection refused",
             FailureKind::ConnectError => "connect error",
             FailureKind::Tls => "TLS failure",
+            FailureKind::ProtocolRefused => "protocol refused",
             FailureKind::Reset => "connection reset",
             FailureKind::ConnectionLimit => "connection limit reached",
             FailureKind::Other => "request failed",
