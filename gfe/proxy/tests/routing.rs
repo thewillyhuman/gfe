@@ -146,11 +146,9 @@ async fn fixed_action_answers_without_a_backend() {
     assert_eq!(answer.headers["x-request-id"], "abc");
 }
 
-/// Pingora refuses an absolute-form target whose authority differs from
-/// `Host` before GFE sees the request (a behaviour change: it is answered
-/// by the engine, and has no access event).
 #[tokio::test]
 async fn answers_400_when_the_target_and_host_header_disagree() {
+    let (logs, _guard) = CapturedLogs::start();
     let proxy = Proxy::start(&fixed_response_config()).await;
 
     let response = raw_exchange(
@@ -159,17 +157,22 @@ async fn answers_400_when_the_target_and_host_header_disagree() {
          connection: close\r\n\r\n",
     )
     .await;
+    let event = logs.access_event().await;
 
     assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+    assert_eq!(event["status"], 400);
+    assert_eq!(event["error"], "host_conflict");
 }
 
+/// The authority and `Host` are compared as hosts: case and the default
+/// port do not make them disagree.
 #[tokio::test]
-async fn serves_absolute_form_target_that_matches_the_host_header() {
+async fn serves_absolute_form_target_that_agrees_with_the_host_header() {
     let proxy = Proxy::start(&fixed_response_config()).await;
 
     let response = raw_exchange(
         proxy.addr,
-        "GET http://public.example.org/ HTTP/1.1\r\nhost: public.example.org\r\n\
+        "GET http://Public.example.org:80/ HTTP/1.1\r\nhost: public.example.org\r\n\
          connection: close\r\n\r\n",
     )
     .await;
@@ -194,15 +197,11 @@ async fn answers_400_to_a_cleartext_request_without_a_host() {
 async fn serves_an_http10_request_without_a_host_from_the_catch_all_route() {
     let proxy = Proxy::start(&fixed_response_config()).await;
 
-    // At least 24 bytes: the test harness serves with Pingora's own stream,
-    // whose cleartext HTTP/2 detection waits for that many (the edge's
-    // stream must not; see the report).
-    let response = raw_exchange(proxy.addr, "GET / HTTP/1.0\r\nuser-agent: probe\r\n\r\n").await;
+    // Shorter than the HTTP/2 preface: the protocol is told by what arrives,
+    // not by waiting for 24 bytes.
+    let response = raw_exchange(proxy.addr, "GET / HTTP/1.0\r\n\r\n").await;
 
-    // Pingora answers in HTTP/1.1, as RFC 9110 §6.2 allows (the old proxy
-    // answered in HTTP/1.0).
-    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-    assert!(response.contains("Connection: close"), "{response}");
+    assert!(response.starts_with("HTTP/1.0 200"), "{response}");
 }
 
 /// One certificate for `a.example.org` and `b.example.org`, another for

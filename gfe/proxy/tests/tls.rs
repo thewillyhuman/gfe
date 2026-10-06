@@ -208,6 +208,8 @@ async fn a_tls13_only_policy_refuses_a_tls12_client() {
         accepted.get_ref().1.protocol_version(),
         Some(rustls::ProtocolVersion::TLSv1_3)
     );
+    node.wait_for_metric(r#"gfe_tls_handshake_failures_total{reason="peer_incompatible"} 1"#)
+        .await;
 }
 
 #[tokio::test]

@@ -8,14 +8,13 @@
 //! `gfe_ebpf_attached` at 0 for an alert to see, and serves without it:
 //! observability failing must not become an availability failure.
 
-use crate::listener::{AcceptQueue, Listeners};
+use crate::edge::{AcceptQueue, Listeners, RequestHandler};
 use crate::metrics::{
     BackendLabel, ClientEndingLabels, GfeMetrics, KernelMetrics, ListenerLabel,
     UpstreamEndingLabels,
 };
 use gfe_config::NodeConfig;
 use netkit_kernel::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe};
-use pingora_core::apps::ServerApp;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,13 +80,11 @@ pub fn attach(
 /// Report every connection the kernel says has closed, until `closed` ends
 /// or the task is aborted. A client connection is reported under the
 /// listener of `listeners` it was accepted on.
-pub async fn report<A>(
+pub async fn report<H: RequestHandler>(
     mut closed: ClosedConnections,
-    listeners: Arc<Listeners<A>>,
+    listeners: Arc<Listeners<H>>,
     metrics: Arc<GfeMetrics>,
-) where
-    A: ServerApp + Send + Sync + 'static,
-{
+) {
     while let Some(connection) = closed.next().await {
         let listener = match connection.origin {
             Origin::Accepted => listeners.listener_at(connection.local),

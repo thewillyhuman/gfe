@@ -1,5 +1,5 @@
 use super::*;
-use crate::proxy::test_support::state;
+use crate::handler::test_support::state;
 use crate::reload::test_support::{cert_entry, http_listener};
 use gfe_config::{
     CertEntry, ListenerId, PoolId, Route, RouteAction, RouteId, Scheme, Upstream, UpstreamPool,
@@ -47,7 +47,7 @@ fn install_swaps_routes_pools_and_certificates() {
 
     install(&state, prepare(&config()).unwrap());
 
-    let routing = state.routing.load();
+    let routing = state.routing();
     assert_eq!(routing.routes.route_count(), 1);
     assert_eq!(routing.pools.len(), 1);
     assert!(state.resolver().current().resolve(None).is_some());
@@ -155,7 +155,7 @@ fn prepare_changes_nothing_that_is_served() {
 
     prepare(&config()).unwrap();
 
-    assert_eq!(state.routing.load().routes.route_count(), 0);
+    assert_eq!(state.routing().routes.route_count(), 0);
     assert!(state.resolver().current().is_empty());
 }
 

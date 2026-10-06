@@ -164,33 +164,6 @@ fn logs_nothing_from_pingora_about_a_client_that_leaves_mid_request() {
     );
 }
 
-/// `RUST_LOG` turns those lines back on, and they are JSON lines like any
-/// other of the node's log.
-#[test]
-fn writes_what_pingora_logs_as_json_lines_when_asked() {
-    let node = Node::start(
-        &scratch("logging", "pingora-asked"),
-        &Launch {
-            command: &|command| {
-                piped_output(command);
-                command.env("RUST_LOG", "info,pingora_proxy=error");
-            },
-            ..Launch::default()
-        },
-    );
-    leave_halfway_through_a_request(&node);
-
-    let output = stop(node);
-
-    let lines = from_pingora(&output);
-    assert!(!lines.is_empty(), "{output}");
-    for line in lines {
-        let event: serde_json::Value = serde_json::from_str(line).unwrap();
-        assert_eq!(event["level"], "ERROR", "{line}");
-        assert!(event["fields"]["message"].is_string(), "{line}");
-    }
-}
-
 /// One request after another over a connection that is kept, then left
 /// idle until the node closes it.
 fn requests_over_a_kept_connection(node: &Node) {

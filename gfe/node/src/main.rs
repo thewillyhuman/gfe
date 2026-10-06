@@ -114,8 +114,6 @@ fn main() -> Result<()> {
         (None, Inherited::default())
     };
 
-    // Pingora finds this runtime as the current one: the node does not run
-    // Pingora's own server.
     let mut rt = tokio::runtime::Builder::new_multi_thread();
     rt.enable_all();
     if node.node.worker_threads > 0 {

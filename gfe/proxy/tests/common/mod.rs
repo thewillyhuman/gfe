@@ -6,11 +6,12 @@
 //! - [`node::Node`] is a whole front end, as a node runs it: the edge
 //!   (listeners, TLS termination, connection accounting, drain), the proxy,
 //!   and the config it follows. Tests of what crosses those parts use it.
-//! - [`Proxy`] is the proxy alone, served by a minimal accept loop of its
-//!   own, which registers every connection the way the edge does. A test
-//!   that needs "a TLS connection with SNI x" registers its connections with
-//!   a [`TlsInfo`] and talks cleartext to the proxy: the proxy learns
-//!   everything about a connection from its registration.
+//! - [`Proxy`] is the request handler alone, served by a minimal accept
+//!   loop of its own on `netkit_http`'s server, which tells it about every
+//!   connection the way the edge does. A test that needs "a TLS connection
+//!   with SNI x" describes its connections with a [`TlsInfo`] and talks
+//!   cleartext to the proxy: the handler learns everything about a
+//!   connection from that description.
 
 #![allow(dead_code)]
 
@@ -22,24 +23,21 @@ use gfe_config::{
     CertEntry, ControlPlaneConfig, DynamicConfig, LbPolicy, ListenProtocol, Listener, ListenerId,
     NodeConfig, NodeSection, PoolId, Route, RouteAction, RouteId, Scheme, Upstream, UpstreamPool,
 };
-use gfe_proxy::listener::{ConnInfo, Connections};
+use gfe_proxy::edge::{ConnInfo, RequestHandler};
+use gfe_proxy::handler::{self, State};
 use gfe_proxy::metrics::GfeMetrics;
-use gfe_proxy::proxy::{self, State};
 use gfe_proxy::routing::RouteTable;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::{Frame, Incoming};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use netkit_http::server;
 use netkit_load_balancing::{Backend, Policy, PoolSet, PoolSpec};
 use netkit_tls::{CertSpec, CertStore, TlsInfo};
-use pingora_core::apps::ServerApp;
-use pingora_core::protocols::GetSocketDigest;
-use pingora_core::protocols::SocketDigest;
-use pingora_core::protocols::l4::stream::Stream;
 use std::convert::Infallible;
+use std::future::Future;
 use std::net::SocketAddr;
-use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -95,13 +93,8 @@ impl Proxy {
     /// registered as having negotiated `tls`, though it is cleartext.
     pub async fn start_with(cfg: &DynamicConfig, node: NodeConfig, tls: Option<TlsInfo>) -> Proxy {
         let (shutdown, watching) = watch::channel(false);
-        let state = State::new(
-            &node,
-            Arc::new(GfeMetrics::new()),
-            Connections::new(),
-            watching.clone(),
-        )
-        .expect("the node config is valid");
+        let state =
+            State::new(&node, Arc::new(GfeMetrics::new())).expect("the node config is valid");
         state
             .resolver()
             .swap(CertStore::build(&cert_specs(&cfg.certificates)).expect("certificates load"));
@@ -109,30 +102,22 @@ impl Proxy {
             RouteTable::compile(cfg),
             PoolSet::build(&pool_specs(&cfg.pools)).expect("pools build"),
         );
-        let app = proxy::app(Arc::clone(&state));
+        let proxy = Arc::new(handler::Proxy::new(Arc::clone(&state)));
+        let options = http_options(&node);
         let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = socket.local_addr().unwrap();
         let listener = Arc::new(ArcSwap::from_pointee(cfg.listeners[0].clone()));
-        let connections = Arc::clone(state.connections());
         tokio::spawn(async move {
             loop {
                 let Ok((tcp, client)) = socket.accept().await else {
                     return;
                 };
-                let app = Arc::clone(&app);
                 let conn = ConnInfo::new(client, addr, Arc::clone(&listener), tls.clone());
-                let registration = connections.register(conn);
-                let watching = watching.clone();
-                tokio::spawn(async move {
-                    let mut stream = Stream::from(tcp);
-                    let digest = SocketDigest::from_raw_fd(stream.as_raw_fd());
-                    stream.set_socket_digest(digest);
-                    let mut next = app.process_new(Box::new(stream), &watching).await;
-                    while let Some(stream) = next {
-                        next = app.process_new(stream, &watching).await;
-                    }
-                    drop(registration);
+                let on_connection = Arc::new(OnConnection {
+                    conn: Arc::new(conn),
+                    proxy: Arc::clone(&proxy),
                 });
+                tokio::spawn(server::serve(tcp, on_connection, options, watching.clone()));
             }
         });
         Proxy {
@@ -142,8 +127,10 @@ impl Proxy {
         }
     }
 
-    /// The metrics, as Prometheus scrapes them.
+    /// The metrics, as Prometheus scrapes them: the sampled ones brought up
+    /// to date first, as a node does before each scrape.
     pub fn metrics(&self) -> String {
+        self.state.refresh_metrics();
         self.state.metrics().encode()
     }
 
@@ -159,6 +146,35 @@ impl Proxy {
             assert!(Instant::now() < deadline, "missing {line} in:\n{metrics}");
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    }
+}
+
+/// The HTTP options of a client connection under `node`, as the edge
+/// derives them.
+fn http_options(node: &NodeConfig) -> server::Options {
+    server::Options {
+        header_timeout: node.timeouts.request_header,
+        idle_timeout: node.timeouts.client_idle,
+        keep_alive_timeout: node.timeouts.client_idle / 4,
+        drain_idle_grace: node.timeouts.drain_deadline / 2,
+        max_header_bytes: node.limits.max_header_bytes,
+        max_concurrent_streams: node.limits.max_h2_concurrent_streams,
+    }
+}
+
+/// The handler of one connection's requests: the proxy, told each time
+/// which connection the request arrived on.
+struct OnConnection {
+    conn: Arc<ConnInfo>,
+    proxy: Arc<handler::Proxy>,
+}
+
+impl server::Handler for OnConnection {
+    fn handle(
+        &self,
+        request: Request<Incoming>,
+    ) -> impl Future<Output = Response<netkit_http::body::BoxBody>> + Send {
+        self.proxy.handle(Arc::clone(&self.conn), request)
     }
 }
 

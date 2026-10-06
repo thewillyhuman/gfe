@@ -1,9 +1,9 @@
 use super::*;
-use crate::listener::{Connections, Drain, Shared};
+use crate::edge::{Edge, Shared};
+use crate::handler::test_support::node_config;
 use crate::metrics::GfeMetrics;
-use crate::proxy;
-use crate::proxy::test_support::node_config;
 use crate::reload::test_support::{http_listener, scratch_dir};
+use netkit_listen::Drain;
 use std::path::Path;
 
 /// A node whose dynamic config is `dir/gfe-dynamic.json`, with a
@@ -17,16 +17,10 @@ fn node(dir: &Path) -> NodeConfig {
 }
 
 /// The state and listeners of a node, with nothing applied yet.
-fn parts(node: &NodeConfig) -> (Arc<State>, Arc<Listeners<App>>, Drain) {
+fn parts(node: &NodeConfig) -> (Arc<State>, Arc<Listeners<Proxy>>, Drain) {
     let drain = Drain::new();
     let metrics = Arc::new(GfeMetrics::new());
-    let state = State::new(
-        node,
-        Arc::clone(&metrics),
-        Connections::new(),
-        drain.subscribe(),
-    )
-    .unwrap();
+    let state = State::new(node, Arc::clone(&metrics)).unwrap();
     let shared = Arc::new(Shared::new(
         metrics,
         node.limits.clone(),
@@ -35,13 +29,13 @@ fn parts(node: &NodeConfig) -> (Arc<State>, Arc<Listeners<App>>, Drain) {
     let tls =
         netkit_tls::server_config(Arc::clone(state.resolver()), netkit_tls::MinVersion::Tls12)
             .unwrap();
-    let listeners = Arc::new(Listeners::new(
+    let edge = Edge::new(
         shared,
-        proxy::app(Arc::clone(&state)),
+        Arc::new(Proxy::new(Arc::clone(&state))),
         netkit_tls::Acceptor::new(Arc::new(tls)),
-        Arc::clone(state.connections()),
-        drain.subscribe(),
-    ));
+    )
+    .unwrap();
+    let listeners = Arc::new(Listeners::new(Arc::new(edge), &drain));
     (state, listeners, drain)
 }
 

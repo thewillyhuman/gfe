@@ -1,5 +1,5 @@
 use super::*;
-use crate::proxy::test_support::node_config;
+use crate::handler::test_support::node_config;
 use gfe_config::{ListenProtocol, Listener, Route, RouteAction, RouteId};
 
 fn listener() -> Listener {
@@ -69,6 +69,18 @@ async fn refuses_to_start_with_an_unusable_upstream_ca() {
     let error = Frontend::start(&node, Arc::new(GfeMetrics::new()), Vec::new()).unwrap_err();
 
     assert!(matches!(error, StartError::Proxy(_)), "{error}");
+}
+
+/// A `client_idle` whose quarter (the PING timeout) rounds to zero would
+/// fail every connection: the start fails instead.
+#[tokio::test]
+async fn refuses_to_start_with_client_timeouts_http_cannot_serve() {
+    let mut node = node_config();
+    node.timeouts.client_idle = Duration::from_nanos(3);
+
+    let error = Frontend::start(&node, Arc::new(GfeMetrics::new()), Vec::new()).unwrap_err();
+
+    assert!(matches!(error, StartError::Http(_)), "{error}");
 }
 
 /// The binary shares one front end between its ops endpoint and its signal

@@ -6,12 +6,14 @@
 //! command line, signals, the ops endpoint, the upgrade in place), and the
 //! functional tests drive it directly, so that they test what a node runs.
 
+use crate::edge::{Edge, Listeners, Shared};
+use crate::handler::{Proxy, ProxyError, State};
 use crate::kernel::{self, KernelView};
-use crate::listener::{Connections, Drain, Listeners, Shared};
 use crate::metrics::GfeMetrics;
-use crate::proxy::{self, App, ProxyError, State};
 use crate::reload::{self, CERT_POLL_INTERVAL, Controller, ReloadError};
 use gfe_config::{DynamicConfig, ListenerId, NodeConfig};
+use netkit_http::server::InvalidOptions;
+use netkit_listen::Drain;
 use netkit_tls::{Acceptor, TlsError};
 use std::io;
 use std::net::SocketAddr;
@@ -29,6 +31,10 @@ pub enum StartError {
     /// The TLS policy cannot be built.
     #[error(transparent)]
     Tls(#[from] TlsError),
+    /// The node's client timeouts and limits cannot be served with (a
+    /// timeout that rounds to zero once divided).
+    #[error("client connections cannot be served with the node's timeouts and limits: {0}")]
+    Http(#[from] InvalidOptions),
     /// Neither the deployed dynamic config nor the last-known-good cache can
     /// be applied, or the config file cannot be watched.
     #[error(transparent)]
@@ -40,8 +46,7 @@ pub enum StartError {
 /// [`start`]: Frontend::start
 pub struct Frontend {
     state: Arc<State>,
-    shared: Arc<Shared>,
-    listeners: Arc<Listeners<App>>,
+    listeners: Arc<Listeners<Proxy>>,
     drain: Drain,
     controller: Controller,
     kernel: Option<Arc<KernelView>>,
@@ -90,12 +95,7 @@ impl Frontend {
     ) -> Result<Frontend, StartError> {
         let kernel = kernel::attach(node, &metrics);
         let drain = Drain::new();
-        let state = State::new(
-            node,
-            Arc::clone(&metrics),
-            Connections::new(),
-            drain.subscribe(),
-        )?;
+        let state = State::new(node, Arc::clone(&metrics))?;
         let mut shared = Shared::new(
             Arc::clone(&metrics),
             node.limits.clone(),
@@ -112,13 +112,12 @@ impl Frontend {
             Arc::clone(state.resolver()),
             tls_min_version(node.tls.min_version),
         )?;
-        let listeners = Arc::new(Listeners::new(
-            Arc::clone(&shared),
-            proxy::app(Arc::clone(&state)),
+        let edge = Edge::new(
+            shared,
+            Arc::new(Proxy::new(Arc::clone(&state))),
             Acceptor::new(Arc::new(tls)),
-            Arc::clone(state.connections()),
-            drain.subscribe(),
-        ));
+        )?;
+        let listeners = Arc::new(Listeners::new(Arc::new(edge), &drain));
         if !inherited.is_empty() {
             tracing::info!(
                 listeners = inherited.len(),
@@ -144,7 +143,6 @@ impl Frontend {
         };
         Ok(Frontend {
             state,
-            shared,
             listeners,
             drain,
             controller,
@@ -162,7 +160,7 @@ impl Frontend {
 
     /// Whether the node drains: `/readyz` then fails.
     pub fn is_draining(&self) -> bool {
-        self.shared.is_draining()
+        self.drain.is_draining()
     }
 
     /// A duplicate of every listening socket, with the address its listener
@@ -179,9 +177,10 @@ impl Frontend {
     }
 
     /// Bring up to date the metrics that are sampled rather than counted as
-    /// things happen: what the kernel view could not report. Call it before
-    /// each scrape.
+    /// things happen: the upstream connections open now, and what the
+    /// kernel view could not report. Call it before each scrape.
     pub fn refresh_metrics(&self) {
+        self.state.refresh_metrics();
         if let Some(kernel) = &self.kernel {
             let lost = i64::try_from(kernel.lost_events()).unwrap_or(i64::MAX);
             self.state.metrics().kernel.ebpf_lost_events.set(lost);
@@ -203,7 +202,7 @@ impl Frontend {
     /// the drain deadline has elapsed (what is still open then is cut).
     pub async fn drain(&self) {
         self.controller.shutdown();
-        self.drain.trigger(&self.shared);
+        self.drain.trigger();
         self.listeners.serve_until_drained().await;
     }
 }

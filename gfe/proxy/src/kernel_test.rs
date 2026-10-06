@@ -1,5 +1,5 @@
 use super::*;
-use crate::proxy::test_support::node_config;
+use crate::handler::test_support::node_config;
 
 fn closed(origin: Origin, ending: Ending) -> ClosedConnection {
     ClosedConnection {

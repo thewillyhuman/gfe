@@ -3,10 +3,13 @@
 
 mod common;
 
+use common::node::Node;
 use common::*;
 use gfe_config::RouteAction;
 use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 
 /// [`forwarding_config`] plus `b.example.org` forwarded to a pool of its
 /// own, `other`, whose backend is `other`; the pool of `a.example.org` may
@@ -117,23 +120,32 @@ async fn answers_503_at_the_upstream_connection_limit() {
     proxy.wait_for_metric("gfe_upstream_connections 0").await;
 }
 
+/// A head over `max_header_bytes` is answered by HTTP itself, before there
+/// is a request: no access event, and the connection says why it closed.
 #[tokio::test]
 async fn rejects_request_headers_larger_than_max_header_bytes() {
     let (logs, _guard) = CapturedLogs::start();
-    let mut node = node_config();
-    node.limits.max_header_bytes = 8192;
-    let proxy = Proxy::start_with(&fixed_response_config(), node, None).await;
+    let node = Node::serving_with("header-bytes", &fixed_response_config(), |node| {
+        node.limits.max_header_bytes = 8192;
+    });
 
-    let padding = "a".repeat(8192);
-    let response = raw_exchange(
-        proxy.addr,
-        &format!("GET / HTTP/1.1\r\nhost: a.example.org\r\nx-padding: {padding}\r\nconnection: close\r\n\r\n"),
-    )
-    .await;
-    let event = logs.access_event().await;
+    // A request head that fills the whole limit without ever ending. Sending
+    // exactly the limit (and no more) keeps the close clean: the server has
+    // nothing left unread, so the client sees the response, not a reset.
+    let mut stream = TcpStream::connect(node.addr("http")).await.unwrap();
+    let prefix = "GET / HTTP/1.1\r\nhost: a.example.org\r\nx-padding: ";
+    let request = format!("{prefix}{}", "a".repeat(8192 - prefix.len()));
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let received = read_until_closed(&mut stream).await;
+    let closed = logs.wait_for_events("gfe::conn", 1).await;
 
-    assert!(response.starts_with("HTTP/1.1 431"), "{response}");
-    assert_eq!(event["error"], "request_header_too_large");
+    assert!(received.starts_with("HTTP/1.1 431"), "{received}");
+    assert_eq!(closed[0]["reason"], "protocol_error", "{closed:?}");
+    assert!(
+        logs.access_events().is_empty(),
+        "{:?}",
+        logs.access_events()
+    );
 }
 
 #[tokio::test]

@@ -160,9 +160,16 @@ async fn probes_a_grpc_backend_with_the_grpc_health_service() {
 
     node.wait_for_metric(&format!("{} 1", health_status(backend)))
         .await;
-    let mut call = common::GrpcCall::open(node.addr("http")).await;
-    call.send("ping").await;
-    assert_eq!(call.next_message().await, "grpc-backend");
+    // The backend ends every call at once without reading the request, and
+    // HTTP/2 then lets the client send no more: the call sends nothing.
+    let answer = common::h2_request(
+        node.addr("http"),
+        "POST",
+        "http://grpc.example.org/echo.Echo/Stream",
+        "",
+    )
+    .await;
+    assert_eq!(answer.body, "grpc-backend");
 
     serving.store(2, Ordering::SeqCst);
     node.wait_for_metric(&format!(

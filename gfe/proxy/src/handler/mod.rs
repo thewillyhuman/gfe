@@ -25,9 +25,6 @@
 //! What hyper answers by itself never reaches the handler: a malformed head
 //! (`400`), a head over `max_header_bytes` (`431`). Connections, TLS
 //! termination and draining are the edge's ([`crate::edge`]).
-//!
-//! Nothing serves through this module yet: it replaces [`crate::proxy`],
-//! which runs on Pingora, when the node switches over.
 
 mod error;
 mod failure;

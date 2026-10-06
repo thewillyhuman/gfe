@@ -1,7 +1,7 @@
 //! Client connections to a whole front end: the edge's timeouts, limits and
 //! connection log, with real requests through the proxy behind it. What the
-//! edge does on its own is tested in `edge.rs`; this is what the two halves
-//! do together.
+//! edge does on its own is tested by its unit tests (`src/edge/`); this is
+//! what the two halves do together.
 
 mod common;
 
@@ -38,9 +38,8 @@ async fn closes_a_connection_that_never_sends_a_request() {
     assert_eq!(events[0]["reason"], "header_timeout");
 }
 
-/// The proxy's own HTTP/1 keep-alive timer is set a little past
-/// `client_idle` (Pingora counts whole seconds), so that it is the edge
-/// that closes an idle connection and says why.
+/// A kept-alive connection with nothing in flight for `client_idle` is
+/// closed, and says why.
 #[tokio::test]
 async fn an_idle_keep_alive_connection_is_closed_by_the_edge_as_idle() {
     let (logs, _capturing) = CapturedLogs::start();

@@ -3,8 +3,8 @@
 //! changes, the listeners and health checks that follow, and the
 //! last-known-good cache.
 
-use crate::listener::Listeners;
-use crate::proxy::{App, State};
+use crate::edge::Listeners;
+use crate::handler::{Proxy, State};
 use crate::reload::applier::{cert_specs, install, prepare};
 use crate::reload::health::{HealthMetrics, checked_pools};
 use crate::reload::{ReloadError, cache, watcher};
@@ -59,7 +59,7 @@ impl Controller {
     /// Must be called from within a Tokio runtime.
     pub fn start(
         state: Arc<State>,
-        listeners: Arc<Listeners<App>>,
+        listeners: Arc<Listeners<Proxy>>,
         node: &NodeConfig,
         cert_poll_interval: Duration,
     ) -> Result<Controller, ReloadError> {
@@ -152,7 +152,7 @@ struct Tracked {
 /// file watcher and the certificate poller, which may fire at once.
 struct Reloader {
     state: Arc<State>,
-    listeners: Arc<Listeners<App>>,
+    listeners: Arc<Listeners<Proxy>>,
     checker: Arc<HealthChecker>,
     config_file: PathBuf,
     cache_file: Option<PathBuf>,
