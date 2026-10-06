@@ -7,9 +7,9 @@
 *
 !Cargo.toml
 !Cargo.lock
-!gfe-*/
 !lib/
 !gfe/
+!hack/loadtest/
 !distribution/systemd/gfe-node.service
 !prebuilt/
 **/target/
