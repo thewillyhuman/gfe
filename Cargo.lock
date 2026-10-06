@@ -984,15 +984,12 @@ name = "gfe-node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
- "bytes",
  "clap",
  "gfe-config",
  "gfe-proxy",
+ "netkit-http",
  "netkit-listen",
  "netkit-observability",
- "pingora-core",
- "pingora-http",
  "rcgen",
  "rustix",
  "rustls",

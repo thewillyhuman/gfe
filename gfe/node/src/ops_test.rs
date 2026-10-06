@@ -1,4 +1,7 @@
 use super::*;
+use netkit_http::body::BodyExt;
+use netkit_http::client::{Connection, ConnectionOptions, Protocol};
+use netkit_http::{StatusCode, Version};
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -344,6 +347,55 @@ async fn serves_requests_one_after_the_other_on_a_kept_connection() {
         .unwrap_or_default();
 
     assert!(second.starts_with("HTTP/1.1 200"), "{second}");
+}
+
+/// A client that sends its next request before reading the answer to the
+/// previous one is answered both, in order.
+#[tokio::test]
+async fn answers_pipelined_requests() {
+    let (addr, _ops, _stop) = ops_server().await;
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+
+    stream
+        .write_all(
+            b"GET /healthz HTTP/1.1\r\nhost: t\r\n\r\n\
+              GET /readyz HTTP/1.1\r\nhost: t\r\nconnection: close\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let answers = read_until_closed(&mut stream, Duration::from_secs(2))
+        .await
+        .unwrap_or_default();
+
+    assert!(answers.starts_with("HTTP/1.1 200"), "{answers}");
+    assert!(answers.contains("\r\n\r\nok\nHTTP/1.1 503"), "{answers}");
+    assert!(answers.ends_with("not ready\n"), "{answers}");
+}
+
+#[tokio::test]
+async fn speaks_http2_with_prior_knowledge() {
+    let (addr, _ops, _stop) = ops_server().await;
+    let options = ConnectionOptions {
+        protocol: Protocol::Http2,
+        tls: None,
+        connect_timeout: Some(Duration::from_secs(2)),
+    };
+    let mut connection = Connection::open("127.0.0.1", addr.port(), &options)
+        .await
+        .unwrap();
+
+    let request = Request::get("/healthz").body(body::empty()).unwrap();
+    let response = connection.send(request).await.unwrap();
+
+    assert_eq!(response.version(), Version::HTTP_2);
+    assert_eq!(response.status(), StatusCode::OK);
+    let answer = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(answer, "ok\n");
+}
+
+#[test]
+fn its_connection_options_can_be_served_with() {
+    assert_eq!(CONNECTION_OPTIONS.validate(), Ok(()));
 }
 
 #[tokio::test]

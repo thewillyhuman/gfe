@@ -1,22 +1,24 @@
 //! The node's own endpoints: `/healthz`, `/readyz` and `/metrics`.
 //!
-//! A small Pingora application, served by the edge's
-//! [`serve_plain`](gfe_proxy::listener::serve_plain) on a socket of its own:
-//! it must keep answering while the proxy drains, and must not show up as
-//! client traffic. It speaks HTTP/1.1, and drives its sessions itself
-//! rather than through Pingora's `HttpServerApp`, which waits a minute for a
-//! request head: here a client has [`HEADER_READ_TIMEOUT`].
+//! Served on a socket of their own by `netkit-listen`'s `serve_plain`, one
+//! cap and nothing else, with `netkit-http` speaking HTTP/1.1 or HTTP/2
+//! (prior knowledge) on each connection: they must keep answering while the
+//! proxy drains, and must not show up as client traffic, so nothing here
+//! goes through the proxy's listeners, logs or metrics. Any method is
+//! answered as `GET` is; any other path is `404`.
+//!
+//! The socket stops being served when another process takes it over: the
+//! connections already open are then drained the way `netkit-http` drains
+//! a connection, so that a client that keeps one asks the new process
+//! next.
 
-use async_trait::async_trait;
-use bytes::Bytes;
 use gfe_proxy::Frontend;
 use gfe_proxy::metrics::{GfeMetrics, LogDestinationLabel};
+use netkit_http::body::{self, BoxBody, Incoming};
+use netkit_http::server::{self, Handler, Options};
+use netkit_http::{Bytes, HeaderValue, Request, Response, StatusCode, header};
+use netkit_listen::{Accepted, Limit, Serve};
 use netkit_observability::{Log, without_histogram_metadata};
-use pingora_core::apps::ServerApp;
-use pingora_core::protocols::Stream;
-use pingora_core::protocols::http::ServerSession;
-use pingora_core::server::ShutdownWatch;
-use pingora_http::ResponseHeader;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -31,6 +33,31 @@ const MAX_CONNECTIONS: usize = 64;
 /// How long a client has to send a request head, and how long a connection
 /// it keeps may wait idle for the next one.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// What each connection is held to.
+const CONNECTION_OPTIONS: Options = Options {
+    // A prober or scraper sends its head at once; one that does not is
+    // stalled, and gives its slot back.
+    header_timeout: HEADER_READ_TIMEOUT,
+    // A scraper that keeps its connection between scrapes is served as long
+    // as it asks often enough; an idle one gives its slot back.
+    idle_timeout: HEADER_READ_TIMEOUT,
+    // An HTTP/2 client that does not acknowledge a PING within as long as
+    // any client has to send a head is gone.
+    keep_alive_timeout: HEADER_READ_TIMEOUT,
+    // After a handover, a request already on its way on a connection
+    // accepted here is still answered; a second is long enough for that on
+    // the networks probes come from, and keeps the old process from
+    // lingering.
+    drain_idle_grace: Duration::from_secs(1),
+    // Probe and scrape heads are a few hundred bytes: the smallest buffer
+    // the server can work with is plenty.
+    max_header_bytes: server::MIN_HEADER_BYTES,
+    // One scrape or probe at a time is what clients do; a few streams let
+    // one ask for the three paths at once without letting a connection run
+    // many encodings of the metrics in parallel.
+    max_concurrent_streams: 4,
+};
 
 /// What `/metrics` is served as.
 const OPENMETRICS: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
@@ -104,17 +131,17 @@ impl Ops {
     /// The answer to a request for `path` with `query`.
     async fn answer(&self, path: &str, query: Option<&str>, handed_over: bool) -> Answer {
         match path {
-            "/healthz" => Answer::text(200, "ok"),
-            "/readyz" if self.is_ready(handed_over) => Answer::text(200, "ready"),
-            "/readyz" => Answer::text(503, "not ready"),
+            "/healthz" => Answer::text(StatusCode::OK, "ok"),
+            "/readyz" if self.is_ready(handed_over) => Answer::text(StatusCode::OK, "ready"),
+            "/readyz" => Answer::text(StatusCode::SERVICE_UNAVAILABLE, "not ready"),
             "/metrics" => match Histograms::asked_by(query) {
                 Ok(histograms) => self.metrics(histograms).await,
                 Err(unknown) => Answer::text(
-                    400,
+                    StatusCode::BAD_REQUEST,
                     &format!("unknown value for histograms: {unknown} (known: untyped)"),
                 ),
             },
-            _ => Answer::text(404, "not found"),
+            _ => Answer::text(StatusCode::NOT_FOUND, "not found"),
         }
     }
 
@@ -151,35 +178,12 @@ impl Ops {
         };
         match tokio::task::spawn_blocking(encode).await {
             Ok(body) => Answer {
-                status: 200,
+                status: StatusCode::OK,
                 content_type: Some(OPENMETRICS),
                 body: Bytes::from(body),
             },
-            Err(_) => Answer::text(500, "metrics unavailable"),
+            Err(_) => Answer::text(StatusCode::INTERNAL_SERVER_ERROR, "metrics unavailable"),
         }
-    }
-
-    /// Answer the request whose head `session` has read. On HTTP/1.1 the
-    /// connection is kept for the next one, unless the client says
-    /// otherwise or the socket has been `handed_over`: a client that keeps
-    /// its connection then asks the process that serves now with its next
-    /// request.
-    async fn respond(
-        &self,
-        session: &mut ServerSession,
-        handed_over: bool,
-    ) -> pingora_core::Result<()> {
-        let uri = &session.req_header().uri;
-        let answer = self.answer(uri.path(), uri.query(), handed_over).await;
-        let keepalive = (!handed_over).then_some(HEADER_READ_TIMEOUT.as_secs());
-        session.set_keepalive(keepalive);
-        let mut head = ResponseHeader::build(answer.status, Some(2))?;
-        head.set_content_length(answer.body.len())?;
-        if let Some(content_type) = answer.content_type {
-            head.insert_header("content-type", content_type)?;
-        }
-        session.write_response_header(Box::new(head)).await?;
-        session.write_response_body(answer.body, true).await
     }
 }
 
@@ -190,68 +194,82 @@ fn gauge(count: usize) -> i64 {
 
 /// What a request is answered with.
 struct Answer {
-    status: u16,
+    status: StatusCode,
     content_type: Option<&'static str>,
     body: Bytes,
 }
 
 impl Answer {
     /// A one-line answer.
-    fn text(status: u16, body: &str) -> Answer {
+    fn text(status: StatusCode, body: &str) -> Answer {
         Answer {
             status,
             content_type: None,
             body: Bytes::from(format!("{body}\n")),
         }
     }
-}
 
-#[async_trait]
-impl ServerApp for Ops {
-    /// Serve the requests of one connection, one after the other, until the
-    /// client closes it, keeps it idle for [`HEADER_READ_TIMEOUT`], or is
-    /// told to close it. `handed_over` turns `true` once another process has
-    /// taken the socket over: a connection already answered here is then
-    /// closed while it waits for its next request, and one not answered yet
-    /// is answered once more and closed with the answer, since closing it
-    /// at once could close it on a request already on its way.
-    async fn process_new(
-        self: &Arc<Self>,
-        stream: Stream,
-        handed_over: &ShutdownWatch,
-    ) -> Option<Stream> {
-        let mut stream = stream;
-        let mut answered = false;
-        loop {
-            let mut session = ServerSession::new_http1(stream);
-            if !next_request(&mut session, handed_over.clone(), answered).await {
-                return None;
-            }
-            let now_handed_over = *handed_over.borrow();
-            if let Err(e) = self.respond(&mut session, now_handed_over).await {
-                tracing::debug!(error = %e, "ops request not answered");
-                return None;
-            }
-            stream = session.finish().await.ok()??.into_parts().0;
-            answered = true;
+    /// The answer as a response; its length is the body's.
+    fn into_response(self) -> Response<BoxBody> {
+        let mut response = Response::new(body::full(self.body));
+        *response.status_mut() = self.status;
+        if let Some(content_type) = self.content_type {
+            response
+                .headers_mut()
+                .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
         }
+        response
     }
 }
 
-/// Wait for the head of the next request on `session`; whether one came.
-/// None did if the client closed the connection or sent a head that is not
-/// one, if [`HEADER_READ_TIMEOUT`] went by first, or if the connection has
-/// been `answered` before and the socket is `handed_over`.
-async fn next_request(
-    session: &mut ServerSession,
-    mut handed_over: watch::Receiver<bool>,
-    answered: bool,
-) -> bool {
-    tokio::select! {
-        read = tokio::time::timeout(HEADER_READ_TIMEOUT, session.read_request()) => {
-            matches!(read, Ok(Ok(true)))
-        }
-        _ = handed_over.wait_for(|handed_over| *handed_over), if answered => false,
+/// What the accept loop hands each connection to.
+struct Endpoint {
+    ops: Arc<Ops>,
+}
+
+impl Serve<()> for Endpoint {
+    /// Serve the connection until it ends. It is drained once the socket
+    /// has been handed over, which is the signal the accept loop stops on.
+    async fn serve(&self, accepted: Accepted<()>) {
+        let exchange = Arc::new(Exchange {
+            ops: Arc::clone(&self.ops),
+            handed_over: accepted.drain.clone(),
+        });
+        let closed = server::serve(
+            accepted.stream,
+            exchange,
+            CONNECTION_OPTIONS,
+            accepted.drain,
+        )
+        .await;
+        tracing::debug!(
+            peer = %accepted.peer,
+            reason = ?closed.reason,
+            error = closed.error.as_deref().unwrap_or_default(),
+            "ops connection closed"
+        );
+    }
+
+    fn refused(&self, _: &(), _: Limit) {
+        tracing::debug!("ops connection over the cap closed");
+    }
+}
+
+/// The requests of one connection, answered by the endpoints.
+struct Exchange {
+    ops: Arc<Ops>,
+    /// Turns `true` once another process has taken the socket over.
+    handed_over: watch::Receiver<bool>,
+}
+
+impl Handler for Exchange {
+    async fn handle(&self, request: Request<Incoming>) -> Response<BoxBody> {
+        let handed_over = *self.handed_over.borrow();
+        let uri = request.uri();
+        self.ops
+            .answer(uri.path(), uri.query(), handed_over)
+            .await
+            .into_response()
     }
 }
 
@@ -276,15 +294,19 @@ pub(crate) async fn listen(
 }
 
 /// Serve the ops endpoints on `socket` until `handed_over` turns `true`,
-/// which is when another process has taken the socket over. Connections
-/// already accepted are still answered, `/readyz` as ready, and then
-/// closed, so that a client that keeps one asks the new process next.
+/// which is when another process has taken the socket over (or until its
+/// sender is dropped). Connections already accepted are then drained: a
+/// request already on its way is still answered, `/readyz` as ready, with
+/// `Connection: close` on HTTP/1.1, and the connection closed, so that a
+/// client that keeps one asks the new process next. The socket itself is
+/// left open.
 pub(crate) async fn serve(
     socket: Arc<TcpListener>,
     ops: Arc<Ops>,
     handed_over: watch::Receiver<bool>,
 ) {
-    gfe_proxy::listener::serve_plain(&socket, ops, MAX_CONNECTIONS, handed_over).await;
+    let endpoint = Arc::new(Endpoint { ops });
+    netkit_listen::serve_plain(socket, (), endpoint, MAX_CONNECTIONS, handed_over).await;
 }
 
 #[cfg(test)]

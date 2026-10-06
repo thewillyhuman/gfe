@@ -10,12 +10,9 @@ publish.workspace = true
 [dependencies]
 gfe-config = { workspace = true }
 gfe-proxy = { workspace = true }
+netkit-http = { workspace = true }
 netkit-listen = { workspace = true }
 netkit-observability = { workspace = true }
-pingora-core = { workspace = true }
-pingora-http = { workspace = true }
-async-trait = { workspace = true }
-bytes = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
