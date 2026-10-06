@@ -1494,7 +1494,10 @@ dependencies = [
 name = "netkit-listen"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
+ "netkit-rate-limiting",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
