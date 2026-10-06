@@ -3,15 +3,14 @@ members = [
     # Libraries: building blocks for networked systems. Nothing in them
     # knows about GFE.
     "lib/tls",
-    # What a node is told and what it tells: no dependency on the rest.
-    "gfe/config",
-    "lib/observability",
+    "lib/load-balancing",
+    "lib/health-checking",
     "lib/rate-limiting",
     "lib/kernel",
-    # What the proxy is made of, one capability per crate.
-    "lib/health-checking",
-    "lib/load-balancing",
-    # The reverse proxy, and the binary a node runs.
+    "lib/observability",
+    # GFE, the product built on them: its config, the reverse proxy, and the
+    # binary a node runs.
+    "gfe/config",
     "gfe/proxy",
     "gfe/node",
     # Development tools: not part of what a node runs or a package ships.
@@ -23,7 +22,8 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-# A product, not a library: nothing here is published to crates.io.
+# Nothing here is published to crates.io: the libraries are used from this
+# repository.
 publish = false
 # Minimum supported Rust version (floor, not target). CI tracks stable.
 rust-version = "1.88"
@@ -37,14 +37,14 @@ unsafe_code = "forbid"
 [workspace.dependencies]
 # Libraries
 netkit-tls = { path = "lib/tls" }
-
-# Workspace crates
-gfe-config = { path = "gfe/config" }
-netkit-observability = { path = "lib/observability" }
+netkit-load-balancing = { path = "lib/load-balancing" }
+netkit-health-checking = { path = "lib/health-checking" }
 netkit-rate-limiting = { path = "lib/rate-limiting" }
 netkit-kernel = { path = "lib/kernel" }
-netkit-health-checking = { path = "lib/health-checking" }
-netkit-load-balancing = { path = "lib/load-balancing" }
+netkit-observability = { path = "lib/observability" }
+
+# GFE
+gfe-config = { path = "gfe/config" }
 gfe-proxy = { path = "gfe/proxy" }
 
 # The HTTP proxy engine: HTTP/1 and HTTP/2 on both legs, the proxy state
