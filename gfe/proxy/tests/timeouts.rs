@@ -100,6 +100,50 @@ async fn upload_slower_than_upstream_first_byte_succeeds_while_it_progresses() {
     assert!(response.ends_with("received 100"), "{response}");
 }
 
+/// A backend that answers a request with half of its body, then stalls for
+/// `stall` before it sends the other half.
+async fn spawn_upstream_stalling_mid_body(stall: Duration) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    if stream.read_exact(&mut byte).await.is_err() {
+                        return;
+                    }
+                    head.push(byte[0]);
+                }
+                let _ = stream
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\nfirst")
+                    .await;
+                tokio::time::sleep(stall).await;
+                let _ = stream.write_all(b"-last").await;
+            });
+        }
+    });
+    addr
+}
+
+/// `upstream_first_byte` bounds the wait for a response to start; one that
+/// has started is relayed to its end, however long it pauses.
+#[tokio::test]
+async fn a_response_that_has_started_is_not_cut_by_upstream_first_byte() {
+    let upstream = spawn_upstream_stalling_mid_body(Duration::from_millis(600)).await;
+    let proxy = Proxy::start_with(
+        &forwarding_config(upstream),
+        first_byte(Duration::from_millis(200)),
+        None,
+    )
+    .await;
+
+    let (status, body) = http_get(proxy.addr, "a.example.org", "/").await;
+
+    assert_eq!((status, body.as_str()), (200, "first-last"));
+}
+
 /// The same upload to an `h2c` pool: HTTP/2 to the backend changes nothing
 /// to how the wait for its answer is bounded.
 #[tokio::test]
