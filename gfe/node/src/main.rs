@@ -11,12 +11,31 @@ use gfe_node::signals::{Request, Signals};
 use gfe_node::systemd;
 use gfe_node::upgrade::{self, Inherited, Predecessor};
 use gfe_proxy::Frontend;
-use netkit_observability::{GfeMetrics, Log};
+use netkit_observability::{GfeMetrics, Log, LogSettings};
 use ops::Ops;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::watch;
+
+/// What a node's log is: its threads are `gfe-log-*`, and the events that
+/// describe traffic (`gfe::access`, `gfe::conn`, `gfe::tcp`, one per request
+/// or connection) go to the log file alone when there is one. The node's
+/// own events carry the name of the module they come from.
+const LOG: LogSettings<'static> = LogSettings {
+    name: "gfe",
+    quiet_unless_asked: QUIET_UNLESS_ASKED,
+    file_only_targets: "gfe::",
+};
+
+/// What Pingora logs, at error level, about a client that misbehaves: one
+/// that leaves halfway through a request head or a response, or whose
+/// HTTP/2 handshake fails. The node's own events already say so (the reason
+/// of `gfe::conn`, the termination of `gfe::access`), and a line per such
+/// connection would let any scanner fill the journal, which then drops
+/// lines that matter. Off unless `RUST_LOG` names these targets, e.g.
+/// `RUST_LOG=info,pingora_proxy=error`.
+const QUIET_UNLESS_ASKED: &str = "pingora_proxy=off,pingora_core::apps=off";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -83,7 +102,7 @@ fn main() -> Result<()> {
     // Kept to the end: dropping it writes out the lines still queued. It
     // also carries the records of Pingora, which logs through the `log`
     // crate: starting it installs the bridge from `log` to `tracing`.
-    let log = Arc::new(Log::start(node.log.file.as_deref())?);
+    let log = Arc::new(Log::start(node.log.file.as_deref(), &LOG)?);
     for deprecation in node.deprecations() {
         tracing::warn!("{deprecation}");
     }

@@ -3,9 +3,9 @@ use std::sync::mpsc;
 
 /// A path for a log file that only this test uses.
 fn log_path(test: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("gfe-log-{}-{test}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("netkit-log-{}-{test}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("gfe.log");
+    let path = dir.join("app.log");
     let _ = std::fs::remove_file(&path);
     path
 }
@@ -94,7 +94,7 @@ impl Write for Collecting {
 #[test]
 fn a_destination_that_stalls_does_not_hold_up_whoever_logs() {
     let (release, stalled) = mpsc::channel();
-    let (mut writer, destination) = non_blocking("test", Stalled(stalled), 8);
+    let (mut writer, destination) = non_blocking("test", "test", Stalled(stalled), 8);
     let (done, logged) = mpsc::channel();
 
     std::thread::spawn(move || {
@@ -114,7 +114,7 @@ fn a_destination_that_stalls_does_not_hold_up_whoever_logs() {
 
 #[test]
 fn lines_a_destination_refuses_are_counted_as_lost() {
-    let (mut writer, destination) = non_blocking("test", Refusing, 8);
+    let (mut writer, destination) = non_blocking("test", "test", Refusing, 8);
 
     for _ in 0..3 {
         writer.write_all(b"a line\n").unwrap();
@@ -130,7 +130,7 @@ fn lines_a_destination_refuses_are_counted_as_lost() {
 #[test]
 fn dropping_a_destination_writes_out_what_is_queued() {
     let written = Collecting::default();
-    let (mut writer, destination) = non_blocking("test", written.clone(), 8);
+    let (mut writer, destination) = non_blocking("test", "test", written.clone(), 8);
 
     for _ in 0..3 {
         writer.write_all(b"a line\n").unwrap();
@@ -141,13 +141,18 @@ fn dropping_a_destination_writes_out_what_is_queued() {
 }
 
 #[test]
-fn traffic_events_are_the_ones_under_the_gfe_targets() {
-    for target in ["gfe::access", "gfe::conn", "gfe::tcp"] {
-        assert!(is_traffic(target), "{target}");
+fn events_under_the_file_only_prefix_are_for_the_file_alone() {
+    for target in ["app::access", "app::conn"] {
+        assert!(is_file_only("app::", target), "{target}");
     }
-    for target in ["gfe_proxy::server", "gfe_node", "pingora_core::protocols"] {
-        assert!(!is_traffic(target), "{target}");
+    for target in ["app_server::listener", "app_node", "other::access"] {
+        assert!(!is_file_only("app::", target), "{target}");
     }
+}
+
+#[test]
+fn an_empty_file_only_prefix_keeps_every_event_on_standard_output() {
+    assert!(!is_file_only("", "app::access"));
 }
 
 /// Counts the events a filter lets through.
@@ -160,13 +165,18 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Counted {
     }
 }
 
-/// How many of `emit`'s events get through the filter built from `rust_log`.
+/// The directives a test caller quiets: all of one crate, and one module of
+/// another.
+const QUIET: &str = "chatty=off,noisy::client=off";
+
+/// How many of `emit`'s events get through the filter built from `QUIET`
+/// and `rust_log`.
 fn let_through(rust_log: Option<&str>, emit: impl FnOnce()) -> usize {
     use tracing_subscriber::layer::SubscriberExt;
 
     let counted = Counted::default();
     let subscriber = tracing_subscriber::registry()
-        .with(filter(rust_log))
+        .with(filter(QUIET, rust_log))
         .with(counted.clone());
     tracing::subscriber::with_default(subscriber, emit);
     counted.0.load(std::sync::atomic::Ordering::Relaxed)
@@ -175,36 +185,36 @@ fn let_through(rust_log: Option<&str>, emit: impl FnOnce()) -> usize {
 #[test]
 fn logs_at_info_unless_told_otherwise() {
     let through = let_through(None, || {
-        tracing::info!(target: "gfe_node", "ready");
-        tracing::debug!(target: "gfe_node", "detail");
+        tracing::info!(target: "app", "ready");
+        tracing::debug!(target: "app", "detail");
     });
 
     assert_eq!(through, 1);
 }
 
 #[test]
-fn what_pingora_logs_about_a_client_that_misbehaves_is_off_by_default() {
+fn the_targets_the_caller_quiets_are_off_by_default() {
     let through = let_through(None, || {
-        tracing::error!(target: "pingora_proxy", "Fail to proxy: connection closed");
-        tracing::error!(target: "pingora_core::apps", "H2 handshake error");
+        tracing::error!(target: "chatty", "something");
+        tracing::error!(target: "noisy::client", "a client left");
     });
 
     assert_eq!(through, 0);
 }
 
 #[test]
-fn the_rest_of_what_pingora_logs_is_kept() {
+fn the_rest_of_a_crate_partly_quieted_is_kept() {
     let through = let_through(None, || {
-        tracing::warn!(target: "pingora_core::connectors", "something about a backend");
+        tracing::warn!(target: "noisy::backend", "something about a backend");
     });
 
     assert_eq!(through, 1);
 }
 
 #[test]
-fn rust_log_turns_pingoras_lines_about_clients_back_on() {
-    let through = let_through(Some("info,pingora_proxy=error"), || {
-        tracing::error!(target: "pingora_proxy", "Fail to proxy: connection closed");
+fn rust_log_turns_a_quieted_target_back_on() {
+    let through = let_through(Some("info,noisy::client=error"), || {
+        tracing::error!(target: "noisy::client", "a client left");
     });
 
     assert_eq!(through, 1);
@@ -213,9 +223,9 @@ fn rust_log_turns_pingoras_lines_about_clients_back_on() {
 #[test]
 fn rust_log_sets_the_level_of_everything_else() {
     let through = let_through(Some("warn"), || {
-        tracing::info!(target: "gfe_node", "ready");
-        tracing::warn!(target: "gfe_node", "careful");
-        tracing::error!(target: "pingora_proxy", "Fail to proxy: connection closed");
+        tracing::info!(target: "app", "ready");
+        tracing::warn!(target: "app", "careful");
+        tracing::error!(target: "noisy::client", "a client left");
     });
 
     assert_eq!(through, 1);
@@ -224,9 +234,25 @@ fn rust_log_sets_the_level_of_everything_else() {
 #[test]
 fn a_rust_log_that_cannot_be_parsed_falls_back_to_info() {
     let through = let_through(Some("not a level=="), || {
-        tracing::info!(target: "gfe_node", "ready");
-        tracing::debug!(target: "gfe_node", "detail");
+        tracing::info!(target: "app", "ready");
+        tracing::debug!(target: "app", "detail");
     });
 
     assert_eq!(through, 1);
+}
+
+#[test]
+fn without_quiet_directives_rust_log_alone_filters() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let counted = Counted::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(filter("", Some("warn")))
+        .with(counted.clone());
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::info!(target: "app", "ready");
+        tracing::warn!(target: "chatty", "careful");
+    });
+
+    assert_eq!(counted.0.load(std::sync::atomic::Ordering::Relaxed), 1);
 }

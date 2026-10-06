@@ -1,19 +1,21 @@
-//! The node's log: where it goes, and the guarantee that writing it never
-//! holds up a request.
+//! A process's log: where it goes, and the guarantee that writing it never
+//! holds up whoever logs.
 //!
 //! An event is formatted where it happens and handed to a queue; a thread of
 //! its own writes the queue out. A destination that takes lines more slowly
-//! than the node produces them fills the queue, and from then on lines are
-//! dropped instead of making whoever logs wait. Dropped lines are counted
-//! (`gfe_log_lost_lines`), so that a log with holes in it is known to have
-//! them.
+//! than the process produces them fills the queue, and from then on lines
+//! are dropped instead of making whoever logs wait. Dropped lines are
+//! counted ([`Log::lost_lines`]), so that a log with holes in it is known to
+//! have them.
 //!
 //! There are two destinations. Standard output always is one: it is what a
-//! service manager collects. A file is the other, if the config names one
-//! (`[log] file`); it then gets every line, and standard output keeps only
-//! the node's own log. The events that describe traffic, one per request and
-//! per connection, are too many for a service manager's journal and go to the
-//! file alone.
+//! service manager collects. A file is the other, if the caller names one;
+//! it then gets every line, and standard output keeps all but the events
+//! the caller says are for the file alone (typically one per request, too
+//! many for a service manager's journal).
+//!
+//! What the process is, which of its targets are quiet and which are for
+//! the file alone, is the caller's to say ([`LogSettings`]).
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
@@ -30,43 +32,51 @@ const QUEUE_LINES: usize = 128_000;
 /// How often the log file is checked for having been rotated away.
 const ROTATION_CHECK: Duration = Duration::from_secs(1);
 
-/// The prefix of the targets of the events that describe traffic:
-/// `gfe::access`, `gfe::conn`, `gfe::tcp`. The node's own events carry the
-/// name of the module they come from.
-const TRAFFIC_TARGETS: &str = "gfe::";
+/// What the caller decides about its log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogSettings<'a> {
+    /// Names the threads that write the log out: `<name>-log-stdout` and
+    /// `<name>-log-file`.
+    pub name: &'a str,
+    /// Filter directives (`RUST_LOG` syntax) that come before `RUST_LOG`'s,
+    /// so that `RUST_LOG` can override them: typically targets that are off
+    /// unless asked for (`noisy_crate=off`). May be empty.
+    pub quiet_unless_asked: &'a str,
+    /// The prefix of the targets of the events that go to the file alone
+    /// when there is one (`app::access` under `app::`). Empty: none does.
+    pub file_only_targets: &'a str,
+}
 
-/// Whether an event of `target` describes traffic, and so is kept off
-/// standard output when there is a log file.
-fn is_traffic(target: &str) -> bool {
-    target.starts_with(TRAFFIC_TARGETS)
+/// Whether an event of `target` goes to the log file alone, given the
+/// `prefix` of such targets.
+fn is_file_only(prefix: &str, target: &str) -> bool {
+    !prefix.is_empty() && target.starts_with(prefix)
 }
 
 /// The level of the log when `RUST_LOG` does not say.
 const DEFAULT_LEVEL: &str = "info";
 
-/// What Pingora logs, at error level, about a client that misbehaves: one
-/// that leaves halfway through a request head or a response, or whose
-/// HTTP/2 handshake fails. The node's own events already say so (the reason
-/// of `gfe::conn`, the termination of `gfe::access`), and a line per such
-/// connection would let any scanner fill the journal, which then drops
-/// lines that matter. Off unless `RUST_LOG` names these targets.
-const QUIET_UNLESS_ASKED: &str = "pingora_proxy=off,pingora_core::apps=off";
-
 /// The filter of the log: `rust_log`'s directives (the value of `RUST_LOG`;
 /// [`DEFAULT_LEVEL`] without one, or with one that cannot be parsed), after
-/// the targets that stay quiet unless it names them.
-fn filter(rust_log: Option<&str>) -> tracing_subscriber::EnvFilter {
+/// the `quiet_unless_asked` ones.
+fn filter(quiet_unless_asked: &str, rust_log: Option<&str>) -> tracing_subscriber::EnvFilter {
     use tracing_subscriber::EnvFilter;
 
-    let with_default = || EnvFilter::new(format!("{QUIET_UNLESS_ASKED},{DEFAULT_LEVEL}"));
+    let after_quiet = |directives: &str| {
+        if quiet_unless_asked.is_empty() {
+            directives.to_string()
+        } else {
+            format!("{quiet_unless_asked},{directives}")
+        }
+    };
+    let with_default = || EnvFilter::new(after_quiet(DEFAULT_LEVEL));
     match rust_log.map(str::trim).filter(|asked| !asked.is_empty()) {
-        Some(asked) => EnvFilter::try_new(format!("{QUIET_UNLESS_ASKED},{asked}"))
-            .unwrap_or_else(|_| with_default()),
+        Some(asked) => EnvFilter::try_new(after_quiet(asked)).unwrap_or_else(|_| with_default()),
         None => with_default(),
     }
 }
 
-/// The node's log. Dropping it writes out what is still queued, so it is
+/// The process's log. Dropping it writes out what is still queued, so it is
 /// kept until the process exits.
 pub struct Log {
     destinations: Vec<Destination>,
@@ -74,18 +84,22 @@ pub struct Log {
 
 impl Log {
     /// Start logging: from here on events are written as JSON lines,
-    /// filtered by `RUST_LOG` (default `info`), to standard output and to
-    /// `file`, if one is given. Fails if that file cannot be opened.
+    /// filtered by `settings.quiet_unless_asked` and then `RUST_LOG`
+    /// (default `info`), to standard output and to `file`, if one is given.
+    /// Fails if that file cannot be opened.
     ///
-    /// What Pingora logs about clients that misbehave is left out unless
-    /// `RUST_LOG` asks for it, e.g. `RUST_LOG=info,pingora_proxy=error`.
-    pub fn start(file: Option<&Path>) -> io::Result<Log> {
+    /// Installs the process-wide `tracing` subscriber, so it is called once.
+    pub fn start(file: Option<&Path>, settings: &LogSettings<'_>) -> io::Result<Log> {
         use tracing_subscriber::filter::filter_fn;
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
         use tracing_subscriber::{Layer, fmt};
 
-        let filter = filter(std::env::var("RUST_LOG").ok().as_deref());
+        let filter = filter(
+            settings.quiet_unless_asked,
+            std::env::var("RUST_LOG").ok().as_deref(),
+        );
+        let file_only_targets = settings.file_only_targets.to_string();
         let mut destinations = Vec::new();
 
         let log_file = file
@@ -98,7 +112,7 @@ impl Log {
             .transpose()?;
         let has_file = log_file.is_some();
         let to_file = log_file.map(|file| {
-            let (writer, destination) = non_blocking("file", file, QUEUE_LINES);
+            let (writer, destination) = non_blocking(settings.name, "file", file, QUEUE_LINES);
             destinations.push(destination);
             fmt::layer()
                 .json()
@@ -106,14 +120,15 @@ impl Log {
                 .with_writer(writer)
         });
 
-        let (writer, destination) = non_blocking("stdout", io::stdout(), QUEUE_LINES);
+        let (writer, destination) =
+            non_blocking(settings.name, "stdout", io::stdout(), QUEUE_LINES);
         destinations.push(destination);
         let to_stdout = fmt::layer()
             .json()
             .with_current_span(false)
             .with_writer(writer)
             .with_filter(filter_fn(move |event| {
-                !(has_file && is_traffic(event.target()))
+                !(has_file && is_file_only(&file_only_targets, event.target()))
             }));
 
         tracing_subscriber::registry()
@@ -157,8 +172,10 @@ impl Destination {
 }
 
 /// A writer that queues up to `queue_lines` lines for `destination` and
-/// never waits for it, and the handle that counts what did not make it.
+/// never waits for it, and the handle that counts what did not make it. The
+/// thread that writes it out is `<process>-log-<name>`.
 fn non_blocking<W: Write + Send + 'static>(
+    process: &str,
     name: &'static str,
     destination: W,
     queue_lines: usize,
@@ -167,7 +184,7 @@ fn non_blocking<W: Write + Send + 'static>(
     let (writer, worker) = NonBlockingBuilder::default()
         .lossy(true)
         .buffered_lines_limit(queue_lines)
-        .thread_name(&format!("gfe-log-{name}"))
+        .thread_name(&format!("{process}-log-{name}"))
         .finish(CountingRefusals {
             destination,
             refused: refused.clone(),

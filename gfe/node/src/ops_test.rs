@@ -6,7 +6,7 @@ use tokio::net::TcpStream;
 /// The process has one log, started once for all the tests.
 fn log() -> Arc<Log> {
     static LOG: OnceLock<Arc<Log>> = OnceLock::new();
-    LOG.get_or_init(|| Arc::new(Log::start(None).unwrap()))
+    LOG.get_or_init(|| Arc::new(Log::start(None, &crate::LOG).unwrap()))
         .clone()
 }
 
