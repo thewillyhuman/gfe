@@ -46,11 +46,12 @@ pub use error::ProxyError;
 pub use state::State;
 
 use crate::edge::{ConnInfo, RequestHandler};
+use crate::handler::forward::Unanswered;
 use crate::handler::record::RequestRecord;
 use crate::handler::respond::Refusal;
 use gfe_config::RouteAction;
-use netkit_http::body::{BoxBody, Incoming};
-use netkit_http::{Request, Response};
+use netkit_http::body::{self, BoxBody, Incoming};
+use netkit_http::{Request, Response, StatusCode};
 use std::sync::Arc;
 
 /// GFE's answer to every request the edge hands over.
@@ -147,7 +148,8 @@ async fn route(
     };
     match forward::forward(state, conn, &pool, request, &mut record).await {
         Ok(response) => record.respond(response),
-        Err(refusal) => refuse(record, refusal),
+        Err(Unanswered::Refused(refusal)) => refuse(record, refusal),
+        Err(Unanswered::ClientGone) => abandoned(record),
     }
 }
 
@@ -157,6 +159,17 @@ fn refuse(mut record: RequestRecord, refusal: Refusal) -> Response<BoxBody> {
     record.failed(refusal.reason());
     let answer = respond::refusal(refusal, record.request_id(), record.is_grpc());
     record.respond(answer)
+}
+
+/// The client of `record` went away, or broke its request body, before
+/// there was a response. The request is reported now, as abandoned; the
+/// `400` returned reaches nobody, or a client whose connection is closing
+/// for the body it broke.
+fn abandoned(record: RequestRecord) -> Response<BoxBody> {
+    drop(record);
+    let mut response = Response::new(body::empty());
+    *response.status_mut() = StatusCode::BAD_REQUEST;
+    response
 }
 
 #[cfg(test)]

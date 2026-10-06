@@ -12,8 +12,8 @@
 //! (`retry`). Every attempt is counted against its backend.
 //!
 //! What the client is told when the forward fails is the caller's: a
-//! failed forward is a [`Refusal`]. The response body, once the head has
-//! arrived, is relayed for as long as it takes.
+//! failed forward says why ([`Unanswered`]). The response body, once the
+//! head has arrived, is relayed for as long as it takes.
 
 use crate::edge::ConnInfo;
 use crate::handler::State;
@@ -34,6 +34,23 @@ use netkit_observability::Gauge;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Why a forward ended without a response from a backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unanswered {
+    /// GFE answers the client itself, saying why.
+    Refused(Refusal),
+    /// The client went away, or broke its request body, while the request
+    /// was being sent: there is nobody to answer, and the backend is not
+    /// to blame.
+    ClientGone,
+}
+
+impl From<Refusal> for Unanswered {
+    fn from(refusal: Refusal) -> Self {
+        Unanswered::Refused(refusal)
+    }
+}
+
 /// Forward `request`, which arrived on `conn`, to a backend of `pool`, and
 /// return the backend's response, ready for the client: its hop-by-hop
 /// headers removed, HSTS added over TLS, and the request id added when the
@@ -49,15 +66,15 @@ pub(crate) async fn forward(
     pool: &Arc<Pool<Scheme>>,
     request: Request<Incoming>,
     record: &mut RequestRecord,
-) -> Result<Response<BoxBody>, Refusal> {
+) -> Result<Response<BoxBody>, Unanswered> {
     if !request::names_a_path(request.uri()) {
-        return Err(Refusal::UnsupportedTarget);
+        return Err(Refusal::UnsupportedTarget.into());
     }
     if request::asks_for_upgrade(request.headers()) {
         // GFE cannot relay an upgraded connection. Forwarded without its
         // hop-by-hop `Connection: upgrade`, the handshake would reach the
         // backend as a plain request; refusing it says what happened.
-        return Err(Refusal::UpgradeNotSupported);
+        return Err(Refusal::UpgradeNotSupported.into());
     }
     let metrics = &state.metrics().proxy;
     record.forwarding_to(pool.id.clone());
@@ -68,7 +85,7 @@ pub(crate) async fn forward(
             pool: pool.id.clone(),
         };
         metrics.upstream_pool_full.get_or_create(&label).inc();
-        return Err(Refusal::PoolFull);
+        return Err(Refusal::PoolFull.into());
     };
     let admitted = Arc::new(admitted);
 
@@ -116,7 +133,7 @@ pub(crate) async fn forward(
     loop {
         let Some(selection) = pool.select(state.health(), hash_key) else {
             metrics.no_healthy_upstream.inc();
-            return Err(Refusal::NoHealthyUpstream);
+            return Err(Refusal::NoHealthyUpstream.into());
         };
         attempts += 1;
         let authority = selection.backend.authority();
@@ -196,6 +213,13 @@ pub(crate) async fn forward(
                     record.request_id(),
                 ));
             }
+            Some(Err(_)) if progress.client_failed() => {
+                // The request body failed: the client went away in the
+                // middle of it, or sent what is not a body. Not the
+                // backend's failure, and there is nobody to answer.
+                tracing::debug!(target: "gfe::proxy", backend = %authority, "the client left while its request was sent");
+                return Err(Unanswered::ClientGone);
+            }
             Some(Err(failure)) => {
                 let kind = classify(&failure);
                 tracing::debug!(target: "gfe::proxy", error = %failure, backend = %authority, "request to the backend failed");
@@ -204,7 +228,7 @@ pub(crate) async fn forward(
                     // The node is at `max_upstream_connections`: not the
                     // backend's failure, and no other backend would fare
                     // better.
-                    return Err(Refusal::Upstream(kind));
+                    return Err(Refusal::Upstream(kind).into());
                 }
                 metrics.upstream_connect_errors.inc();
                 count(502);
@@ -215,7 +239,7 @@ pub(crate) async fn forward(
                     failure: kind,
                 });
                 if !again {
-                    return Err(Refusal::Upstream(kind));
+                    return Err(Refusal::Upstream(kind).into());
                 }
             }
             None if progress.waiting_for_client() => {
@@ -225,13 +249,13 @@ pub(crate) async fn forward(
                 // that stops taking the body is not: GFE does not ask the
                 // client for more until the backend has taken what it has.
                 tracing::debug!(target: "gfe::proxy", backend = %authority, "request body stalled");
-                return Err(Refusal::RequestBodyTimeout);
+                return Err(Refusal::RequestBodyTimeout.into());
             }
             None => {
                 tracing::debug!(target: "gfe::proxy", backend = %authority, "the backend did not respond in time");
                 count_error(FailureKind::Timeout);
                 count(504);
-                return Err(Refusal::Upstream(FailureKind::Timeout));
+                return Err(Refusal::Upstream(FailureKind::Timeout).into());
             }
         }
     }

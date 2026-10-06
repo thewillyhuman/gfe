@@ -342,6 +342,44 @@ async fn reports_a_request_abandoned_before_the_response_once_as_499() {
 }
 
 #[tokio::test]
+async fn reports_an_abandoned_upload_with_the_bytes_sent_so_far() {
+    let (received, mut first_bytes) = tokio::sync::mpsc::channel::<()>(1);
+    let backend = backend(move |request: Request<Incoming>| {
+        let received = received.clone();
+        async move {
+            // Says when the first bytes arrive, and never answers.
+            let mut content = request.into_body();
+            let _ = content.frame().await;
+            let _ = received.send(()).await;
+            std::future::pending::<Response<BoxBody>>().await
+        }
+    })
+    .await;
+    let (proxy, state) = proxy(&forwarding_to(backend)).await;
+    let (logs, _capturing) = Logs::capture();
+    let mut stream = TcpStream::connect(proxy).await.unwrap();
+
+    stream
+        .write_all(
+            b"POST /upload HTTP/1.1\r\nhost: a.example.org\r\n\
+              transfer-encoding: chunked\r\n\r\n5\r\nhello\r\n",
+        )
+        .await
+        .unwrap();
+    first_bytes.recv().await.unwrap();
+    drop(stream);
+
+    let event = logs.access_event().await;
+    assert_eq!(event["status"], 499);
+    assert_eq!(event["termination"], "client_abort");
+    assert_eq!(event["request_bytes"], 5);
+    assert!(event.get("error").is_none(), "{event}");
+    // The backend did nothing wrong.
+    assert!(!exposes(&state, "gfe_upstream_errors_total{"));
+    assert!(!exposes(&state, "gfe_upstream_connect_errors_total 1"));
+}
+
+#[tokio::test]
 async fn reports_a_client_that_leaves_in_the_middle_of_a_response_as_a_client_abort() {
     let backend = backend(|_request| async {
         let (sender, content) = channel_body();

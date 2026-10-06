@@ -29,11 +29,12 @@ impl RequestHandler for Forwarder {
         );
         match forward(&self.state, &conn, &self.pool, request, &mut record).await {
             Ok(response) => record.respond(response),
-            Err(refusal) => {
+            Err(Unanswered::Refused(refusal)) => {
                 record.failed(refusal.reason());
                 let answer = respond::refusal(refusal, record.request_id(), record.is_grpc());
                 record.respond(answer)
             }
+            Err(Unanswered::ClientGone) => Response::new(body::empty()),
         }
     }
 }

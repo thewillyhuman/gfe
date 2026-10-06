@@ -157,3 +157,39 @@ fn a_body_empty_from_the_start_is_complete_at_once() {
 
     assert!(progress.request_complete());
 }
+
+/// A body whose client went away: it fails.
+struct Gone;
+
+impl Body for Gone {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        Poll::Ready(Some(Err(std::io::Error::other("connection closed"))))
+    }
+}
+
+#[test]
+fn notes_a_client_whose_body_failed() {
+    let progress = SendProgress::begin(Instant::now(), true);
+    let mut body = CountedBody::new(Gone, Arc::default(), Arc::clone(&progress));
+
+    poll_once(&mut body);
+
+    assert!(progress.client_failed());
+}
+
+#[test]
+fn a_client_sending_its_body_has_not_failed() {
+    let progress = SendProgress::begin(Instant::now(), true);
+    let chunk = http_body_util::Full::new(Bytes::from_static(b"chunk"));
+    let mut body = CountedBody::new(chunk, Arc::default(), Arc::clone(&progress));
+
+    poll_once(&mut body);
+
+    assert!(!progress.client_failed());
+}

@@ -46,6 +46,9 @@ pub(crate) struct SendProgress {
     /// Whether the client had nothing to give when last asked for more of
     /// the request body.
     waiting_for_client: AtomicBool,
+    /// Whether the request body failed: the client went away in the middle
+    /// of it, or sent what is not a body.
+    client_failed: AtomicBool,
 }
 
 impl SendProgress {
@@ -57,6 +60,7 @@ impl SendProgress {
             last_sent_ms: AtomicU64::new(0),
             completed_ms: AtomicU64::new(if has_body { NOT_COMPLETED } else { 0 }),
             waiting_for_client: AtomicBool::new(false),
+            client_failed: AtomicBool::new(false),
         })
     }
 
@@ -93,6 +97,18 @@ impl SendProgress {
     /// give when last asked for more of the request body.
     pub(crate) fn waiting_for_client(&self) -> bool {
         self.waiting_for_client.load(Ordering::Relaxed)
+    }
+
+    /// The request body failed: the client went away in the middle of it,
+    /// or sent what is not a body.
+    pub(crate) fn body_failed(&self) {
+        self.client_failed.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether the request body failed, which fails the attempt it was
+    /// being sent with through no fault of the backend.
+    pub(crate) fn client_failed(&self) -> bool {
+        self.client_failed.load(Ordering::Relaxed)
     }
 
     /// Whether the request has been sent in full. Only the tests ask: the
@@ -180,7 +196,7 @@ where
                     this.progress.body_progressed(Instant::now());
                 }
             }
-            Some(Err(_)) => {}
+            Some(Err(_)) => this.progress.body_failed(),
             None => this.progress.body_ended(Instant::now()),
         }
         Poll::Ready(frame)
