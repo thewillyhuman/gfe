@@ -13,7 +13,7 @@ members = [
     "lib/load-balancing",
     # The reverse proxy, and the binary a node runs.
     "gfe/proxy",
-    "gfe-node",
+    "gfe/node",
     # Development tools: not part of what a node runs or a package ships.
     "gfe-loadtest",
 ]
