@@ -180,10 +180,10 @@ async fn serves_a_certificate_rotated_on_disk_without_dropping_an_established_co
             .await,
         "the rotated certificate was never served"
     );
-    let req = http::Request::builder()
+    let req = netkit_http::Request::builder()
         .uri("/")
         .header("host", "a.example.org")
-        .body(http_body_util::Empty::<bytes::Bytes>::new())
+        .body(http_body_util::Empty::<netkit_http::Bytes>::new())
         .unwrap();
     let response = sender.send_request(req).await.unwrap();
     assert_eq!(response.status(), 200);

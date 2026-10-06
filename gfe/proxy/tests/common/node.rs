@@ -3,7 +3,6 @@
 //! at the edge and following its config. Plus TLS clients to talk to it.
 
 use super::{Answer, collect};
-use bytes::Bytes;
 use gfe_config::{
     ControlPlaneConfig, DynamicConfig, ListenProtocol, Listener, ListenerId, NodeConfig,
     NodeSection,
@@ -13,6 +12,7 @@ use gfe_proxy::{Frontend, StartError};
 use http_body_util::Empty;
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use netkit_http::Bytes;
 use rustls::pki_types::{CertificateDer, ServerName};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -273,6 +273,6 @@ where
         .body(Empty::<Bytes>::new())
         .unwrap();
     let response = sender.send_request(req).await.unwrap();
-    assert_eq!(response.version(), http::Version::HTTP_2);
+    assert_eq!(response.version(), netkit_http::Version::HTTP_2);
     collect(response).await
 }

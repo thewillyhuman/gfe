@@ -4,7 +4,6 @@
 
 mod common;
 
-use bytes::Bytes;
 use common::node::{Node, eventually, free_port, listener};
 use common::{
     CapturedLogs, forwarding_config, h2_sender, read_until_closed, spawn_silent_upstream,
@@ -12,6 +11,7 @@ use common::{
 };
 use gfe_config::ListenProtocol;
 use http_body_util::BodyExt;
+use netkit_http::Bytes;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -85,7 +85,7 @@ async fn an_http2_client_is_sent_goaway_and_its_stream_in_flight_completes() {
     let upstream = spawn_upstream_answering_after(Duration::from_millis(300)).await;
     let node = node("in-flight-h2", upstream, Duration::from_secs(10));
     let mut sender = h2_sender(node.addr("http")).await;
-    let req = http::Request::builder()
+    let req = netkit_http::Request::builder()
         .uri("http://a.example.org/")
         .body(common::ChannelBody::full(Bytes::new()))
         .unwrap();

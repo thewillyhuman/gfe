@@ -3,13 +3,13 @@
 
 mod common;
 
-use bytes::Bytes;
 use common::node::Node;
 use common::{ChannelBody, forwarding_config, http_get, serve_h2c, serve_http1};
 use gfe_config::{HealthCheckConfig, ProbeType, Scheme};
 use http_body_util::Full;
 use hyper::body::{Frame, Incoming};
 use hyper::{Request, Response};
+use netkit_http::Bytes;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -136,7 +136,7 @@ async fn spawn_grpc_backend() -> (SocketAddr, Arc<AtomicU16>) {
                 Bytes::from_static(b"grpc-backend")
             };
             tx.try_send(Frame::data(message)).unwrap();
-            let mut trailers = http::HeaderMap::new();
+            let mut trailers = netkit_http::HeaderMap::new();
             trailers.insert("grpc-status", "0".parse().unwrap());
             tx.try_send(Frame::trailers(trailers)).unwrap();
             Response::builder()

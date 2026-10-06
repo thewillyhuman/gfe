@@ -3,11 +3,11 @@
 
 mod common;
 
-use bytes::Bytes;
 use common::*;
 use gfe_config::RouteAction;
 use http_body_util::{BodyExt, Full};
 use hyper::Request;
+use netkit_http::Bytes;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};

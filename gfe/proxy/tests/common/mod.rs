@@ -18,7 +18,6 @@
 pub mod node;
 
 use arc_swap::ArcSwap;
-use bytes::Bytes;
 use gfe_config::{
     CertEntry, ControlPlaneConfig, DynamicConfig, LbPolicy, ListenProtocol, Listener, ListenerId,
     NodeConfig, NodeSection, PoolId, Route, RouteAction, RouteId, Scheme, Upstream, UpstreamPool,
@@ -32,9 +31,11 @@ use hyper::body::{Frame, Incoming};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use netkit_http::Bytes;
 use netkit_http::server;
 use netkit_load_balancing::{Backend, Policy, PoolSet, PoolSpec};
 use netkit_tls::{CertSpec, CertStore, TlsInfo};
+use rustls::pki_types::pem::PemObject;
 use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -573,7 +574,7 @@ pub async fn spawn_tls_upstream(name: &str, client_auth: ClientAuth) -> (SocketA
         ClientAuth::None => builder.with_no_client_auth(),
         ClientAuth::Required(ca_pem) => {
             let mut roots = rustls::RootCertStore::empty();
-            for cert in rustls_pemfile::certs(&mut ca_pem.as_slice()) {
+            for cert in rustls::pki_types::CertificateDer::pem_slice_iter(&ca_pem) {
                 roots.add(cert.unwrap()).unwrap();
             }
             let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
@@ -690,7 +691,7 @@ pub async fn grpc_echo(req: Request<Incoming>, delay: Duration) -> Response<Chan
                 return;
             }
         }
-        let mut trailers = http::HeaderMap::new();
+        let mut trailers = netkit_http::HeaderMap::new();
         trailers.insert("grpc-status", "0".parse().unwrap());
         let _ = tx.send(Frame::trailers(trailers)).await;
     });
@@ -764,7 +765,7 @@ impl GrpcCall {
 
     /// End the request stream and return the trailers that close the call,
     /// which is where gRPC carries the call's status.
-    pub async fn finish(mut self) -> http::HeaderMap {
+    pub async fn finish(mut self) -> netkit_http::HeaderMap {
         let (closed, _) = tokio::sync::mpsc::channel(1);
         drop(std::mem::replace(&mut self.request, closed));
         loop {
@@ -812,7 +813,7 @@ where
 /// A response, read to its end.
 pub struct Answer {
     pub status: u16,
-    pub headers: http::HeaderMap,
+    pub headers: netkit_http::HeaderMap,
     pub body: String,
 }
 

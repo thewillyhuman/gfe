@@ -4,11 +4,11 @@
 
 mod common;
 
-use bytes::Bytes;
 use common::*;
 use gfe_config::Scheme;
 use hyper::body::Frame;
 use hyper::{Request, Response};
+use netkit_http::Bytes;
 use std::time::Duration;
 
 /// [`grpc_config`] for an `https` backend trusted by `ca_pem`.
@@ -96,7 +96,7 @@ async fn relays_a_client_streaming_call() {
         tx.send(Frame::data(Bytes::from(format!("{messages} messages"))))
             .await
             .unwrap();
-        let mut trailers = http::HeaderMap::new();
+        let mut trailers = netkit_http::HeaderMap::new();
         trailers.insert("grpc-status", "0".parse().unwrap());
         tx.send(Frame::trailers(trailers)).await.unwrap();
         Response::builder()
@@ -139,7 +139,7 @@ async fn relays_a_server_streaming_call() {
                 tx.send(Frame::data(Bytes::from(message))).await.unwrap();
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
-            let mut trailers = http::HeaderMap::new();
+            let mut trailers = netkit_http::HeaderMap::new();
             trailers.insert("grpc-status", "0".parse().unwrap());
             tx.send(Frame::trailers(trailers)).await.unwrap();
         });

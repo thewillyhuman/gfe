@@ -4,12 +4,12 @@
 
 mod common;
 
-use bytes::Bytes;
 use common::*;
 use gfe_config::Scheme;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::{Frame, Incoming};
 use hyper::{Request, Response};
+use netkit_http::Bytes;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

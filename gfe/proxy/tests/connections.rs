@@ -5,7 +5,6 @@
 
 mod common;
 
-use bytes::Bytes;
 use common::node::{Node, free_port, listener};
 use common::{
     CapturedLogs, ChannelBody, fixed_response_config, forwarding_config, h2_sender, http_get,
@@ -14,6 +13,7 @@ use common::{
 use gfe_config::{DynamicConfig, ListenProtocol};
 use http_body_util::Full;
 use hyper::Response;
+use netkit_http::Bytes;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -79,7 +79,7 @@ async fn spawn_holding_upstream(
     held: Arc<AtomicUsize>,
     release: watch::Receiver<bool>,
 ) -> std::net::SocketAddr {
-    serve_http1(move |req: http::Request<hyper::body::Incoming>| {
+    serve_http1(move |req: netkit_http::Request<hyper::body::Incoming>| {
         let (held, mut release) = (Arc::clone(&held), release.clone());
         async move {
             if req.uri().path() == "/hold" {
@@ -96,8 +96,8 @@ async fn spawn_holding_upstream(
 async fn h2_get(
     mut sender: hyper::client::conn::http2::SendRequest<ChannelBody>,
     path: &str,
-) -> http::StatusCode {
-    let req = http::Request::builder()
+) -> netkit_http::StatusCode {
+    let req = netkit_http::Request::builder()
         .uri(format!("http://a.example.org{path}"))
         .body(ChannelBody::full(Bytes::new()))
         .unwrap();
@@ -281,7 +281,7 @@ async fn an_idle_http2_connection_is_sent_goaway_and_logged_as_idle() {
     .await
     .unwrap();
     let connection = tokio::spawn(conn);
-    let req = http::Request::builder()
+    let req = netkit_http::Request::builder()
         .uri("http://a.example.org/")
         .body(ChannelBody::full(Bytes::new()))
         .unwrap();
