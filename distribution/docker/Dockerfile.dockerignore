@@ -9,6 +9,7 @@
 !Cargo.lock
 !gfe-*/
 !lib/
+!gfe/
 !distribution/systemd/gfe-node.service
 !prebuilt/
 **/target/

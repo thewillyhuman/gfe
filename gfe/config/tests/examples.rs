@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 /// A file of the repository's `docs/examples/` directory.
 fn shipped_example(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../docs/examples")
+        .join("../../docs/examples")
         .join(name)
 }
 

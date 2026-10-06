@@ -4,7 +4,7 @@ members = [
     # knows about GFE.
     "lib/tls",
     # What a node is told and what it tells: no dependency on the rest.
-    "gfe-config",
+    "gfe/config",
     "lib/observability",
     "lib/rate-limiting",
     "lib/kernel",
@@ -39,7 +39,7 @@ unsafe_code = "forbid"
 netkit-tls = { path = "lib/tls" }
 
 # Workspace crates
-gfe-config = { path = "gfe-config" }
+gfe-config = { path = "gfe/config" }
 netkit-observability = { path = "lib/observability" }
 netkit-rate-limiting = { path = "lib/rate-limiting" }
 netkit-kernel = { path = "lib/kernel" }
