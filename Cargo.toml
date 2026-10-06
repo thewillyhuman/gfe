@@ -9,6 +9,7 @@ members = [
     "lib/health-checking",
     "lib/rate-limiting",
     "lib/kernel",
+    "lib/listen",
     "lib/observability",
     # GFE, the product built on them: its config, the reverse proxy, and the
     # binary a node runs.
@@ -45,6 +46,7 @@ netkit-load-balancing = { path = "lib/load-balancing" }
 netkit-health-checking = { path = "lib/health-checking" }
 netkit-rate-limiting = { path = "lib/rate-limiting" }
 netkit-kernel = { path = "lib/kernel" }
+netkit-listen = { path = "lib/listen" }
 netkit-observability = { path = "lib/observability" }
 
 # GFE
