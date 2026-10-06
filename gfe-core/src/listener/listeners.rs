@@ -24,7 +24,7 @@ use crate::listener::connection::Edge;
 use crate::listener::{Connections, Shared};
 use arc_swap::ArcSwap;
 use gfe_config::{Listener, ListenerId};
-use gfe_tls::Acceptor;
+use netkit_tls::Acceptor;
 use pingora_core::apps::ServerApp;
 use std::collections::{HashMap, HashSet};
 use std::io;

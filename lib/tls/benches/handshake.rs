@@ -4,7 +4,7 @@
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use gfe_config::{CertEntry, MinVersion};
-use gfe_tls::{CertStore, SniResolver, server_config};
+use netkit_tls::{CertStore, SniResolver, server_config};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

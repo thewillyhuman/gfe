@@ -12,7 +12,7 @@ gfe-config = { workspace = true }
 gfe-observability = { workspace = true }
 gfe-limits = { workspace = true }
 gfe-ebpf = { workspace = true }
-gfe-tls = { workspace = true }
+netkit-tls = { workspace = true }
 gfe-health-checking = { workspace = true }
 gfe-load-balancing = { workspace = true }
 pingora-core = { workspace = true }

@@ -12,7 +12,7 @@
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use gfe_config::Listener;
-use gfe_tls::TlsInfo;
+use netkit_tls::TlsInfo;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};

@@ -32,11 +32,12 @@ fn parts(node: &NodeConfig) -> (Arc<State>, Arc<Listeners<App>>, Drain) {
         node.limits.clone(),
         node.timeouts.clone(),
     ));
-    let tls = gfe_tls::server_config(Arc::clone(state.resolver()), node.tls.min_version).unwrap();
+    let tls =
+        netkit_tls::server_config(Arc::clone(state.resolver()), node.tls.min_version).unwrap();
     let listeners = Arc::new(Listeners::new(
         shared,
         proxy::app(Arc::clone(&state)),
-        gfe_tls::Acceptor::new(Arc::new(tls)),
+        netkit_tls::Acceptor::new(Arc::new(tls)),
         Arc::clone(state.connections()),
         drain.subscribe(),
     ));

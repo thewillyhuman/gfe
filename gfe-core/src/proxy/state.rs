@@ -11,7 +11,7 @@ use gfe_config::{NodeConfig, TimeoutsConfig};
 use gfe_health_checking::HealthMap;
 use gfe_load_balancing::PoolSet;
 use gfe_observability::GfeMetrics;
-use gfe_tls::{CertStore, SniResolver};
+use netkit_tls::{CertStore, SniResolver};
 use std::sync::Arc;
 use tokio::sync::watch;
 

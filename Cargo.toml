@@ -1,12 +1,14 @@
 [workspace]
 members = [
+    # Libraries: building blocks for networked systems. Nothing in them
+    # knows about GFE.
+    "lib/tls",
     # What a node is told and what it tells: no dependency on the rest.
     "gfe-config",
     "gfe-observability",
     "gfe-limits",
     "gfe-ebpf",
     # What the proxy is made of, one capability per crate.
-    "gfe-tls",
     "gfe-health-checking",
     "gfe-load-balancing",
     # The reverse proxy, and the binary a node runs.
@@ -33,12 +35,14 @@ rust-version = "1.88"
 unsafe_code = "forbid"
 
 [workspace.dependencies]
+# Libraries
+netkit-tls = { path = "lib/tls" }
+
 # Workspace crates
 gfe-config = { path = "gfe-config" }
 gfe-observability = { path = "gfe-observability" }
 gfe-limits = { path = "gfe-limits" }
 gfe-ebpf = { path = "gfe-ebpf" }
-gfe-tls = { path = "gfe-tls" }
 gfe-health-checking = { path = "gfe-health-checking" }
 gfe-load-balancing = { path = "gfe-load-balancing" }
 gfe-core = { path = "gfe-core" }

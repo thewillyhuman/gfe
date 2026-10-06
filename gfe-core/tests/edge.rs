@@ -15,9 +15,9 @@ use gfe_config::{
 };
 use gfe_core::listener::{Connections, Drain, Listeners, Shared, serve_plain};
 use gfe_observability::GfeMetrics;
-use gfe_tls::{Acceptor, CertStore, SniResolver};
 use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use netkit_tls::{Acceptor, CertStore, SniResolver};
 use pingora_core::apps::HttpServerOptions;
 use pingora_core::apps::http_app::{HttpServer, ServeHttp};
 use pingora_core::protocols::http::ServerSession;
@@ -141,7 +141,7 @@ fn tls_acceptor(min_version: MinVersion) -> (Acceptor, Arc<SniResolver>) {
     let resolver = Arc::new(SniResolver::new(
         CertStore::build(std::slice::from_ref(&cert().entry)).unwrap(),
     ));
-    let config = gfe_tls::server_config(resolver.clone(), min_version).unwrap();
+    let config = netkit_tls::server_config(resolver.clone(), min_version).unwrap();
     (Acceptor::new(Arc::new(config)), resolver)
 }
 
@@ -679,7 +679,7 @@ async fn a_successful_handshake_is_counted_by_its_parameters() {
 async fn counts_handshakes_that_found_no_certificate() {
     // No default certificate: a client asking for an unknown name gets none.
     let resolver = Arc::new(SniResolver::new(CertStore::default()));
-    let config = gfe_tls::server_config(resolver.clone(), MinVersion::Tls12).unwrap();
+    let config = netkit_tls::server_config(resolver.clone(), MinVersion::Tls12).unwrap();
     let shared = Arc::new(
         Shared::new(
             Arc::new(GfeMetrics::new()),

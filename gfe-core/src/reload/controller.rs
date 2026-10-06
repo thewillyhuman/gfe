@@ -9,7 +9,7 @@ use crate::reload::applier::{install, prepare};
 use crate::reload::{ReloadError, cache, watcher};
 use gfe_config::{DynamicConfig, HealthCheckConfig, NodeConfig, load_dynamic_config};
 use gfe_health_checking::HealthChecker;
-use gfe_tls::CertFiles;
+use netkit_tls::CertFiles;
 use notify::RecommendedWatcher;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};

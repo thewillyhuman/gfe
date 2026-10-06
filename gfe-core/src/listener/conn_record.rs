@@ -19,7 +19,7 @@ use gfe_config::Listener;
 use gfe_observability::{
     CloseLabels, ListenerLabel, RejectLabel, TlsFailureLabel, TlsLabels, TlsResultLabel,
 };
-use gfe_tls::{HandshakeError, TlsInfo};
+use netkit_tls::{HandshakeError, TlsInfo};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

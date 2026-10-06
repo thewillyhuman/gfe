@@ -979,11 +979,11 @@ dependencies = [
  "gfe-limits",
  "gfe-load-balancing",
  "gfe-observability",
- "gfe-tls",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "netkit-tls",
  "notify",
  "pingora-core",
  "pingora-error",
@@ -1095,22 +1095,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "gfe-tls"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "criterion",
- "gfe-config",
- "rcgen",
- "rustls",
- "rustls-pemfile",
- "thiserror 2.0.21",
- "tokio",
- "tokio-rustls",
- "x509-parser",
 ]
 
 [[package]]
@@ -1504,6 +1488,22 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "netkit-tls"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "criterion",
+ "gfe-config",
+ "rcgen",
+ "rustls",
+ "rustls-pemfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "x509-parser",
 ]
 
 [[package]]

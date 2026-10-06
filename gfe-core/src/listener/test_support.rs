@@ -4,7 +4,7 @@
 use crate::listener::Shared;
 use gfe_config::{CertEntry, LimitsConfig, MinVersion, TimeoutsConfig};
 use gfe_observability::GfeMetrics;
-use gfe_tls::{Acceptor, CertStore, SniResolver};
+use netkit_tls::{Acceptor, CertStore, SniResolver};
 use rustls::pki_types::CertificateDer;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -51,7 +51,7 @@ pub(crate) fn acceptor(certs: &[&TestCert]) -> (Acceptor, Arc<SniResolver>) {
     let resolver = Arc::new(SniResolver::new(
         CertStore::build(&entries).expect("test certificates load"),
     ));
-    let config = gfe_tls::server_config(resolver.clone(), MinVersion::Tls12)
+    let config = netkit_tls::server_config(resolver.clone(), MinVersion::Tls12)
         .expect("the default policy is valid");
     (Acceptor::new(Arc::new(config)), resolver)
 }

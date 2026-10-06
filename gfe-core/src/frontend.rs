@@ -12,7 +12,7 @@ use crate::proxy::{self, App, ProxyError, State};
 use crate::reload::{self, CERT_POLL_INTERVAL, Controller, ReloadError};
 use gfe_config::{DynamicConfig, ListenerId, NodeConfig};
 use gfe_observability::GfeMetrics;
-use gfe_tls::{Acceptor, TlsError};
+use netkit_tls::{Acceptor, TlsError};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -108,7 +108,7 @@ impl Frontend {
         let shared = Arc::new(shared);
         // One TLS policy for every HTTPS listener. Certificates rotate
         // through the resolver's store, so it is never rebuilt.
-        let tls = gfe_tls::server_config(Arc::clone(state.resolver()), node.tls.min_version)?;
+        let tls = netkit_tls::server_config(Arc::clone(state.resolver()), node.tls.min_version)?;
         let listeners = Arc::new(Listeners::new(
             Arc::clone(&shared),
             proxy::app(Arc::clone(&state)),

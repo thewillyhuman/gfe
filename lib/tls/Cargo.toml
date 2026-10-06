@@ -1,5 +1,5 @@
 [package]
-name = "gfe-tls"
+name = "netkit-tls"
 description = "TLS termination: certificates by SNI, the TLS policy, the handshake"
 version.workspace = true
 edition.workspace = true

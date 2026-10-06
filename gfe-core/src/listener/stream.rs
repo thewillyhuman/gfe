@@ -10,7 +10,7 @@
 use crate::listener::activity::Expiry;
 use async_trait::async_trait;
 use gfe_observability::Counter;
-use gfe_tls::TlsInfo;
+use netkit_tls::TlsInfo;
 use pingora_core::protocols::l4::stream::Stream as L4Stream;
 use pingora_core::protocols::raw_connect::ProxyDigest;
 use pingora_core::protocols::tls::SslDigest;

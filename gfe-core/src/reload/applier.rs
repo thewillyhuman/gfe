@@ -7,7 +7,7 @@ use crate::routing::RouteTable;
 use gfe_config::{DynamicConfig, validate};
 use gfe_load_balancing::PoolSet;
 use gfe_observability::SniLabel;
-use gfe_tls::CertStore;
+use netkit_tls::CertStore;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A dynamic config validated and compiled into what the proxy serves from,

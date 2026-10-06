@@ -2,7 +2,7 @@
 
 use gfe_config::ConfigError;
 use gfe_load_balancing::PoolError;
-use gfe_tls::TlsError;
+use netkit_tls::TlsError;
 use std::path::PathBuf;
 use thiserror::Error;
 

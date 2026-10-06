@@ -8,10 +8,10 @@
 //! does not depend on the engine's.
 
 use crate::proxy::respond::Refusal;
-use gfe_tls::CertStore;
 use http::header::HOST;
 use http::uri::Authority;
 use http::{HeaderMap, Uri, Version};
+use netkit_tls::CertStore;
 
 /// Why a request's host cannot be used to route it. GFE answers such a
 /// request itself.

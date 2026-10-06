@@ -60,7 +60,7 @@ fn knows_how_long_a_connection_waited_only_with_a_kernel_view() {
 }
 
 /// Run a handshake asking for `sni` against `acceptor`, which fails.
-async fn failed_handshake(acceptor: &gfe_tls::Acceptor, trusted: &TestCert, sni: &str) {
+async fn failed_handshake(acceptor: &netkit_tls::Acceptor, trusted: &TestCert, sni: &str) {
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let client = connector(&[trusted], &[b"http/1.1"]);
     let name = ServerName::try_from(sni.to_string()).unwrap();

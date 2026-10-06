@@ -5,7 +5,7 @@
 
 use gfe_config::{LimitsConfig, TimeoutsConfig};
 use gfe_observability::GfeMetrics;
-use gfe_tls::SniResolver;
+use netkit_tls::SniResolver;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -68,7 +68,7 @@ impl Shared {
     }
 
     /// Count the handshakes `resolver` found no certificate for, as
-    /// `gfe_tls_sni_no_cert`. `gfe-tls` records no metric itself.
+    /// `gfe_tls_sni_no_cert`. `netkit-tls` records no metric itself.
     pub fn with_sni_resolver(mut self, resolver: Arc<SniResolver>) -> Self {
         self.sni_resolver = Some(resolver);
         self
