@@ -1,12 +1,14 @@
 //! The health checker: reconciles a set of probe loops against the pools it
-//! is given, deduplicating by `(host, port)`, and writes committed
-//! transitions to the shared health map.
+//! is given, deduplicating by `(host, port)`, writes committed transitions to
+//! the shared health map, and tells a [`HealthObserver`] what happened.
+//!
+//! It records no metric itself: the observer is where the caller turns
+//! probes and transitions into its own metrics.
 
 use crate::HealthMap;
 use crate::HealthStatus;
 use crate::probe::{ProbeKind, make_probe};
 use crate::state_machine::BackendHealth;
-use netkit_observability::{BackendLabels, GfeMetrics};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -41,6 +43,24 @@ pub struct CheckedPool {
     pub backends: Vec<(String, u16)>,
 }
 
+/// What the checker tells its caller, as it happens. Called from the probe
+/// loops and from [`HealthChecker::reconcile`], so implementations must be
+/// quick and must not block: they run on the runtime's threads.
+pub trait HealthObserver: Send + Sync {
+    /// A probe finished, whatever its outcome, after `elapsed`.
+    fn probe_finished(&self, elapsed: Duration);
+
+    /// The committed status of backend `host:port` changed to `status`.
+    /// Called once for each pool the backend is in, after the health map
+    /// has the new status.
+    fn status_changed(&self, pool: &str, host: &str, port: u16, status: HealthStatus);
+
+    /// Backend `host:port` is no longer checked as a member of `pool`: it
+    /// left the pool, or the pool is gone. Nothing more is reported about
+    /// it under `pool` until it is given again.
+    fn backend_left(&self, pool: &str, host: &str, port: u16);
+}
+
 /// A running probe loop, the check it was started with, and the pools it
 /// reports the backend's health under.
 struct Running {
@@ -52,19 +72,20 @@ struct Running {
 /// Runs and supervises per-backend probe loops.
 pub struct HealthChecker {
     health: Arc<HealthMap>,
-    metrics: Arc<GfeMetrics>,
+    observer: Arc<dyn HealthObserver>,
     tasks: Mutex<HashMap<Key, Running>>,
 }
 
 impl HealthChecker {
-    /// A checker writing committed transitions to `health` and the backend
-    /// health series to `metrics`. It probes nothing until [`reconcile`].
+    /// A checker writing committed transitions to `health` and telling
+    /// `observer` about every probe and transition. It probes nothing until
+    /// [`reconcile`].
     ///
     /// [`reconcile`]: HealthChecker::reconcile
-    pub fn new(health: Arc<HealthMap>, metrics: Arc<GfeMetrics>) -> Arc<Self> {
+    pub fn new(health: Arc<HealthMap>, observer: Arc<dyn HealthObserver>) -> Arc<Self> {
         Arc::new(HealthChecker {
             health,
-            metrics,
+            observer,
             tasks: Mutex::new(HashMap::new()),
         })
     }
@@ -74,8 +95,9 @@ impl HealthChecker {
     /// changed. Deduplicates by `(host, port)`; the first pool's check wins
     /// for a shared backend.
     ///
-    /// The health series of a backend under a pool it no longer belongs to
-    /// are removed, so alerts do not fire for objects that are gone.
+    /// The observer is told of every backend that is no longer checked under
+    /// a pool ([`HealthObserver::backend_left`]), so that what it reports
+    /// about objects that are gone can go too.
     ///
     /// A restarted probe keeps the backend's current status until its own
     /// thresholds say otherwise, so changing a check does not flap traffic.
@@ -103,7 +125,7 @@ impl HealthChecker {
                 running.task.abort();
                 let kept: &[String] = wanted.map_or(&[], |(_, pools)| pools);
                 for pool in running.pools.iter().filter(|p| !kept.contains(p)) {
-                    self.remove_series(pool, key);
+                    self.observer.backend_left(pool, &key.0, key.1);
                 }
             }
             unchanged
@@ -122,17 +144,6 @@ impl HealthChecker {
             });
             tasks.insert(key, Running { check, pools, task });
         }
-    }
-
-    /// Stop exporting the health of backend `(host, port)` under `pool`.
-    fn remove_series(&self, pool: &str, (host, port): &Key) {
-        let labels = BackendLabels {
-            pool: pool.to_string(),
-            backend: format!("{host}:{port}"),
-        };
-        let control = &self.metrics.control;
-        control.backend_health_status.remove(&labels);
-        control.backend_draining.remove(&labels);
     }
 
     /// Abort all probe loops.
@@ -161,30 +172,12 @@ impl HealthChecker {
         loop {
             let start = Instant::now();
             let ok = probe.check(&host, port, check.timeout).await;
-            self.metrics
-                .control
-                .health_check_duration_seconds
-                .observe(start.elapsed().as_secs_f64());
+            self.observer.probe_finished(start.elapsed());
 
             if let Some(new) = bh.record(ok, check.healthy_threshold, check.unhealthy_threshold) {
                 self.health.set(&host, port, new);
-                let healthy_val = i64::from(new == HealthStatus::Healthy);
-                let draining_val = i64::from(new == HealthStatus::Draining);
-                for pid in &pools {
-                    let labels = BackendLabels {
-                        pool: pid.clone(),
-                        backend: backend.clone(),
-                    };
-                    self.metrics
-                        .control
-                        .backend_health_status
-                        .get_or_create(&labels)
-                        .set(healthy_val);
-                    self.metrics
-                        .control
-                        .backend_draining
-                        .get_or_create(&labels)
-                        .set(draining_val);
+                for pool in &pools {
+                    self.observer.status_changed(pool, &host, port, new);
                 }
                 tracing::info!(backend = %backend, status = ?new, "backend health transition");
             }

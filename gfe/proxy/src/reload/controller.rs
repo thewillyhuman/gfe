@@ -6,7 +6,7 @@
 use crate::listener::Listeners;
 use crate::proxy::{App, State};
 use crate::reload::applier::{cert_specs, install, prepare};
-use crate::reload::health::checked_pools;
+use crate::reload::health::{HealthMetrics, checked_pools};
 use crate::reload::{ReloadError, cache, watcher};
 use gfe_config::{DynamicConfig, HealthCheckConfig, NodeConfig, load_dynamic_config};
 use netkit_health_checking::HealthChecker;
@@ -63,7 +63,10 @@ impl Controller {
         node: &NodeConfig,
         cert_poll_interval: Duration,
     ) -> Result<Controller, ReloadError> {
-        let checker = HealthChecker::new(Arc::clone(state.health()), Arc::clone(state.metrics()));
+        let checker = HealthChecker::new(
+            Arc::clone(state.health()),
+            Arc::new(HealthMetrics::new(Arc::clone(state.metrics()))),
+        );
         let reloader = Arc::new(Reloader {
             state,
             listeners,

@@ -1,5 +1,6 @@
 use super::*;
 use crate::mock_backend;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A short interval, so that the tests see several probes quickly.
 const INTERVAL: Duration = Duration::from_millis(100);
@@ -33,23 +34,47 @@ fn pool(host: &str, port: u16) -> CheckedPool {
     }
 }
 
-/// A checker over a fresh health map, writing to fresh metrics.
-fn checker(
-    assume_healthy_when_unknown: bool,
-) -> (Arc<HealthChecker>, Arc<HealthMap>, Arc<GfeMetrics>) {
-    let health = Arc::new(HealthMap::new(assume_healthy_when_unknown));
-    let metrics = Arc::new(GfeMetrics::new());
-    let checker = HealthChecker::new(health.clone(), metrics.clone());
-    (checker, health, metrics)
+/// An observer remembering the last status reported for each pool and
+/// backend, forgetting those that left, and counting probes.
+#[derive(Default)]
+struct Recorder {
+    statuses: Mutex<HashMap<(String, String), HealthStatus>>,
+    probes: AtomicUsize,
 }
 
-/// The exported value of `metric` for the backend on `port` under `pool`.
-fn series(metrics: &GfeMetrics, metric: &str, pool: &str, port: u16) -> Option<i64> {
-    let prefix = format!(r#"{metric}{{pool="{pool}",backend="127.0.0.1:{port}"}} "#);
-    metrics
-        .encode()
-        .lines()
-        .find_map(|line| line.strip_prefix(&prefix)?.parse().ok())
+impl Recorder {
+    /// The last status reported for the backend on `127.0.0.1:port` under
+    /// `pool`, unless it left.
+    fn status(&self, pool: &str, port: u16) -> Option<HealthStatus> {
+        let key = (pool.to_string(), format!("127.0.0.1:{port}"));
+        self.statuses.lock().unwrap().get(&key).copied()
+    }
+}
+
+impl HealthObserver for Recorder {
+    fn probe_finished(&self, _elapsed: Duration) {
+        self.probes.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn status_changed(&self, pool: &str, host: &str, port: u16, status: HealthStatus) {
+        let key = (pool.to_string(), format!("{host}:{port}"));
+        self.statuses.lock().unwrap().insert(key, status);
+    }
+
+    fn backend_left(&self, pool: &str, host: &str, port: u16) {
+        let key = (pool.to_string(), format!("{host}:{port}"));
+        self.statuses.lock().unwrap().remove(&key);
+    }
+}
+
+/// A checker over a fresh health map, reporting to a fresh recorder.
+fn checker(
+    assume_healthy_when_unknown: bool,
+) -> (Arc<HealthChecker>, Arc<HealthMap>, Arc<Recorder>) {
+    let health = Arc::new(HealthMap::new(assume_healthy_when_unknown));
+    let recorder = Arc::new(Recorder::default());
+    let checker = HealthChecker::new(health.clone(), recorder.clone());
+    (checker, health, recorder)
 }
 
 /// Whether `condition` holds within a few seconds, polling it.
@@ -101,7 +126,7 @@ async fn marks_unhealthy_when_down() {
 async fn probes_a_backend_shared_by_two_pools_once() {
     let backend = mock_backend::http(200).await;
     let port = backend.port;
-    let (checker, _, metrics) = checker(false);
+    let (checker, _, recorder) = checker(false);
     let first = pool("127.0.0.1", port);
     let second = CheckedPool {
         id: "q".into(),
@@ -113,8 +138,8 @@ async fn probes_a_backend_shared_by_two_pools_once() {
     assert_eq!(checker.active_probes(), 1);
     assert!(
         eventually(|| {
-            series(&metrics, "gfe_backend_health_status", "p", port) == Some(1)
-                && series(&metrics, "gfe_backend_health_status", "q", port) == Some(1)
+            recorder.status("p", port) == Some(HealthStatus::Healthy)
+                && recorder.status("q", port) == Some(HealthStatus::Healthy)
         })
         .await
     );
@@ -145,54 +170,45 @@ async fn restarts_the_probe_of_a_backend_whose_check_changed() {
 }
 
 #[tokio::test]
-async fn removes_the_series_of_a_removed_backend() {
+async fn tells_the_observer_a_removed_backend_left() {
     let backend = mock_backend::http(200).await;
     let port = backend.port;
-    let (checker, _, metrics) = checker(false);
+    let (checker, _, recorder) = checker(false);
     checker.reconcile(&[pool("127.0.0.1", port)]);
-    assert!(
-        eventually(|| series(&metrics, "gfe_backend_health_status", "p", port).is_some()).await
-    );
+    assert!(eventually(|| recorder.status("p", port).is_some()).await);
 
     checker.reconcile(&[]);
 
-    let exported = metrics.encode();
-    assert!(
-        !exported.contains(&format!("127.0.0.1:{port}")),
-        "{exported}"
-    );
+    assert_eq!(recorder.status("p", port), None);
 }
 
 #[tokio::test]
 async fn reports_a_backend_under_the_pool_it_moved_to() {
     let backend = mock_backend::http(200).await;
     let port = backend.port;
-    let (checker, _, metrics) = checker(false);
+    let (checker, _, recorder) = checker(false);
     let mut moved = pool("127.0.0.1", port);
     checker.reconcile(std::slice::from_ref(&moved));
-    assert!(
-        eventually(|| series(&metrics, "gfe_backend_health_status", "p", port).is_some()).await
-    );
+    assert!(eventually(|| recorder.status("p", port).is_some()).await);
 
     moved.id = "q".into();
     checker.reconcile(std::slice::from_ref(&moved));
 
     assert!(
-        eventually(|| series(&metrics, "gfe_backend_health_status", "q", port).is_some()).await,
-        "no series under the new pool"
+        eventually(|| recorder.status("q", port).is_some()).await,
+        "nothing reported under the new pool"
     );
-    let exported = metrics.encode();
-    assert!(!exported.contains(r#"pool="p""#), "{exported}");
+    assert_eq!(recorder.status("p", port), None);
     checker.stop_all();
 }
 
 /// A backend whose answer flips is followed through every state, in the
-/// health map and in the metrics, end to end through real probes.
+/// health map and by the observer, end to end through real probes.
 #[tokio::test]
 async fn follows_a_backend_through_every_state() {
     let backend = mock_backend::http(200).await;
     let port = backend.port;
-    let (checker, health, metrics) = checker(false);
+    let (checker, health, recorder) = checker(false);
     let mut pool = pool("127.0.0.1", port);
     pool.check = CheckSpec {
         probe: http(200, Some(503)),
@@ -200,45 +216,35 @@ async fn follows_a_backend_through_every_state() {
         unhealthy_threshold: 2,
         ..fast_check()
     };
-    // The health map and the metrics are written one after the other: a
-    // state is reached when both show it.
-    let reached = |status: HealthStatus, healthy: i64, draining: i64| {
-        health.get("127.0.0.1", port) == status
-            && series(&metrics, "gfe_backend_health_status", "p", port) == Some(healthy)
-            && series(&metrics, "gfe_backend_draining", "p", port) == Some(draining)
+    // The health map and the observer are told one after the other: a
+    // state is reached when both have it.
+    let reached = |status: HealthStatus| {
+        health.get("127.0.0.1", port) == status && recorder.status("p", port) == Some(status)
     };
 
     assert_eq!(health.get("127.0.0.1", port), HealthStatus::Unknown);
     checker.reconcile(std::slice::from_ref(&pool));
-    assert!(eventually(|| reached(HealthStatus::Healthy, 1, 0)).await);
+    assert!(eventually(|| reached(HealthStatus::Healthy)).await);
 
     backend.answer(500);
-    assert!(eventually(|| reached(HealthStatus::Unhealthy, 0, 0)).await);
+    assert!(eventually(|| reached(HealthStatus::Unhealthy)).await);
 
     backend.answer(503);
-    assert!(eventually(|| reached(HealthStatus::Draining, 0, 1)).await);
+    assert!(eventually(|| reached(HealthStatus::Draining)).await);
 
     backend.answer(200);
-    assert!(eventually(|| reached(HealthStatus::Healthy, 1, 0)).await);
+    assert!(eventually(|| reached(HealthStatus::Healthy)).await);
 
     checker.stop_all();
 }
 
 #[tokio::test]
-async fn times_every_probe() {
+async fn tells_the_observer_of_every_probe() {
     let backend = mock_backend::http(200).await;
-    let (checker, _, metrics) = checker(false);
+    let (checker, _, recorder) = checker(false);
 
     checker.reconcile(&[pool("127.0.0.1", backend.port)]);
 
-    assert!(
-        eventually(|| {
-            metrics.encode().lines().any(|line| {
-                line.starts_with("gfe_health_check_duration_seconds_count ")
-                    && !line.ends_with(" 0")
-            })
-        })
-        .await
-    );
+    assert!(eventually(|| recorder.probes.load(Ordering::SeqCst) > 0).await);
     checker.stop_all();
 }

@@ -1,6 +1,5 @@
 use super::*;
 use gfe_config::{LbPolicy, PoolId, ProbeType, Upstream};
-use std::time::Duration;
 
 fn pool(id: &str, scheme: Scheme, health_check: Option<HealthCheckConfig>) -> UpstreamPool {
     UpstreamPool {
@@ -22,6 +21,15 @@ fn of_type(probe_type: ProbeType) -> HealthCheckConfig {
         probe_type,
         ..HealthCheckConfig::default()
     }
+}
+
+/// The exported value of `metric` for backend `10.0.0.1:8080` under `pool`.
+fn series(metrics: &GfeMetrics, metric: &str, pool: &str) -> Option<i64> {
+    let prefix = format!(r#"{metric}{{pool="{pool}",backend="10.0.0.1:8080"}} "#);
+    metrics
+        .encode()
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix)?.parse().ok())
 }
 
 // --- the checks of the config ---------------------------------------------
@@ -130,4 +138,70 @@ fn a_grpc_probe_uses_tls_for_an_https_pool_only() {
 
     assert_eq!(probe(Scheme::Https), ProbeKind::Grpc { tls: true });
     assert_eq!(probe(Scheme::H2c), ProbeKind::Grpc { tls: false });
+}
+
+// --- the metrics ----------------------------------------------------------
+
+#[test]
+fn a_healthy_backend_exports_healthy_and_not_draining() {
+    let metrics = Arc::new(GfeMetrics::new());
+    let observer = HealthMetrics::new(Arc::clone(&metrics));
+
+    observer.status_changed("p", "10.0.0.1", 8080, HealthStatus::Healthy);
+
+    assert_eq!(series(&metrics, "gfe_backend_health_status", "p"), Some(1));
+    assert_eq!(series(&metrics, "gfe_backend_draining", "p"), Some(0));
+}
+
+#[test]
+fn a_draining_backend_exports_draining_and_not_healthy() {
+    let metrics = Arc::new(GfeMetrics::new());
+    let observer = HealthMetrics::new(Arc::clone(&metrics));
+
+    observer.status_changed("p", "10.0.0.1", 8080, HealthStatus::Draining);
+
+    assert_eq!(series(&metrics, "gfe_backend_health_status", "p"), Some(0));
+    assert_eq!(series(&metrics, "gfe_backend_draining", "p"), Some(1));
+}
+
+#[test]
+fn an_unhealthy_backend_exports_neither() {
+    let metrics = Arc::new(GfeMetrics::new());
+    let observer = HealthMetrics::new(Arc::clone(&metrics));
+
+    observer.status_changed("p", "10.0.0.1", 8080, HealthStatus::Unhealthy);
+
+    assert_eq!(series(&metrics, "gfe_backend_health_status", "p"), Some(0));
+    assert_eq!(series(&metrics, "gfe_backend_draining", "p"), Some(0));
+}
+
+#[test]
+fn a_backend_that_left_a_pool_stops_being_exported_under_it() {
+    let metrics = Arc::new(GfeMetrics::new());
+    let observer = HealthMetrics::new(Arc::clone(&metrics));
+    observer.status_changed("p", "10.0.0.1", 8080, HealthStatus::Healthy);
+    observer.status_changed("q", "10.0.0.1", 8080, HealthStatus::Healthy);
+
+    observer.backend_left("p", "10.0.0.1", 8080);
+
+    assert_eq!(series(&metrics, "gfe_backend_health_status", "p"), None);
+    assert_eq!(series(&metrics, "gfe_backend_draining", "p"), None);
+    assert_eq!(series(&metrics, "gfe_backend_health_status", "q"), Some(1));
+}
+
+#[test]
+fn times_every_probe() {
+    let metrics = Arc::new(GfeMetrics::new());
+    let observer = HealthMetrics::new(Arc::clone(&metrics));
+
+    observer.probe_finished(Duration::from_millis(3));
+
+    assert!(
+        metrics
+            .encode()
+            .lines()
+            .any(|line| line == "gfe_health_check_duration_seconds_count 1"),
+        "{}",
+        metrics.encode()
+    );
 }

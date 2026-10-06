@@ -1454,7 +1454,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "netkit-observability",
  "pingora-core",
  "pingora-error",
  "pingora-http",

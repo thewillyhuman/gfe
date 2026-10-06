@@ -1,11 +1,14 @@
 //! The health checks of the dynamic config, as the health-checking library
-//! takes them.
+//! takes them, and what it reports turned into the node's metrics.
 //!
 //! The library knows checks and probes, not schemes: whether a probe
 //! speaks TLS is decided here, from the pool's scheme.
 
 use gfe_config::{HealthCheckConfig, ProbeType, Scheme, UpstreamPool};
-use netkit_health_checking::{CheckSpec, CheckedPool, ProbeKind};
+use netkit_health_checking::{CheckSpec, CheckedPool, HealthObserver, HealthStatus, ProbeKind};
+use netkit_observability::{BackendLabels, GfeMetrics};
+use std::sync::Arc;
+use std::time::Duration;
 
 /// The pools of the dynamic config with the check of each: its own, or the
 /// node's `defaults` when it has none.
@@ -55,6 +58,56 @@ fn probe_kind(check: &HealthCheckConfig, scheme: Scheme) -> ProbeKind {
         // every backend.
         ProbeType::Http => http(scheme == Scheme::Https),
         ProbeType::Https => http(true),
+    }
+}
+
+/// Feeds the backend health metrics (`gfe_backend_health_status`,
+/// `gfe_backend_draining`, `gfe_health_check_duration_seconds`) from what
+/// the health checker reports.
+pub(crate) struct HealthMetrics(Arc<GfeMetrics>);
+
+impl HealthMetrics {
+    /// An observer recording into `metrics`.
+    pub(crate) fn new(metrics: Arc<GfeMetrics>) -> Self {
+        HealthMetrics(metrics)
+    }
+}
+
+/// The labels of a backend's health series. The backend is `host:port` as
+/// written, an IPv6 literal unbracketed.
+fn labels(pool: &str, host: &str, port: u16) -> BackendLabels {
+    BackendLabels {
+        pool: pool.to_string(),
+        backend: format!("{host}:{port}"),
+    }
+}
+
+impl HealthObserver for HealthMetrics {
+    fn probe_finished(&self, elapsed: Duration) {
+        self.0
+            .control
+            .health_check_duration_seconds
+            .observe(elapsed.as_secs_f64());
+    }
+
+    fn status_changed(&self, pool: &str, host: &str, port: u16, status: HealthStatus) {
+        let labels = labels(pool, host, port);
+        let control = &self.0.control;
+        control
+            .backend_health_status
+            .get_or_create(&labels)
+            .set(i64::from(status == HealthStatus::Healthy));
+        control
+            .backend_draining
+            .get_or_create(&labels)
+            .set(i64::from(status == HealthStatus::Draining));
+    }
+
+    fn backend_left(&self, pool: &str, host: &str, port: u16) {
+        let labels = labels(pool, host, port);
+        let control = &self.0.control;
+        control.backend_health_status.remove(&labels);
+        control.backend_draining.remove(&labels);
     }
 }
 
