@@ -33,10 +33,10 @@ ARG BINARY=builder
 FROM rust:1.88-bookworm AS builder
 WORKDIR /gfe
 
-# What the build needs besides Rust and a C compiler: cmake builds zlib-ng,
-# which Pingora links, and clang compiles the eBPF program of `netkit-kernel`.
+# What the build needs besides Rust and a C compiler: clang, which compiles
+# the eBPF program of `netkit-kernel`.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends cmake clang \
+ && apt-get install -y --no-install-recommends clang \
  && rm -rf /var/lib/apt/lists/*
 
 # The Cargo workspace. What of the repository reaches the build is decided by
