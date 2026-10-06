@@ -20,6 +20,9 @@ impl Resolve for Scripted {
     }
 }
 
+/// How long the caches of these tests trust an answer.
+const TTL: Duration = Duration::from_secs(10);
+
 fn address(n: u8) -> SocketAddr {
     SocketAddr::from(([10, 0, 0, n], 80))
 }
@@ -27,7 +30,7 @@ fn address(n: u8) -> SocketAddr {
 #[tokio::test]
 async fn never_looks_up_an_ip_literal() {
     let resolver = Scripted::default();
-    let cache = DnsCache::new(resolver.clone());
+    let cache = Cache::new(resolver.clone(), TTL);
 
     let v4 = cache
         .address("192.0.2.1", 80, Instant::now())
@@ -46,7 +49,7 @@ async fn never_looks_up_an_ip_literal() {
 #[tokio::test]
 async fn answers_from_the_cache_while_the_answer_is_fresh() {
     let resolver = Scripted::default();
-    let cache = DnsCache::new(resolver.clone());
+    let cache = Cache::new(resolver.clone(), TTL);
     let start = Instant::now();
 
     let first = cache.address("backend", 80, start).await.unwrap();
@@ -63,7 +66,7 @@ async fn answers_from_the_cache_while_the_answer_is_fresh() {
 #[tokio::test]
 async fn looks_up_again_once_the_answer_is_stale() {
     let resolver = Scripted::default();
-    let cache = DnsCache::new(resolver.clone());
+    let cache = Cache::new(resolver.clone(), TTL);
     let start = Instant::now();
     cache.address("backend", 80, start).await.unwrap();
 
@@ -75,7 +78,7 @@ async fn looks_up_again_once_the_answer_is_stale() {
 #[tokio::test]
 async fn keeps_the_last_answer_when_a_refresh_fails() {
     let resolver = Scripted::default();
-    let cache = DnsCache::new(resolver.clone());
+    let cache = Cache::new(resolver.clone(), TTL);
     let start = Instant::now();
     cache.address("backend", 80, start).await.unwrap();
     resolver.failing.store(true, Ordering::SeqCst);
@@ -89,7 +92,7 @@ async fn keeps_the_last_answer_when_a_refresh_fails() {
 async fn fails_a_name_that_was_never_resolved() {
     let resolver = Scripted::default();
     resolver.failing.store(true, Ordering::SeqCst);
-    let cache = DnsCache::new(resolver);
+    let cache = Cache::new(resolver, TTL);
 
     let failed = cache.address("backend", 80, Instant::now()).await;
 
@@ -99,7 +102,7 @@ async fn fails_a_name_that_was_never_resolved() {
 #[tokio::test]
 async fn caches_names_per_port() {
     let resolver = Scripted::default();
-    let cache = DnsCache::new(resolver.clone());
+    let cache = Cache::new(resolver.clone(), TTL);
     let now = Instant::now();
 
     cache.address("backend", 80, now).await.unwrap();
@@ -110,7 +113,7 @@ async fn caches_names_per_port() {
 
 #[tokio::test]
 async fn system_resolver_resolves_localhost() {
-    let cache = DnsCache::new(SystemResolver);
+    let cache = Cache::new(SystemResolver, TTL);
 
     let resolved = cache
         .address("localhost", 80, Instant::now())

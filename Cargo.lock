@@ -1014,6 +1014,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "netkit-dns",
  "netkit-health-checking",
  "netkit-kernel",
  "netkit-load-balancing",
@@ -1430,6 +1431,15 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "netkit-dns"
+version = "0.1.0"
+dependencies = [
+ "dashmap 6.2.1",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

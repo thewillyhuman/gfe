@@ -12,6 +12,7 @@ gfe-config = { workspace = true }
 netkit-observability = { workspace = true }
 netkit-rate-limiting = { workspace = true }
 netkit-kernel = { workspace = true }
+netkit-dns = { workspace = true }
 netkit-tls = { workspace = true }
 netkit-health-checking = { workspace = true }
 netkit-load-balancing = { workspace = true }

@@ -2,7 +2,6 @@
 
 use crate::listener::Connections;
 use crate::proxy::connection_cap::ConnectionCap;
-use crate::proxy::dns::{DnsCache, SystemResolver};
 use crate::proxy::error::ProxyError;
 use crate::proxy::peer::{UpstreamTls, Waits};
 use crate::routing::RouteTable;
@@ -13,7 +12,11 @@ use netkit_load_balancing::PoolSet;
 use netkit_observability::GfeMetrics;
 use netkit_tls::{CertStore, SniResolver};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::watch;
+
+/// How long the address a backend's name resolved to is trusted.
+const BACKEND_ADDRESS_TTL: Duration = Duration::from_secs(10);
 
 /// What a config is compiled into for the proxy: the routes and the pools
 /// they forward to. Swapped as one, so that no request sees routes of one
@@ -53,7 +56,7 @@ pub struct State {
     pub(crate) waits: Waits,
     pub(crate) upstream_tls: UpstreamTls,
     pub(crate) cap: Arc<ConnectionCap>,
-    pub(crate) dns: DnsCache<SystemResolver>,
+    pub(crate) dns: netkit_dns::Cache,
 }
 
 impl std::fmt::Debug for State {
@@ -115,7 +118,7 @@ impl State {
             },
             upstream_tls,
             cap,
-            dns: DnsCache::new(SystemResolver),
+            dns: netkit_dns::Cache::new(netkit_dns::SystemResolver, BACKEND_ADDRESS_TTL),
         }))
     }
 

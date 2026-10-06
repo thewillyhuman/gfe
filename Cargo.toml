@@ -2,6 +2,7 @@
 members = [
     # Libraries: building blocks for networked systems. Nothing in them
     # knows about GFE.
+    "lib/dns",
     "lib/tls",
     "lib/load-balancing",
     "lib/health-checking",
@@ -36,6 +37,7 @@ unsafe_code = "forbid"
 
 [workspace.dependencies]
 # Libraries
+netkit-dns = { path = "lib/dns" }
 netkit-tls = { path = "lib/tls" }
 netkit-load-balancing = { path = "lib/load-balancing" }
 netkit-health-checking = { path = "lib/health-checking" }

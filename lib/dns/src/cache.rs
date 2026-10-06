@@ -1,24 +1,14 @@
-//! The address of a backend whose `host` is a name.
-//!
-//! Pingora connects to a socket address, and GFE builds the peer of every
-//! request afresh, so a name would otherwise be looked up per request.
-//! Answers are cached for [`TTL`]; when a refresh fails the last answer is
-//! kept, so that a resolver outage does not take down backends whose
-//! addresses have not changed. IP literals are never looked up. The first
-//! address of an answer is used.
-
+//! Answers kept for a while, so that a name is not looked up every time it
+//! is needed.
 use dashmap::DashMap;
 use std::future::Future;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
-/// How long a lookup is trusted.
-pub(crate) const TTL: Duration = Duration::from_secs(10);
-
 /// Looks names up. The system resolver in production; a test can count and
 /// script lookups.
-pub(crate) trait Resolve: Send + Sync + 'static {
+pub trait Resolve: Send + Sync + 'static {
     /// The addresses `host` has, with `port`.
     fn resolve(
         &self,
@@ -30,7 +20,7 @@ pub(crate) trait Resolve: Send + Sync + 'static {
 /// The system resolver, through `tokio::net::lookup_host` (which runs the
 /// blocking lookup on Tokio's blocking pool).
 #[derive(Debug, Default)]
-pub(crate) struct SystemResolver;
+pub struct SystemResolver;
 
 impl Resolve for SystemResolver {
     async fn resolve(&self, host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
@@ -45,18 +35,22 @@ struct Entry {
     looked_up: Instant,
 }
 
-/// Backend addresses by `(host, port)`, looked up through `R`.
+/// Addresses by `(host, port)`, looked up through `R` and trusted for a
+/// fixed time.
 #[derive(Debug)]
-pub(crate) struct DnsCache<R = SystemResolver> {
+pub struct Cache<R = SystemResolver> {
     resolver: R,
+    ttl: Duration,
     entries: DashMap<(String, u16), Entry>,
 }
 
-impl<R: Resolve> DnsCache<R> {
-    /// An empty cache in front of `resolver`.
-    pub(crate) fn new(resolver: R) -> Self {
-        DnsCache {
+impl<R: Resolve> Cache<R> {
+    /// An empty cache in front of `resolver`, whose answers are trusted for
+    /// `ttl`.
+    pub fn new(resolver: R, ttl: Duration) -> Self {
+        Cache {
             resolver,
+            ttl,
             entries: DashMap::new(),
         }
     }
@@ -65,19 +59,14 @@ impl<R: Resolve> DnsCache<R> {
     /// name from the cache while its answer is fresh, else looked up. A
     /// failed lookup falls back on the last answer, however old; with none,
     /// it is an error.
-    pub(crate) async fn address(
-        &self,
-        host: &str,
-        port: u16,
-        now: Instant,
-    ) -> io::Result<SocketAddr> {
+    pub async fn address(&self, host: &str, port: u16, now: Instant) -> io::Result<SocketAddr> {
         if let Ok(ip) = host.parse::<IpAddr>() {
             return Ok(SocketAddr::new(ip, port));
         }
         let key = (host.to_string(), port);
         let cached = self.entries.get(&key).map(|entry| *entry.value());
         if let Some(entry) = cached
-            && now.saturating_duration_since(entry.looked_up) < TTL
+            && now.saturating_duration_since(entry.looked_up) < self.ttl
         {
             return Ok(entry.address);
         }
@@ -103,7 +92,7 @@ impl<R: Resolve> DnsCache<R> {
                 Ok(address)
             }
             (Err(error), Some(stale)) => {
-                tracing::warn!(%host, port, %error, "backend lookup failed, using the last answer");
+                tracing::warn!(%host, port, %error, "lookup failed, using the last answer");
                 Ok(stale.address)
             }
             (Err(error), None) => Err(error),
@@ -112,5 +101,5 @@ impl<R: Resolve> DnsCache<R> {
 }
 
 #[cfg(test)]
-#[path = "dns_test.rs"]
+#[path = "cache_test.rs"]
 mod tests;

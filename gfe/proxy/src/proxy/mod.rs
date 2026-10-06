@@ -29,7 +29,6 @@
 
 mod connection_cap;
 mod context;
-mod dns;
 mod error;
 mod failure;
 mod forward;
