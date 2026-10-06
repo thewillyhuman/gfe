@@ -25,6 +25,7 @@
 //! every connection that closes, and a drain that ends as soon as the last
 //! client has left.
 
+pub mod edge;
 mod frontend;
 pub mod kernel;
 pub mod listener;
