@@ -456,13 +456,6 @@ fn rejects_a_zero_timeout() {
 }
 
 #[test]
-fn rejects_zero_idle_upstream_connections() {
-    let err = validate_node("\n[upstream]\nidle_connections = 0").unwrap_err();
-
-    assert!(err.contains("upstream.idle_connections"), "{err}");
-}
-
-#[test]
 fn rejects_an_upstream_client_certificate_without_its_key() {
     let err =
         validate_node("\n[upstream]\nclient_cert_file = \"/etc/gfe/client.crt\"").unwrap_err();

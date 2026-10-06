@@ -66,7 +66,7 @@ fn starts_with_deprecated_keys_and_warns_of_each() {
         &dir,
         &Launch {
             node_keys: "loopback_vip = \"127.0.0.1\"\n",
-            extra: "[ebpf]\nenabled = true\n\n[upstream]\nidle_per_host = 8\n",
+            extra: "[ebpf]\nenabled = true\n",
             command: &|command| {
                 command.stdout(Stdio::piped());
             },
@@ -81,7 +81,7 @@ fn starts_with_deprecated_keys_and_warns_of_each() {
         .lines()
         .filter(|line| line.contains(r#""level":"WARN""#))
         .collect();
-    for key in ["[node] loopback_vip", "[ebpf]", "[upstream] idle_per_host"] {
+    for key in ["[node] loopback_vip", "[ebpf]"] {
         let about_it = warnings
             .iter()
             .filter(|line| line.contains(&format!("{key} is deprecated")))

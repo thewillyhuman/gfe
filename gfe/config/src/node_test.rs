@@ -115,22 +115,20 @@ fn upstream_idle_timeout_is_a_duration() {
 }
 
 #[test]
-fn upstream_idle_connections_defaults_to_1024() {
-    assert_eq!(UpstreamConfig::default().idle_connections, 1024);
-    let cfg: UpstreamConfig = toml::from_str("").unwrap();
-    assert_eq!(cfg.idle_connections, 1024);
+fn upstream_idle_per_host_is_read() {
+    let cfg: UpstreamConfig = toml::from_str("idle_per_host = 8").unwrap();
+    assert_eq!(cfg.idle_per_host, Some(8));
 }
 
 #[test]
-fn upstream_idle_connections_is_read() {
-    let cfg: UpstreamConfig = toml::from_str("idle_connections = 64").unwrap();
-    assert_eq!(cfg.idle_connections, 64);
+fn upstream_idle_per_host_is_unset_by_default() {
+    assert_eq!(UpstreamConfig::default().idle_per_host, None);
 }
 
 #[test]
-fn a_file_that_sets_idle_per_host_still_loads() {
-    let cfg: UpstreamConfig = toml::from_str("idle_per_host = 32").unwrap();
-    assert_eq!(cfg.idle_per_host, Some(32));
+fn upstream_idle_connections_is_not_a_key() {
+    let parsed = toml::from_str::<UpstreamConfig>("idle_connections = 64");
+    assert!(parsed.is_err(), "{parsed:?}");
 }
 
 #[test]
@@ -158,16 +156,10 @@ fn an_ebpf_section_is_reported_as_deprecated_even_when_disabled() {
 }
 
 #[test]
-fn idle_per_host_is_reported_as_deprecated_with_its_replacement() {
-    let deprecations = node_config("[upstream]\nidle_per_host = 32").deprecations();
-
-    assert_eq!(deprecations.len(), 1, "{deprecations:?}");
+fn idle_per_host_is_not_deprecated() {
     assert!(
-        deprecations[0].contains("idle_per_host"),
-        "{deprecations:?}"
-    );
-    assert!(
-        deprecations[0].contains("idle_connections"),
-        "{deprecations:?}"
+        node_config("[upstream]\nidle_per_host = 32")
+            .deprecations()
+            .is_empty()
     );
 }

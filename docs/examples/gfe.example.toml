@@ -43,7 +43,7 @@ drain_deadline      = "30s"   # on shutdown: how long open connections get to fi
                               # request in flight is closed after half of it
 
 [upstream]
-idle_connections = 1024       # idle pooled upstream connections kept, all backends together
+idle_per_host    = 32         # idle pooled upstream connections kept per backend
 idle_timeout     = "60s"      # close a pooled upstream connection idle for this long
 # client_cert_file = "/etc/gfe/upstream-client.pem"   # mTLS: the certificate shown to https backends
 # client_key_file  = "/etc/gfe/upstream-client.key"

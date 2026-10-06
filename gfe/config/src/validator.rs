@@ -202,16 +202,6 @@ fn validate_limits_and_timeouts(config: &NodeConfig) -> Result<(), String> {
 
 /// Validate the `[upstream]` section.
 fn validate_upstream(upstream: &UpstreamConfig) -> Result<(), String> {
-    // A pool that keeps nothing idle opens a new connection, and a new TLS
-    // session, for every request.
-    if upstream.idle_connections == 0 {
-        return Err(
-            "upstream.idle_connections must be greater than 0 (with no idle \
-             connection kept, every request opens a new one); remove it to use \
-             the default"
-                .into(),
-        );
-    }
     // Reject half a client identity: without both its certificate and its
     // key the node would silently not present one, and backends requiring
     // mutual TLS would refuse every connection.

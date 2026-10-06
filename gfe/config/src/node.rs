@@ -51,14 +51,6 @@ impl NodeConfig {
                     .to_string(),
             );
         }
-        if self.upstream.idle_per_host.is_some() {
-            deprecations.push(
-                "[upstream] idle_per_host is deprecated and ignored: idle upstream \
-                 connections are capped for all backends together by \
-                 [upstream] idle_connections; remove it"
-                    .to_string(),
-            );
-        }
         deprecations
     }
 }
@@ -93,16 +85,9 @@ pub struct EbpfConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpstreamConfig {
-    /// Deprecated and ignored: idle pooled connections are capped for all
-    /// backends together, by `idle_connections`, not per backend. Still
-    /// accepted so that existing files load.
+    /// Idle pooled connections kept per backend. `None` or 0 means 32.
     #[serde(default)]
     pub idle_per_host: Option<usize>,
-    /// The most idle pooled upstream connections the node keeps, over all
-    /// backends together. Beyond it, the connection idle the longest is
-    /// closed. Must be greater than 0.
-    #[serde(default = "default_idle_connections")]
-    pub idle_connections: usize,
     /// How long a pooled connection may stay idle before it is closed.
     /// Bounds how long connections to a backend that is no longer used
     /// (removed, or dead) stay open and count against
@@ -125,17 +110,12 @@ impl Default for UpstreamConfig {
     fn default() -> Self {
         UpstreamConfig {
             idle_per_host: None,
-            idle_connections: default_idle_connections(),
             idle_timeout: d60s(),
             client_cert_file: None,
             client_key_file: None,
             extra_ca_file: None,
         }
     }
-}
-
-fn default_idle_connections() -> usize {
-    1024
 }
 
 #[derive(Debug, Clone, Deserialize)]
