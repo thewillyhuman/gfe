@@ -257,7 +257,8 @@ where
     // A receiver whose value was already seen still has it looked at once,
     // so that a connection served after the drain began is drained too.
     drain.mark_changed();
-    let watchdog = tokio::time::sleep(options.header_timeout);
+    // First looked at when either timer could first be due.
+    let watchdog = tokio::time::sleep(options.header_timeout.min(options.idle_timeout));
     tokio::pin!(watchdog);
     // Why the connection was shut down gracefully, once it has been.
     let mut shut_down_for: Option<CloseReason> = None;

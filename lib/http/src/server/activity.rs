@@ -99,7 +99,12 @@ impl ConnActivity {
             self.accepted_at + idle_since + self.idle_timeout
         };
 
-        if now < deadline {
+        if now < deadline && self.requests() == 0 {
+            // The first request may arrive and end before the header
+            // deadline, and the connection then be idle for longer than
+            // the idle timeout before it: look again within one.
+            Verdict::CheckAgainAt(deadline.min(now + self.idle_timeout))
+        } else if now < deadline {
             Verdict::CheckAgainAt(deadline)
         } else if self.requests() == 0 {
             Verdict::HeaderTimeout

@@ -6,7 +6,7 @@ mod server_support;
 use bytes::Bytes;
 use netkit_http::Response;
 use netkit_http::body::Frame;
-use netkit_http::server::{CLOSE_GRACE, CloseReason};
+use netkit_http::server::{CLOSE_GRACE, CloseReason, Options};
 use server_support::raw_h2::{self, RawH2};
 use server_support::*;
 use std::future::pending;
@@ -85,6 +85,36 @@ async fn sends_an_idle_http2_connection_a_goaway_before_closing_it() {
     );
     assert_eq!(closed.reason, CloseReason::IdleTimeout);
     assert_about(answered.elapsed(), IDLE_TIMEOUT);
+}
+
+#[tokio::test(start_paused = true)]
+async fn closes_an_idle_http2_connection_at_an_idle_timeout_shorter_than_the_header_timeout() {
+    let idle_timeout = HEADER_TIMEOUT / 4;
+    let (client, serving) = serve_pipe(
+        hello(),
+        Options {
+            idle_timeout,
+            ..options()
+        },
+    );
+    let (mut client, _) = RawH2::handshake(client).await;
+    client.get(1).await;
+    let answered = loop {
+        let frame = client.next(true).await.expect("closed before answering");
+        if frame.stream == 1 && frame.flags & raw_h2::END_STREAM != 0 {
+            break Instant::now();
+        }
+    };
+
+    let frames = client.until_closed().await;
+    let closed = serving.closed().await;
+
+    assert!(
+        frames.iter().any(|frame| frame.kind == raw_h2::GOAWAY),
+        "{frames:?}"
+    );
+    assert_eq!(closed.reason, CloseReason::IdleTimeout);
+    assert_about(answered.elapsed(), idle_timeout);
 }
 
 #[tokio::test(start_paused = true)]

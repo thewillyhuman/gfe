@@ -19,6 +19,18 @@ fn waits_for_the_first_request_until_the_header_timeout() {
 }
 
 #[test]
+fn waits_for_the_first_request_no_longer_than_an_idle_timeout_at_a_time() {
+    let accepted = Instant::now();
+    let idle_timeout = Duration::from_secs(1);
+    let activity = ConnActivity::new(accepted, HEADER_TIMEOUT, idle_timeout);
+    let now = accepted + Duration::from_secs(2);
+
+    let verdict = activity.verdict(now);
+
+    assert_eq!(verdict, Verdict::CheckAgainAt(now + idle_timeout));
+}
+
+#[test]
 fn times_out_a_connection_that_never_sends_a_request() {
     let accepted = Instant::now();
     let activity = activity(accepted);
