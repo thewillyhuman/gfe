@@ -606,8 +606,9 @@ async fn an_upload_slower_than_upstream_first_byte_succeeds_while_it_progresses(
 
 #[tokio::test]
 async fn an_upload_to_an_h2c_pool_is_bounded_by_its_progress() {
-    // Pingora armed the wait for the response head once on HTTP/2 upstream
-    // connections, and answered this upload 408.
+    // Over HTTP/2 to the backend as over HTTP/1.1: every piece of the body
+    // the backend takes restarts the wait for its response head, so an
+    // upload longer than `upstream_first_byte` is not cut while it moves.
     let (status, received) = upload_slowly(Scheme::H2c, 6, Duration::from_millis(40)).await;
 
     assert_eq!((status, received.as_str()), (StatusCode::OK, "6"));

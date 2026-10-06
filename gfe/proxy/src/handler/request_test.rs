@@ -222,8 +222,8 @@ fn removes_the_hop_by_hop_headers_of_the_client() {
 
 #[test]
 fn a_connection_header_naming_forwarding_headers_strips_what_the_client_sent() {
-    // Pingora answered 502 to this; v1.1.0 strips the named headers and
-    // forwards the request with GFE's own.
+    // As in v1.1.0, the request is not refused: the headers the client
+    // named are stripped, and the request goes on with GFE's own.
     let mut parts = head(
         "/",
         &[

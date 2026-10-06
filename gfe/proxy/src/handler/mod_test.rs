@@ -131,7 +131,8 @@ async fn a_target_and_host_header_that_disagree_are_answered_400() {
 
 #[tokio::test]
 async fn serves_a_target_differing_from_the_host_header_in_case_only() {
-    // Pingora answered 400 to this; v1.1.0 serves it.
+    // Hosts are compared as hosts, as in v1.1.0: case and a default port
+    // do not make the target and `Host` disagree.
     let (proxy, _) = proxy(&forwarding_to(describing_backend().await)).await;
     let request = Request::builder()
         .uri("http://A.example.org:80/")

@@ -49,7 +49,7 @@ fn authority_and_host_header_naming_the_same_host_agree() {
 
 #[test]
 fn authority_and_host_header_differing_in_case_and_an_absent_port_agree() {
-    // Pingora refused this one for differing in bytes; v1.1.0 serves it.
+    // Different bytes, the same host: served, as v1.1.0 serves it.
     assert_eq!(
         host_of(Some("public.example.org"), "http://Public.example.org:80/"),
         Ok("public.example.org".into())
