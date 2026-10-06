@@ -53,14 +53,6 @@ netkit-observability = { path = "lib/observability" }
 gfe-config = { path = "gfe/config" }
 gfe-proxy = { path = "gfe/proxy" }
 
-# The HTTP proxy engine: HTTP/1 and HTTP/2 on both legs, the proxy state
-# machine, and the pooled, TLS-capable connections to backends. Built with
-# rustls, so no C TLS library is linked.
-pingora-core = { version = "0.9", default-features = false, features = ["rustls"] }
-pingora-proxy = { version = "0.9", default-features = false, features = ["rustls"] }
-pingora-http = "0.9"
-pingora-error = "0.9"
-
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
