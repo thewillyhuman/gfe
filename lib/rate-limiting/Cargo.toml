@@ -1,5 +1,5 @@
 [package]
-name = "gfe-limits"
+name = "netkit-rate-limiting"
 description = "Counting and capping what a node holds at once"
 version.workspace = true
 edition.workspace = true

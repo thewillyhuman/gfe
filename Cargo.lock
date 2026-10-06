@@ -975,7 +975,6 @@ dependencies = [
  "dashmap 6.2.1",
  "gfe-config",
  "gfe-ebpf",
- "gfe-limits",
  "gfe-observability",
  "http",
  "http-body-util",
@@ -983,6 +982,7 @@ dependencies = [
  "hyper-util",
  "netkit-health-checking",
  "netkit-load-balancing",
+ "netkit-rate-limiting",
  "netkit-tls",
  "notify",
  "pingora-core",
@@ -1012,10 +1012,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
 ]
-
-[[package]]
-name = "gfe-limits"
-version = "0.1.0"
 
 [[package]]
 name = "gfe-loadtest"
@@ -1489,6 +1485,10 @@ dependencies = [
  "rand",
  "thiserror 2.0.21",
 ]
+
+[[package]]
+name = "netkit-rate-limiting"
+version = "0.1.0"
 
 [[package]]
 name = "netkit-tls"
