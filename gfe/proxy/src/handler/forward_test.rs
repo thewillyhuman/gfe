@@ -806,6 +806,26 @@ async fn refuses_a_backend_certificate_it_does_not_trust() {
 }
 
 #[tokio::test]
+async fn sends_grpc_calls_to_an_https_pool_over_http2_without_host() {
+    let (backend, ca) = tls_backend(&[b"h2", b"http/1.1"]).await;
+    let config = trusting(&ca);
+    let (proxy, _) = forwarding_with(&config, pool(Scheme::Https, &[backend]), None).await;
+
+    let response = send_h2(proxy, grpc_call("hello")).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let seen = text(response).await;
+    assert!(
+        seen.starts_with(&format!(
+            "POST https://{backend}/pkg.Service/Method HTTP/2.0\n"
+        )),
+        "{seen}"
+    );
+    assert_eq!(header_line(&seen, "host"), None);
+    assert_eq!(header_line(&seen, "te"), Some("trailers"));
+}
+
+#[tokio::test]
 async fn a_grpc_call_to_an_https_backend_without_http2_fails_as_other() {
     // v1.1.0 reported a backend that would not speak HTTP/2 as `other`.
     let (backend, ca) = tls_backend(&[b"http/1.1"]).await;
