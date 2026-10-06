@@ -86,14 +86,16 @@ pub(crate) fn connector(certs: &[&TestCert], alpn: &[&[u8]]) -> TlsConnector {
 /// Shared state with fresh metrics, default limits and `timeouts`, counting
 /// the certificate misses of `resolver`.
 pub(crate) fn shared(timeouts: TimeoutsConfig, resolver: Arc<SniResolver>) -> Arc<Shared> {
-    Arc::new(
-        Shared::new(
-            Arc::new(GfeMetrics::new()),
-            LimitsConfig::default(),
-            timeouts,
-        )
-        .with_sni_resolver(resolver),
-    )
+    shared_with(timeouts, LimitsConfig::default(), resolver)
+}
+
+/// [`shared`], held to `limits`.
+pub(crate) fn shared_with(
+    timeouts: TimeoutsConfig,
+    limits: LimitsConfig,
+    resolver: Arc<SniResolver>,
+) -> Arc<Shared> {
+    Arc::new(Shared::new(Arc::new(GfeMetrics::new()), limits, timeouts).with_sni_resolver(resolver))
 }
 
 /// A listener `id` on any loopback port, plaintext or TLS.
