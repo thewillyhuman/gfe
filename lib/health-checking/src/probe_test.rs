@@ -76,8 +76,7 @@ async fn http_probe_fails_a_refused_connection() {
     );
 }
 
-/// The configured timeout bounds the whole probe, whatever Pingora's own
-/// timeouts are.
+/// The configured timeout bounds the whole probe, connecting included.
 #[tokio::test]
 async fn http_probe_fails_a_silent_backend_within_the_timeout() {
     let port = mock_backend::silent().await;
@@ -275,6 +274,13 @@ async fn grpc_probe_fails_a_backend_without_a_health_service_over_tls() {
 }
 
 #[tokio::test]
+async fn grpc_probe_fails_a_malformed_check_response() {
+    // A frame announcing two bytes and carrying one.
+    let port = mock_backend::grpc_answering(&[0, 0, 0, 0, 2, 0x08]).await;
+    assert_eq!(grpc_check(port, false).await, ProbeResult::Fail);
+}
+
+#[tokio::test]
 async fn grpc_probe_fails_a_silent_backend_within_the_timeout() {
     let port = mock_backend::silent().await;
     let probe = make_probe(&ProbeKind::Grpc { tls: false });
@@ -289,4 +295,47 @@ async fn grpc_probe_fails_a_silent_backend_within_the_timeout() {
         "{:?}",
         start.elapsed()
     );
+}
+
+// What a probe sends and leaves behind
+
+/// The `Host` is the host the probe was given, without the port, as
+/// `v1.1.0` sent it.
+#[tokio::test]
+async fn http_probe_names_the_host_without_the_port() {
+    let backend = mock_backend::http_at("localhost", 200).await;
+    let probe = make_probe(&http(None, false));
+
+    probe.check("localhost", backend.port, TIMEOUT).await;
+
+    assert_eq!(backend.last_host(), "localhost");
+}
+
+/// Every probe opens a connection of its own and closes it: a probe that
+/// kept one open would no longer prove that the backend accepts
+/// connections, and would hold a slot of it.
+#[tokio::test]
+async fn http_probe_closes_its_connection_when_done() {
+    let backend = mock_backend::http(200).await;
+    let probe = make_probe(&http(None, false));
+
+    let result = probe.check("127.0.0.1", backend.port, TIMEOUT).await;
+
+    assert_eq!(result, ProbeResult::Pass);
+    tokio::time::timeout(TIMEOUT, backend.all_connections_closed())
+        .await
+        .expect("the probe closed its connection");
+}
+
+#[tokio::test]
+async fn https_probe_closes_its_connection_when_done() {
+    let backend = mock_backend::https(200).await;
+    let probe = make_probe(&http(None, true));
+
+    let result = probe.check("127.0.0.1", backend.port, TIMEOUT).await;
+
+    assert_eq!(result, ProbeResult::Pass);
+    tokio::time::timeout(TIMEOUT, backend.all_connections_closed())
+        .await
+        .expect("the probe closed its connection");
 }

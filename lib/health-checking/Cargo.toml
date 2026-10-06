@@ -9,17 +9,15 @@ publish.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-bytes = { workspace = true }
 dashmap = { workspace = true }
-http = { workspace = true }
-pingora-core = { workspace = true }
-pingora-error = { workspace = true }
-pingora-http = { workspace = true }
+netkit-http = { workspace = true }
+netkit-tls = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 # Mock backends for the probes and the checker.
+bytes = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }

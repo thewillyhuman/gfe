@@ -1,26 +1,24 @@
 //! Health probes: TCP connect, HTTP GET, HTTPS GET, gRPC health check.
 //!
-//! The HTTP and gRPC probes go through Pingora's HTTP connector, the same
-//! machinery the proxy uses to reach backends, but never through its
-//! connection pools: every probe opens a new connection (TCP, and TLS when
-//! the probe uses it) and closes it when done. A probe thereby also proves
-//! that the backend still accepts connections, which a reused connection
-//! would hide.
+//! The HTTP and gRPC probes speak through `netkit-http`'s single
+//! [`Connection`], never through a pool: every probe opens a new connection
+//! (TCP, and TLS when the probe uses it) and closes it when done. A probe
+//! thereby also proves that the backend still accepts connections, which a
+//! reused connection would hide.
 //!
 //! Every probe is bounded as a whole (name resolution, connect, TLS,
-//! request and response) by the timeout it is given; Pingora's own
-//! timeouts are left unset.
+//! request and response) by the timeout it is given; the connection has no
+//! timeout of its own.
+//!
+//! Probes do not verify the backend's certificate: see `tls_connector`.
 
 use async_trait::async_trait;
-use bytes::Bytes;
-use pingora_core::connectors::http::Connector;
-use pingora_core::protocols::ALPN;
-use pingora_core::protocols::http::client::HttpSession;
-use pingora_core::upstreams::peer::HttpPeer;
-use pingora_error::{Error, ErrorType, OkOrErr, OrErr, Result};
-use pingora_http::RequestHeader;
+use netkit_http::body::{self, BodyExt, BoxError};
+use netkit_http::client::{Connection, ConnectionOptions, Protocol};
+use netkit_http::{Bytes, Request, StatusCode, header};
+use netkit_tls::{Connector, ConnectorOptions, Trust};
 use std::fmt::Display;
-use std::net::{Ipv6Addr, SocketAddr};
+use std::net::Ipv6Addr;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -125,20 +123,16 @@ impl Probe for HttpProbe {
 
 impl HttpProbe {
     /// `GET` the path over HTTP/1.1 and return the response status. The
-    /// `Host` header is the configured host, without the port.
-    async fn status(&self, host: &str, port: u16) -> Result<u16> {
-        let peer = new_peer(host, port, self.tls, ALPN::H1).await?;
-        let (mut session, _) = connector().get_http_session(&peer).await?;
-        let mut request = RequestHeader::build("GET", self.path.as_bytes(), None)?;
-        request.insert_header("Host", host)?;
-        request.insert_header("User-Agent", USER_AGENT)?;
-        session.write_request_header(Box::new(request)).await?;
-        session.finish_request_body().await?;
-        session.read_response_header().await?;
-        let response = session
-            .response_header()
-            .expect("a response header was just read");
-        Ok(response.status.as_u16())
+    /// `Host` header is the configured host, without the port. The body is
+    /// not read: the connection is closed as soon as the head is in.
+    async fn status(&self, host: &str, port: u16) -> Result<u16, BoxError> {
+        let mut connection = open(host, port, self.tls, Protocol::Http11).await?;
+        let request = Request::get(self.path.as_str())
+            .header(header::HOST, host)
+            .header(header::USER_AGENT, USER_AGENT)
+            .body(body::empty())?;
+        let response = connection.send(request).await?;
+        Ok(response.status().as_u16())
     }
 }
 
@@ -203,65 +197,75 @@ impl Probe for GrpcProbe {
 
 impl GrpcProbe {
     /// Run the `Check` call over HTTP/2: negotiated by ALPN over TLS, with
-    /// prior knowledge in cleartext, as gRPC requires.
-    async fn call(&self, host: &str, port: u16) -> Result<ServingStatus> {
-        let peer = new_peer(host, port, self.tls, ALPN::H2).await?;
-        let (session, _) = connector().get_http_session(&peer).await?;
-        let HttpSession::H2(mut session) = session else {
-            return Error::e_explain(ErrorType::H2Error, "the backend did not negotiate HTTP/2");
-        };
-        // `:scheme` and `:authority` come from the URI.
-        let uri = http::Uri::builder()
-            .scheme(if self.tls { "https" } else { "http" })
-            .authority(authority(host, port))
-            .path_and_query(CHECK_PATH)
-            .build()
-            .or_err(ErrorType::InvalidHTTPHeader, "building the Check URI")?;
-        let mut request = RequestHeader::build_no_case("POST", CHECK_PATH.as_bytes(), None)?;
-        request.set_uri(uri);
-        request.insert_header("content-type", "application/grpc")?;
-        request.insert_header("te", "trailers")?;
-        request.insert_header("user-agent", USER_AGENT)?;
-        session.write_request_header(Box::new(request), false)?;
-        session
-            .write_request_body(Bytes::from_static(CHECK_REQUEST), true)
-            .await?;
-
-        session.read_response_header().await?;
-        let response = session
-            .response_header()
-            .expect("a response header was just read");
-        if response.status != http::StatusCode::OK {
-            return Error::e_explain(
-                ErrorType::HTTPStatus(response.status.as_u16()),
-                "the Check call was not answered 200",
-            );
+    /// prior knowledge in cleartext, as gRPC requires. `:scheme` and
+    /// `:authority` are the connection's.
+    async fn call(&self, host: &str, port: u16) -> Result<ServingStatus, BoxError> {
+        let mut connection = open(host, port, self.tls, Protocol::Http2).await?;
+        let request = Request::post(CHECK_PATH)
+            .header(header::CONTENT_TYPE, "application/grpc")
+            .header(header::TE, "trailers")
+            .header(header::USER_AGENT, USER_AGENT)
+            .body(body::full(Bytes::from_static(CHECK_REQUEST)))?;
+        let response = connection.send(request).await?;
+        if response.status() != StatusCode::OK {
+            return Err(format!(
+                "the Check call was not answered 200 but {}",
+                response.status()
+            )
+            .into());
         }
         // The call's own status is in the trailers, or in the headers when
         // the server fails it without sending a message.
-        if let Some(status) = response.headers.get("grpc-status") {
-            return Error::e_explain(
-                ErrorType::Custom("gRPC call failed"),
-                format!("grpc-status {status:?}"),
-            );
+        if let Some(status) = response.headers().get("grpc-status") {
+            return Err(format!("gRPC call failed: grpc-status {status:?}").into());
         }
-        let mut body = Vec::new();
-        while let Some(chunk) = session.read_response_body().await? {
-            body.extend_from_slice(&chunk);
-        }
-        let trailers = session.read_trailers().await?;
-        let call_status = trailers.as_ref().and_then(|t| t.get("grpc-status"));
+        let response = response.into_body().collect().await?;
+        let call_status = response.trailers().and_then(|t| t.get("grpc-status"));
         if call_status.is_none_or(|status| status != "0") {
-            return Error::e_explain(
-                ErrorType::Custom("gRPC call failed"),
-                format!("grpc-status {call_status:?}"),
-            );
+            return Err(format!("gRPC call failed: grpc-status {call_status:?}").into());
         }
-        serving_status(&body).or_err(
-            ErrorType::Custom("gRPC call failed"),
-            "the response is not a HealthCheckResponse",
-        )
+        serving_status(&response.to_bytes())
+            .ok_or_else(|| "gRPC call failed: the response is not a HealthCheckResponse".into())
     }
+}
+
+/// A new connection to `host:port` speaking `protocol`, over TLS with `host`
+/// as the server name when `tls` is set. It has no connect timeout: the
+/// probe's own covers it.
+async fn open(
+    host: &str,
+    port: u16,
+    tls: bool,
+    protocol: Protocol,
+) -> Result<Connection, BoxError> {
+    let options = ConnectionOptions {
+        protocol,
+        tls: tls.then(|| tls_connector().clone()),
+        connect_timeout: None,
+    };
+    Ok(Connection::open(host, port, &options).await?)
+}
+
+/// The TLS connector every HTTPS and gRPC-over-TLS probe goes through. It
+/// is built once, so that its session cache is shared; every probe still
+/// opens a TCP connection and runs a handshake of its own.
+///
+/// Probes do **not** verify the server certificate. Health checks are a
+/// liveness signal, not a security boundary, and backends commonly present
+/// internal or self-signed certificates and are often reached by address.
+/// This is intentionally separate from the connections that carry traffic,
+/// which verify certificates.
+fn tls_connector() -> &'static Connector {
+    static CONNECTOR: OnceLock<Connector> = OnceLock::new();
+    CONNECTOR.get_or_init(|| {
+        Connector::new(ConnectorOptions {
+            trust: Trust::Unverified,
+            identity: None,
+        })
+        // Only a trust bundle or an identity can be unusable, and there is
+        // neither.
+        .expect("a connector that verifies nothing and presents nothing")
+    })
 }
 
 /// `host:port` as a URI authority: an IPv6 literal is bracketed.
@@ -271,50 +275,6 @@ fn authority(host: &str, port: u16) -> String {
     } else {
         format!("{host}:{port}")
     }
-}
-
-/// The peer a probe connects to: the first address `host` resolves to, with
-/// `host` as SNI.
-///
-/// Probes do **not** verify the server certificate. Health checks are a
-/// liveness signal, not a security boundary, and backends commonly present
-/// internal/self-signed certs. This is intentionally separate from the
-/// upstream *traffic* connections, which validate certs against the trust
-/// store.
-async fn new_peer(host: &str, port: u16, tls: bool, alpn: ALPN) -> Result<HttpPeer> {
-    let address = first_address(host, port).await?;
-    let mut peer = HttpPeer::new(address, tls, host.to_string());
-    peer.options.verify_cert = false;
-    peer.options.verify_hostname = false;
-    peer.options.alpn = alpn;
-    // One stream per HTTP/2 connection, so that Pingora never offers a
-    // probe's connection to another one.
-    peer.options.max_h2_streams = 1;
-    Ok(peer)
-}
-
-/// The first address `host` resolves to (an IP literal resolves to itself).
-async fn first_address(host: &str, port: u16) -> Result<SocketAddr> {
-    tokio::net::lookup_host((host, port))
-        .await
-        .or_err_with(ErrorType::ConnectNoRoute, || format!("resolving {host}"))?
-        .next()
-        .or_err_with(ErrorType::ConnectNoRoute, || {
-            format!("{host} resolves to no address")
-        })
-}
-
-/// The connector every HTTP and gRPC probe goes through. It is built once:
-/// building it reads the system trust store. Probes never hand a session
-/// back to it, so its connection pools stay empty and every probe connects
-/// anew.
-///
-/// Building it also installs rustls' process-wide crypto provider (`ring`)
-/// when none is installed, which is what lets a probe run in a process
-/// where nothing else has.
-fn connector() -> &'static Connector {
-    static CONNECTOR: OnceLock<Connector> = OnceLock::new();
-    CONNECTOR.get_or_init(|| Connector::new(None))
 }
 
 /// Log why a probe failed, and fail it. At debug level: what operators
