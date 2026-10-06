@@ -1,6 +1,6 @@
 [package]
 name = "netkit-rate-limiting"
-description = "Counting and capping what a node holds at once"
+description = "Capping how much is in use at once and how often something happens"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
