@@ -5,11 +5,8 @@
 //! uses, so stock dashboards and alerts work. They are read from `/proc` and
 //! therefore only reported on Linux.
 
-use prometheus_client::encoding::EncodeLabelSet;
-use prometheus_client::metrics::counter::Counter;
-use prometheus_client::metrics::family::Family;
-use prometheus_client::metrics::gauge::Gauge;
-use prometheus_client::registry::Registry;
+use netkit_observability::prometheus_client;
+use netkit_observability::{Counter, EncodeLabelSet, Family, Gauge, Registry};
 use std::sync::Mutex;
 use std::sync::atomic::AtomicU64;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -175,5 +172,5 @@ fn cpu_seconds(stat: &str) -> Option<f64> {
 }
 
 #[cfg(test)]
-#[path = "process_metrics_test.rs"]
+#[path = "process_test.rs"]
 mod tests;

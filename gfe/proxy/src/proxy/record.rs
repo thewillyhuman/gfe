@@ -9,9 +9,9 @@
 //! connection cut at the end of a drain), when it is dropped (see
 //! `context`).
 
+use crate::metrics::{AbortLabels, GrpcLabels, ProxyMetrics, RequestLabels, RouteLabels};
 use crate::routing::CompiledRoute;
 use http::{HeaderMap, Method, Version};
-use netkit_observability::{AbortLabels, GrpcLabels, ProxyMetrics, RequestLabels, RouteLabels};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

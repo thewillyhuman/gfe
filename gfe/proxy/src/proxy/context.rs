@@ -9,12 +9,13 @@
 //! is dropped.
 
 use crate::listener::{ConnInfo, RequestGuard};
+use crate::metrics::UpstreamDurationLabels;
 use crate::proxy::State;
 use crate::proxy::record::{CLIENT_CLOSED_REQUEST, RequestRecord, Termination};
 use crate::proxy::respond::{Answer, Refusal};
 use gfe_config::Scheme;
 use netkit_load_balancing::{InflightGuard, Pool};
-use netkit_observability::{Gauge, UpstreamDurationLabels};
+use netkit_observability::Gauge;
 use std::sync::Arc;
 use std::time::Instant;
 

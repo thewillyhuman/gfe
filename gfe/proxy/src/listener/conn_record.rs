@@ -15,10 +15,10 @@
 use crate::listener::activity::Expiry;
 use crate::listener::stream::{Metered, StreamState, WireEnd};
 use crate::listener::{ConnInfo, Shared};
-use gfe_config::Listener;
-use netkit_observability::{
+use crate::metrics::{
     CloseLabels, ListenerLabel, RejectLabel, TlsFailureLabel, TlsLabels, TlsResultLabel,
 };
+use gfe_config::Listener;
 use netkit_tls::{HandshakeError, TlsInfo};
 use std::net::SocketAddr;
 use std::sync::Arc;

@@ -2,9 +2,9 @@
 //! [`State`] from.
 
 use crate::listener::Connections;
+use crate::metrics::GfeMetrics;
 use crate::proxy::State;
 use gfe_config::{ControlPlaneConfig, NodeConfig, NodeSection};
-use netkit_observability::GfeMetrics;
 use std::sync::Arc;
 
 /// A node config with every default, and two worker threads.

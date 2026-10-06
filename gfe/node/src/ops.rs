@@ -10,7 +10,8 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use gfe_proxy::Frontend;
-use netkit_observability::{GfeMetrics, Log, LogDestinationLabel, without_histogram_metadata};
+use gfe_proxy::metrics::{GfeMetrics, LogDestinationLabel};
+use netkit_observability::{Log, without_histogram_metadata};
 use pingora_core::apps::ServerApp;
 use pingora_core::protocols::Stream;
 use pingora_core::protocols::http::ServerSession;

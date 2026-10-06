@@ -1,8 +1,8 @@
 use super::*;
 use crate::listener::Connections;
+use crate::metrics::GfeMetrics;
 use crate::proxy::test_support::{node_config, state};
 use gfe_config::PoolId;
-use netkit_observability::GfeMetrics;
 use tokio::sync::watch;
 
 #[test]

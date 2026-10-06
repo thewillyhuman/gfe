@@ -4,9 +4,9 @@
 //! The library knows checks and probes, not schemes: whether a probe
 //! speaks TLS is decided here, from the pool's scheme.
 
+use crate::metrics::{BackendLabels, GfeMetrics};
 use gfe_config::{HealthCheckConfig, ProbeType, Scheme, UpstreamPool};
 use netkit_health_checking::{CheckSpec, CheckedPool, HealthObserver, HealthStatus, ProbeKind};
-use netkit_observability::{BackendLabels, GfeMetrics};
 use std::sync::Arc;
 use std::time::Duration;
 

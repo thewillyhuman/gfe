@@ -3,9 +3,7 @@ use super::*;
 fn exposition() -> String {
     let mut registry = Registry::default();
     ProxyMetrics::register(&mut registry);
-    let mut text = String::new();
-    prometheus_client::encoding::text::encode(&mut text, &registry).expect("encode metrics");
-    text
+    netkit_observability::encode(&registry)
 }
 
 #[test]
@@ -68,8 +66,7 @@ fn request_series_are_labelled_with_vhost_not_host() {
             status: "200".into(),
         })
         .inc();
-    let mut text = String::new();
-    prometheus_client::encoding::text::encode(&mut text, &registry).expect("encode metrics");
+    let text = netkit_observability::encode(&registry);
 
     assert!(
         text.contains(
@@ -91,8 +88,7 @@ fn request_latency_has_the_documented_buckets() {
             route: "api".into(),
         })
         .observe(0.002);
-    let mut text = String::new();
-    prometheus_client::encoding::text::encode(&mut text, &registry).expect("encode metrics");
+    let text = netkit_observability::encode(&registry);
 
     let buckets: Vec<&str> = text
         .lines()

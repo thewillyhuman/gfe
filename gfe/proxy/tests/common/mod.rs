@@ -23,6 +23,7 @@ use gfe_config::{
     NodeConfig, NodeSection, PoolId, Route, RouteAction, RouteId, Scheme, Upstream, UpstreamPool,
 };
 use gfe_proxy::listener::{ConnInfo, Connections};
+use gfe_proxy::metrics::GfeMetrics;
 use gfe_proxy::proxy::{self, State};
 use gfe_proxy::routing::RouteTable;
 use http_body_util::{BodyExt, Empty, Full};
@@ -31,7 +32,6 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use netkit_load_balancing::{Backend, Policy, PoolSet, PoolSpec};
-use netkit_observability::GfeMetrics;
 use netkit_tls::{CertSpec, CertStore, TlsInfo};
 use pingora_core::apps::ServerApp;
 use pingora_core::protocols::GetSocketDigest;

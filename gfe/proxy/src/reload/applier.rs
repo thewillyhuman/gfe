@@ -1,12 +1,12 @@
 //! Compiling a dynamic config into what the proxy serves from, and swapping
 //! it in. Requests already routed finish against what they started with.
 
+use crate::metrics::SniLabel;
 use crate::proxy::State;
 use crate::reload::ReloadError;
 use crate::routing::RouteTable;
 use gfe_config::{CertEntry, DynamicConfig, LbPolicy, Scheme, UpstreamPool, validate};
 use netkit_load_balancing::{Backend, Policy, PoolSet, PoolSpec};
-use netkit_observability::SniLabel;
 use netkit_tls::{CertSpec, CertStore};
 use std::time::{SystemTime, UNIX_EPOCH};
 

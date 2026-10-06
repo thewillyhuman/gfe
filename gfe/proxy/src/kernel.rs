@@ -9,12 +9,12 @@
 //! observability failing must not become an availability failure.
 
 use crate::listener::{AcceptQueue, Listeners};
-use gfe_config::NodeConfig;
-use netkit_kernel::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe};
-use netkit_observability::{
+use crate::metrics::{
     BackendLabel, ClientEndingLabels, GfeMetrics, KernelMetrics, ListenerLabel,
     UpstreamEndingLabels,
 };
+use gfe_config::NodeConfig;
+use netkit_kernel::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe};
 use pingora_core::apps::ServerApp;
 use std::net::SocketAddr;
 use std::sync::Arc;

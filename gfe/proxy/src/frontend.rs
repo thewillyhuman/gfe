@@ -8,10 +8,10 @@
 
 use crate::kernel::{self, KernelView};
 use crate::listener::{Connections, Drain, Listeners, Shared};
+use crate::metrics::GfeMetrics;
 use crate::proxy::{self, App, ProxyError, State};
 use crate::reload::{self, CERT_POLL_INTERVAL, Controller, ReloadError};
 use gfe_config::{DynamicConfig, ListenerId, NodeConfig};
-use netkit_observability::GfeMetrics;
 use netkit_tls::{Acceptor, TlsError};
 use std::io;
 use std::net::SocketAddr;

@@ -2,8 +2,8 @@
 //! the shared state, and a connected pair of loopback sockets.
 
 use crate::listener::Shared;
+use crate::metrics::GfeMetrics;
 use gfe_config::{LimitsConfig, TimeoutsConfig};
-use netkit_observability::GfeMetrics;
 use netkit_tls::{Acceptor, CertSpec, CertStore, MinVersion, SniResolver};
 use rustls::pki_types::CertificateDer;
 use std::sync::Arc;

@@ -8,11 +8,11 @@ use gfe_config::{
     ControlPlaneConfig, DynamicConfig, ListenProtocol, Listener, ListenerId, NodeConfig,
     NodeSection,
 };
+use gfe_proxy::metrics::GfeMetrics;
 use gfe_proxy::{Frontend, StartError};
 use http_body_util::Empty;
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use netkit_observability::GfeMetrics;
 use rustls::pki_types::{CertificateDer, ServerName};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

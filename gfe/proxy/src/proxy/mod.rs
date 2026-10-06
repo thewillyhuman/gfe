@@ -46,6 +46,7 @@ pub use context::RequestCtx;
 pub use error::ProxyError;
 pub use state::State;
 
+use crate::metrics::{PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels};
 use crate::proxy::context::{Attempt, Forward};
 use crate::proxy::failure::{Failure, FailureKind, classify};
 use crate::proxy::forward::Forwarding;
@@ -55,9 +56,6 @@ use crate::proxy::retry::{Attempted, MAX_ATTEMPTS};
 use async_trait::async_trait;
 use gfe_config::RouteAction;
 use http::header::USER_AGENT;
-use netkit_observability::{
-    PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels,
-};
 use pingora_core::apps::HttpServerOptions;
 use pingora_core::protocols::http::v2::server::default_h2_options;
 use pingora_core::server::configuration::ServerConf;

@@ -4,8 +4,7 @@ use super::*;
 fn exposes_every_process_metric_with_its_type() {
     let mut registry = Registry::default();
     ProcessMetrics::register(&mut registry);
-    let mut text = String::new();
-    prometheus_client::encoding::text::encode(&mut text, &registry).expect("encode metrics");
+    let text = netkit_observability::encode(&registry);
 
     for (name, kind) in [
         ("gfe_build_info", "gauge"),

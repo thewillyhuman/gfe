@@ -5,12 +5,8 @@
 //! route, pool, backend) or by a fixed set (status, reason, kind), so that
 //! no client can make the number of series grow.
 
-use prometheus_client::encoding::EncodeLabelSet;
-use prometheus_client::metrics::counter::Counter;
-use prometheus_client::metrics::family::Family;
-use prometheus_client::metrics::gauge::Gauge;
-use prometheus_client::metrics::histogram::Histogram;
-use prometheus_client::registry::Registry;
+use netkit_observability::prometheus_client;
+use netkit_observability::{Counter, EncodeLabelSet, Family, Gauge, Histogram, Registry};
 
 /// `listener` label for per-listener connection metrics.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -406,5 +402,5 @@ impl ProxyMetrics {
 }
 
 #[cfg(test)]
-#[path = "proxy_metrics_test.rs"]
+#[path = "proxy_test.rs"]
 mod tests;

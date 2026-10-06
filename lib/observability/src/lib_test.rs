@@ -1,23 +1,26 @@
 use super::*;
 
-#[test]
-fn encodes_registered_metrics() {
-    let m = GfeMetrics::new();
-    m.proxy.no_route.inc();
-    let out = m.encode();
-    assert!(out.contains("gfe_no_route"));
-    assert!(out.contains("gfe_backend_health_status"));
+/// A registry with one counter, counted once, and one histogram, observed
+/// once.
+fn registry() -> Registry {
+    let mut registry = Registry::default();
+    let requests = Counter::<u64>::default();
+    requests.inc();
+    registry.register("requests", "Requests", requests);
+    let wait = Histogram::new([0.1, 1.0]);
+    wait.observe(0.5);
+    registry.register("wait_seconds", "Wait", wait);
+    registry
 }
 
 #[test]
-fn reports_build_and_process_start() {
-    let out = GfeMetrics::new().encode();
-    let version = env!("CARGO_PKG_VERSION");
-    assert!(
-        out.contains(&format!("gfe_build_info{{version=\"{version}\"}} 1")),
-        "{out}"
-    );
-    assert!(out.contains("process_start_time_seconds "), "{out}");
+fn encodes_every_registered_metric_in_the_text_format() {
+    let text = encode(&registry());
+
+    assert!(text.contains("# TYPE requests counter\n"), "{text}");
+    assert!(text.contains("requests_total 1\n"), "{text}");
+    assert!(text.contains("wait_seconds_count 1\n"), "{text}");
+    assert!(text.ends_with("# EOF\n"), "{text}");
 }
 
 #[test]
@@ -54,8 +57,8 @@ wait_seconds_bucket{le=\"+Inf\"} 2
 }
 
 #[test]
-fn keeps_every_sample_of_the_node_when_dropping_histogram_metadata() {
-    let exposition = GfeMetrics::new().encode();
+fn keeps_every_sample_when_dropping_histogram_metadata() {
+    let exposition = encode(&registry());
     let samples = |text: &str| text.lines().filter(|l| !l.starts_with('#')).count();
 
     let untyped = without_histogram_metadata(&exposition);

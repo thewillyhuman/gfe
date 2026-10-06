@@ -3,9 +3,7 @@ use super::*;
 fn exposition() -> String {
     let mut registry = Registry::default();
     KernelMetrics::register(&mut registry);
-    let mut text = String::new();
-    prometheus_client::encoding::text::encode(&mut text, &registry).expect("encode metrics");
-    text
+    netkit_observability::encode(&registry)
 }
 
 #[test]

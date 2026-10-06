@@ -17,6 +17,7 @@
 //! - [`reload`] keeps a node in step with its dynamic config.
 //! - [`kernel`] turns the kernel's view of the node's TCP connections into
 //!   metrics and log events.
+//! - [`metrics`] defines every metric a node exports.
 //!
 //! The edge is the node's own, rather than Pingora's listening service,
 //! because of what a node promises its operators: listeners that come and
@@ -27,6 +28,7 @@
 mod frontend;
 pub mod kernel;
 pub mod listener;
+pub mod metrics;
 pub mod proxy;
 pub mod reload;
 pub mod routing;

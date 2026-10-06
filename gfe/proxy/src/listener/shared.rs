@@ -3,8 +3,8 @@
 //! sources of what the edge cannot observe itself (the kernel's accept
 //! queue, the certificate resolver's misses).
 
+use crate::metrics::GfeMetrics;
 use gfe_config::{LimitsConfig, TimeoutsConfig};
-use netkit_observability::GfeMetrics;
 use netkit_tls::SniResolver;
 use std::net::SocketAddr;
 use std::sync::Arc;

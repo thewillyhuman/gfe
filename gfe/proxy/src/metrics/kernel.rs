@@ -3,14 +3,10 @@
 //! retransmitted, and how the connection ended, per listener on the client
 //! side and per backend address on the upstream side.
 
-use prometheus_client::encoding::EncodeLabelSet;
-use prometheus_client::metrics::counter::Counter;
-use prometheus_client::metrics::family::Family;
-use prometheus_client::metrics::gauge::Gauge;
-use prometheus_client::metrics::histogram::Histogram;
-use prometheus_client::registry::Registry;
+use netkit_observability::prometheus_client;
+use netkit_observability::{Counter, EncodeLabelSet, Family, Gauge, Histogram, Registry};
 
-use crate::ListenerLabel;
+use crate::metrics::ListenerLabel;
 
 /// `backend` label: the address of the other end of an upstream connection,
 /// as the kernel sees it (`ip:port`).
@@ -133,5 +129,5 @@ impl KernelMetrics {
 }
 
 #[cfg(test)]
-#[path = "kernel_metrics_test.rs"]
+#[path = "kernel_test.rs"]
 mod tests;

@@ -1,12 +1,8 @@
 //! Control-plane metrics: backend health and draining, the dynamic config
 //! and its reloads, in-place upgrades, and certificate expiry.
 
-use prometheus_client::encoding::EncodeLabelSet;
-use prometheus_client::metrics::counter::Counter;
-use prometheus_client::metrics::family::Family;
-use prometheus_client::metrics::gauge::Gauge;
-use prometheus_client::metrics::histogram::Histogram;
-use prometheus_client::registry::Registry;
+use netkit_observability::prometheus_client;
+use netkit_observability::{Counter, EncodeLabelSet, Family, Gauge, Histogram, Registry};
 
 /// `pool` + `backend` labels for per-backend gauges.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -120,5 +116,5 @@ impl ControlMetrics {
 }
 
 #[cfg(test)]
-#[path = "control_metrics_test.rs"]
+#[path = "control_test.rs"]
 mod tests;

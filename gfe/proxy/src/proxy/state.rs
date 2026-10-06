@@ -1,6 +1,7 @@
 //! What the proxy reads on every request, shared by all of them.
 
 use crate::listener::Connections;
+use crate::metrics::GfeMetrics;
 use crate::proxy::connection_cap::ConnectionCap;
 use crate::proxy::error::ProxyError;
 use crate::proxy::peer::{UpstreamTls, Waits};
@@ -9,7 +10,6 @@ use arc_swap::ArcSwap;
 use gfe_config::{NodeConfig, Scheme, TimeoutsConfig};
 use netkit_health_checking::HealthMap;
 use netkit_load_balancing::PoolSet;
-use netkit_observability::GfeMetrics;
 use netkit_tls::{CertStore, SniResolver};
 use std::sync::Arc;
 use std::time::Duration;
