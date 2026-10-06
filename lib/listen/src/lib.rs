@@ -36,17 +36,30 @@
 //!
 //! A closed listening socket refuses connections and resets the ones
 //! waiting in its queue, so a process replaced in place hands its sockets
-//! over instead. The running process [lends](Listeners::sockets) duplicates
-//! of them and passes them to its successor over a Unix socket. The
-//! successor [adopts](Listeners::adopt) them before its first stage, and so
-//! accepts on the very sockets the clients are queued on. Once it says it
-//! does, the old process drains.
+//! over instead:
+//!
+//! 1. The running process starts its successor with one end of a Unix
+//!    socket pair, [lends](Listeners::sockets) duplicates of its listening
+//!    sockets and [sends](handover::send) them over the pair, each with a
+//!    role and the address it is configured on. It keeps accepting.
+//! 2. The successor [receives](handover::receive) them, which tells the
+//!    running process its process id ([`handover::await_receipt`]), and
+//!    [adopts](Listeners::adopt) them before its first stage: it accepts on
+//!    the very sockets the clients are queued on, without binding.
+//! 3. Once it accepts, the successor [confirms](handover::confirm). The
+//!    running process ([`handover::await_confirmation`]) then drains: it
+//!    stops accepting on its copies and lets its connections finish.
+//!
+//! Until step 3 the running process has changed nothing: if the successor
+//! fails, it goes on serving.
 //!
 //! This crate knows nothing of TLS, HTTP, metrics or config files. It
 //! reports what happened through return values and through the code its
 //! caller gives it; the caller turns that into its own logs and metrics.
 mod accept;
 mod drain;
+#[cfg(unix)]
+pub mod handover;
 mod keep_alive;
 mod listeners;
 mod metered;
