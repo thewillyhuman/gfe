@@ -5,4 +5,5 @@
 //! to the request handling that runs today, until it can take its place.
 
 pub mod failure;
+pub mod host;
 pub mod respond;
