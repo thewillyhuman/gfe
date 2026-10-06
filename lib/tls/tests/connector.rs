@@ -2,7 +2,9 @@
 //! talk over an in-memory duplex pipe, with certificates issued by a private
 //! CA that `rcgen` makes for each test.
 
-use netkit_tls::{Alpn, Connector, ConnectorOptions, Identity, Trust, is_tls_error};
+use netkit_tls::{
+    Alpn, Connector, ConnectorOptions, Identity, Trust, is_protocol_refusal, is_tls_error,
+};
 use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::WebPkiClientVerifier;
@@ -285,6 +287,31 @@ async fn a_server_with_no_protocol_in_common_refuses() {
 
     let error = client.unwrap_err();
     assert!(is_tls_error(&error), "{error}");
+}
+
+#[tokio::test]
+async fn a_server_with_no_protocol_in_common_is_told_from_other_tls_failures() {
+    let ca = Ca::new();
+    let mut server = Server::new(ca.issue(&["server.test"], ExtendedKeyUsagePurpose::ServerAuth));
+    server.alpn = vec![b"http/1.1"];
+    let connector = connector(Trust::SystemAnd(ca.pem()), None);
+
+    let (client, _) = handshake(&connector, "server.test", &[Alpn::H2], &server).await;
+
+    let error = client.unwrap_err();
+    assert!(is_protocol_refusal(&error), "{error}");
+}
+
+#[tokio::test]
+async fn an_untrusted_certificate_is_no_refusal_of_a_protocol() {
+    let ca = Ca::new();
+    let server = Server::new(ca.issue(&["server.test"], ExtendedKeyUsagePurpose::ServerAuth));
+    let connector = connector(Trust::System, None);
+
+    let (client, _) = handshake(&connector, "server.test", &[Alpn::H2], &server).await;
+
+    let error = client.unwrap_err();
+    assert!(!is_protocol_refusal(&error), "{error}");
 }
 
 #[tokio::test]

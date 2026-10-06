@@ -188,6 +188,23 @@ pub fn is_tls_error(error: &io::Error) -> bool {
         .is_some_and(|inner| inner.downcast_ref::<rustls::Error>().is_some())
 }
 
+/// Whether `error`, as returned by [`Connector::connect`], is the server
+/// saying that it speaks none of the protocols it was offered (the
+/// `no_application_protocol` alert). It is a TLS failure
+/// ([`is_tls_error`]), but of a kind of its own: nothing is wrong with
+/// either side's certificates, the two just have no protocol in common.
+pub fn is_protocol_refusal(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+        .is_some_and(|tls| {
+            matches!(
+                tls,
+                rustls::Error::AlertReceived(rustls::AlertDescription::NoApplicationProtocol)
+            )
+        })
+}
+
 /// The roots of the system's trust store that parse.
 fn system_roots() -> RootCertStore {
     let system = rustls_native_certs::load_native_certs();

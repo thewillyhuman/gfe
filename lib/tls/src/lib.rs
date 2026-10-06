@@ -33,7 +33,8 @@ pub use acceptor::{Acceptor, HandshakeError, TlsInfo};
 pub use cert_files::CertFiles;
 pub use cert_store::CertStore;
 pub use connector::{
-    Alpn, ClientTlsStream, Connector, ConnectorOptions, Identity, Trust, is_tls_error,
+    Alpn, ClientTlsStream, Connector, ConnectorOptions, Identity, Trust, is_protocol_refusal,
+    is_tls_error,
 };
 pub use error::TlsError;
 pub use loader::{LoadedCert, load_cert_files, load_cert_pem};
