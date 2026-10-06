@@ -13,10 +13,14 @@ http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
+hyper-util = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
+# Paused time, for the tests of the connection timers.
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true
