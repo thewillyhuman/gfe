@@ -17,15 +17,14 @@ creates `/var/lib/gfe` (the last-known-good config cache) on start.
 
 ## Building
 
-The metadata lives in `gfe-node/Cargo.toml` under
+The metadata lives in `gfe/node/Cargo.toml` under
 `[package.metadata.generate-rpm]`; the scriptlets are in `hack/rpm/`, and the
 unit, the dashboard and the alert rules in `distribution/`. The package is
 assembled from the already-built release binary by
 [`cargo-generate-rpm`](https://github.com/cat-in-136/cargo-generate-rpm), so
 no `rpmbuild` is needed. Building the binary needs Rust (1.88 or later), a C
-compiler, `cmake` (Pingora builds zlib-ng) and `clang` (the eBPF program of
-the kernel view; a Linux build fails without it). From the root of the
-repository:
+compiler and `clang` (the eBPF program of the kernel view; a Linux build
+fails without it). From the root of the repository:
 
 ```bash
 cargo install cargo-generate-rpm --locked
@@ -121,15 +120,13 @@ Notes:
   `/etc/systemd/system/gfe-node.service.d/` must stop doing so, and remove
   what it installed: a copy only repeats what the unit now grants, and a
   symlink to the packaged file now points at nothing. The change to the unit
-  takes effect with `systemctl restart gfe-node`, not with a reload (below). A node that cannot attach the program (the
-  capabilities removed from the unit, an old kernel) logs why, reports
-  `gfe_ebpf_attached 0`, raises `GfeKernelViewNotAttached`, and serves
-  without it.
-- `[node] loopback_vip`, `[ebpf]` and `[upstream] idle_per_host` are still
-  accepted in the bootstrap TOML but ignored, and the node logs a warning for
-  each one it finds when it starts. Remove them from the template; use
-  `[upstream] idle_connections` for the cap on idle upstream connections
-  (all backends together).
+  takes effect with `systemctl restart gfe-node`, not with a reload (below).
+  A node that cannot attach the program (the capabilities removed from the
+  unit, an old kernel) logs why, reports `gfe_ebpf_attached 0`, raises
+  `GfeKernelViewNotAttached`, and serves without it.
+- `[node] loopback_vip` and `[ebpf]` are still accepted in the bootstrap
+  TOML but ignored, and the node logs a warning for each one it finds when
+  it starts. Remove them from the template.
 - Listeners, routes, pools and certificates are all in the dynamic config
   and are reconciled when the file changes, including binding and releasing
   listening sockets. Only the binary and the bootstrap TOML need a new
