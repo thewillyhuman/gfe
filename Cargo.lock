@@ -989,6 +989,7 @@ dependencies = [
  "clap",
  "gfe-config",
  "gfe-proxy",
+ "netkit-listen",
  "netkit-observability",
  "pingora-core",
  "pingora-http",
