@@ -1,6 +1,6 @@
 [package]
 name = "netkit-tls"
-description = "TLS termination: certificates by SNI, the TLS policy, the handshake"
+description = "TLS in both directions: terminating it for clients, originating it towards servers"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

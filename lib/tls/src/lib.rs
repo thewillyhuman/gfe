@@ -1,14 +1,21 @@
-//! TLS termination for client connections: which certificate a client gets
-//! (by SNI, from a store swapped atomically on reload), the TLS policy every
-//! HTTPS listener applies (versions, ALPN, session resumption), the handshake
-//! itself and what it settled on or why it failed, and noticing that the
-//! certificate files were replaced on disk.
+//! TLS in both directions, on rustls.
 //!
-//! The crate is plain rustls / tokio-rustls: it knows nothing about HTTP nor
-//! about the proxy engine, and records no metric. Callers turn what it
-//! returns ([`TlsInfo`], [`HandshakeError::reason`],
-//! [`SniResolver::miss_count`], [`CertStore::expiries`]) into metrics and
-//! logs.
+//! **Terminating** it, for the clients of a server: which certificate a
+//! client gets (by SNI, from a store swapped atomically when certificates
+//! change), the policy every listener applies (versions, ALPN, session
+//! resumption), the handshake itself and what it settled on or why it
+//! failed ([`Acceptor`]), and noticing that certificate files were replaced
+//! on disk ([`CertFiles`]).
+//!
+//! **Originating** it, towards a server ([`Connector`]): which authorities
+//! are trusted (the system's trust store, with more added, or nothing
+//! verified at all for a check that only asks whether a server answers),
+//! and the certificate presented to servers that ask for one.
+//!
+//! The crate is plain rustls / tokio-rustls: it knows nothing about HTTP and
+//! records no metric. Callers turn what it returns ([`TlsInfo`],
+//! [`HandshakeError::reason`], [`SniResolver::miss_count`],
+//! [`CertStore::expiries`]) into metrics and logs.
 
 mod acceptor;
 mod cert_files;
