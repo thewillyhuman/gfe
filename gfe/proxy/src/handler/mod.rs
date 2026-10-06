@@ -6,6 +6,7 @@
 
 mod error;
 pub mod failure;
+pub mod forward;
 pub mod host;
 pub mod progress;
 pub mod record;

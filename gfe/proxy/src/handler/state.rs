@@ -9,7 +9,7 @@ use crate::handler::error::ProxyError;
 use crate::metrics::GfeMetrics;
 use crate::routing::RouteTable;
 use arc_swap::ArcSwap;
-use gfe_config::{NodeConfig, Scheme, UpstreamConfig};
+use gfe_config::{NodeConfig, Scheme, TimeoutsConfig, UpstreamConfig};
 use netkit_health_checking::HealthMap;
 use netkit_http::client::{Client, KeepAlive, Options};
 use netkit_load_balancing::PoolSet;
@@ -47,6 +47,10 @@ pub struct State {
     health: Arc<HealthMap>,
     metrics: Arc<GfeMetrics>,
     client: Client,
+    /// The `Strict-Transport-Security` value of responses over TLS; empty
+    /// for none.
+    hsts: String,
+    timeouts: TimeoutsConfig,
 }
 
 impl std::fmt::Debug for State {
@@ -56,6 +60,7 @@ impl std::fmt::Debug for State {
             .field("routes", &routing.routes.route_count())
             .field("pools", &routing.pools.len())
             .field("client", &self.client)
+            .field("timeouts", &self.timeouts)
             .finish_non_exhaustive()
     }
 }
@@ -82,6 +87,8 @@ impl State {
             health: Arc::new(HealthMap::new(true)),
             metrics,
             client,
+            hsts: config.tls.hsts.clone(),
+            timeouts: config.timeouts.clone(),
         }))
     }
 
@@ -113,6 +120,22 @@ impl State {
     pub fn refresh_metrics(&self) {
         let open = i64::try_from(self.client.open_connections()).unwrap_or(i64::MAX);
         self.metrics.proxy.upstream_connections.set(open);
+    }
+
+    /// The client requests are sent to backends with.
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// The `Strict-Transport-Security` value of responses over TLS; empty
+    /// for none.
+    pub(crate) fn hsts(&self) -> &str {
+        &self.hsts
+    }
+
+    /// How long backends, and requests, may take.
+    pub(crate) fn timeouts(&self) -> &TimeoutsConfig {
+        &self.timeouts
     }
 }
 
