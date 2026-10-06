@@ -241,6 +241,30 @@ async fn counts_the_bytes_of_its_stream_under_its_listener() {
     );
 }
 
+#[tokio::test]
+async fn the_bytes_of_an_open_connection_are_already_in_its_listeners_counters() {
+    use tokio::io::AsyncReadExt;
+    let shared = shared();
+    let mut record = open(&shared);
+    let (mut client, server) = tokio::io::duplex(4096);
+    let mut server = record.meter(server);
+
+    client.write_all(b"ping").await.unwrap();
+    let mut received = [0u8; 4];
+    server.read_exact(&mut received).await.unwrap();
+    server.write_all(b"pong!").await.unwrap();
+
+    let exposed = shared.metrics().encode();
+    assert!(
+        exposed.contains(r#"gfe_bytes_in_total{listener="web"} 4"#),
+        "{exposed}"
+    );
+    assert!(
+        exposed.contains(r#"gfe_bytes_out_total{listener="web"} 5"#),
+        "{exposed}"
+    );
+}
+
 /// A kernel view that knows every connection waited 5 ms, and remembers
 /// which addresses it was asked about.
 #[derive(Default)]

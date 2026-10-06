@@ -18,11 +18,31 @@ use crate::metrics::{
 };
 use gfe_config::Listener;
 use netkit_http::server::{CloseReason, Closed};
-use netkit_listen::{Meter, Metered};
+use netkit_listen::{Meter, Metered, Tally};
+use netkit_observability::Counter;
 use netkit_tls::{HandshakeError, TlsInfo};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// The byte counters of a listener, told of the bytes of each of its
+/// connections as they flow: with connections that live for hours, a
+/// counter that only moved when one closes would give no rate worth
+/// looking at.
+struct ListenerBytes {
+    received: Counter,
+    sent: Counter,
+}
+
+impl Tally for ListenerBytes {
+    fn read(&self, bytes: u64) {
+        self.received.inc_by(bytes);
+    }
+
+    fn written(&self, bytes: u64) {
+        self.sent.inc_by(bytes);
+    }
+}
 
 /// The label value of a connection served over HTTP that ended for
 /// `reason` (`gfe_connections_closed_total{reason}` and the `gfe::conn`
@@ -123,10 +143,18 @@ impl ConnRecord {
     }
 
     /// Wrap the connection's socket so that the bytes moved over it are
-    /// counted, for this record and, when it is reported, in the
-    /// listener's byte counters.
+    /// counted: for this record, which reports them when the connection is
+    /// over, and in the listener's byte counters as they flow.
     pub(crate) fn meter<S>(&mut self, socket: S) -> Metered<S> {
-        let metered = Metered::new(socket);
+        let label = ListenerLabel {
+            listener: self.listener.clone(),
+        };
+        let metrics = &self.shared.metrics().proxy;
+        let bytes = ListenerBytes {
+            received: metrics.bytes_in.get_or_create(&label).clone(),
+            sent: metrics.bytes_out.get_or_create(&label).clone(),
+        };
+        let metered = Metered::with_tally(socket, Arc::new(bytes));
         self.meter = Some(metered.meter());
         metered
     }
@@ -233,8 +261,6 @@ impl Drop for ConnRecord {
             .connection_duration_seconds
             .get_or_create(&label)
             .observe(elapsed.as_secs_f64());
-        metrics.bytes_in.get_or_create(&label).inc_by(bytes_in);
-        metrics.bytes_out.get_or_create(&label).inc_by(bytes_out);
 
         let tls = self.tls.as_ref();
         tracing::info!(
