@@ -61,7 +61,7 @@ async fn hands_each_connection_to_serve_with_its_listener_and_addresses() {
     assert_eq!(seen.peer, client.local_addr().unwrap());
     assert_eq!(seen.local, running.addr);
     assert!(Arc::ptr_eq(&seen.handle, &running.listener));
-    assert_eq!(running.open.limit.in_use(), 1);
+    assert_eq!(running.open.count(), 1);
 }
 
 #[tokio::test]
@@ -80,7 +80,7 @@ async fn a_connection_over_the_per_listener_limit_is_closed_and_reported() {
 
     assert_eq!(refused, ("web", Limit::MaxConnectionsPerListener));
     assert!(closed_soon(&mut beyond).await);
-    assert_eq!(running.open.limit.in_use(), 1);
+    assert_eq!(running.open.count(), 1);
 }
 
 #[tokio::test]
@@ -99,6 +99,27 @@ async fn a_connection_over_the_total_limit_is_closed_and_reported() {
 
     assert_eq!(refused, ("web", Limit::MaxConnections));
     assert!(closed_soon(&mut beyond).await);
+}
+
+#[tokio::test]
+async fn a_closed_connection_makes_room_under_the_limit() {
+    let (serve, mut record) = Recorder::holding();
+    let limits = Limits {
+        max_connections: 1,
+        max_connections_per_listener: 1,
+    };
+    let running = accepting(serve, limits).await;
+    let first = TcpStream::connect(running.addr).await.unwrap();
+    record.next_accepted().await;
+
+    drop(first);
+    tokio::time::timeout(PATIENCE, running.open.all_closed())
+        .await
+        .unwrap();
+    let second = TcpStream::connect(running.addr).await.unwrap();
+    let seen = record.next_accepted().await;
+
+    assert_eq!(seen.peer, second.local_addr().unwrap());
 }
 
 #[tokio::test]
@@ -131,6 +152,9 @@ async fn stops_accepting_when_the_process_drains_and_tells_its_connections() {
     assert!(stopped.is_ok());
     // The recorder leaves when it sees the drain.
     assert!(closed_soon(&mut client).await);
+    tokio::time::timeout(PATIENCE, running.open.all_closed())
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -143,6 +167,9 @@ async fn a_cut_drops_the_connections_still_served() {
     running.cut.send_replace(true);
 
     assert!(closed_soon(&mut client).await);
+    tokio::time::timeout(PATIENCE, running.open.all_closed())
+        .await
+        .unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -169,6 +196,43 @@ async fn pause_ends_as_soon_as_the_process_drains() {
 
     assert!(drained);
     assert!(started.elapsed() < Duration::from_secs(60));
+}
+
+#[tokio::test]
+async fn no_open_connection_is_waited_for_at_once() {
+    let open = OpenConnections::new(10);
+
+    let waited = tokio::time::timeout(PATIENCE, open.all_closed()).await;
+
+    assert!(waited.is_ok());
+}
+
+#[tokio::test]
+async fn the_last_connection_to_close_ends_the_wait() {
+    let open = OpenConnections::new(10);
+    let slot = Slot {
+        permits: Some((
+            open.limit.try_acquire().unwrap(),
+            ConcurrencyLimit::new(None).try_acquire().unwrap(),
+        )),
+        open: Arc::clone(&open),
+    };
+    assert_eq!(open.count(), 1);
+    let (closing_tx, closing) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        let _ = closing.await;
+        drop(slot);
+    });
+
+    let wait = open.all_closed();
+    tokio::pin!(wait);
+    let waited_before = tokio::time::timeout(Duration::from_millis(10), wait.as_mut()).await;
+    closing_tx.send(()).unwrap();
+    let waited = tokio::time::timeout(PATIENCE, wait).await;
+
+    assert!(waited_before.is_err());
+    assert!(waited.is_ok());
+    assert_eq!(open.count(), 0);
 }
 
 #[tokio::test(start_paused = true)]

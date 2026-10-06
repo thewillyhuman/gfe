@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 
 /// How long an accept loop waits after a failed `accept` before trying
 /// again. The errors that persist (out of file descriptors or memory) would
@@ -72,25 +72,56 @@ pub struct Accepted<T> {
     pub drain: watch::Receiver<bool>,
 }
 
-/// The connections a set of listeners has open, capped across all of them
-/// (`max_connections`).
+/// The connections a set of listeners has open: capped across all of them
+/// (`max_connections`), and waited for when the process drains.
 #[derive(Debug)]
 pub(crate) struct OpenConnections {
     limit: Arc<ConcurrencyLimit>,
+    closed: Notify,
 }
 
 impl OpenConnections {
     pub(crate) fn new(max: usize) -> Arc<Self> {
         Arc::new(OpenConnections {
             limit: ConcurrencyLimit::new(Some(max)),
+            closed: Notify::new(),
         })
+    }
+
+    /// How many connections are open.
+    pub(crate) fn count(&self) -> usize {
+        self.limit.in_use()
+    }
+
+    /// Resolves once no connection is open. Meant for when nothing accepts
+    /// any more: a connection refused at the cap counts for a moment, and
+    /// its refusal wakes nobody.
+    pub(crate) async fn all_closed(&self) {
+        loop {
+            let closed = self.closed.notified();
+            tokio::pin!(closed);
+            // Registered before looking, so a close in between is not missed.
+            closed.as_mut().enable();
+            if self.count() == 0 {
+                return;
+            }
+            closed.await;
+        }
     }
 }
 
 /// A connection's place under both caps, given back when the connection's
 /// task ends, however it ends.
 struct Slot {
-    _permits: (Permit, Permit),
+    permits: Option<(Permit, Permit)>,
+    open: Arc<OpenConnections>,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        drop(self.permits.take());
+        self.open.closed.notify_waiters();
+    }
 }
 
 /// Resolves when `cut` turns `true`; never if its sender goes away.
@@ -163,7 +194,10 @@ pub(crate) async fn run_listener<T, S>(
                 continue;
             }
         };
-        let slot = Slot { _permits: permits };
+        let slot = Slot {
+            permits: Some(permits),
+            open: Arc::clone(&open),
+        };
 
         let local = stream
             .local_addr()
