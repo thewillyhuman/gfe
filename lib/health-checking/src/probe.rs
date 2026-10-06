@@ -74,7 +74,7 @@ pub fn make_probe(cfg: &HealthCheckConfig, scheme: Scheme) -> Box<dyn Probe> {
 
 /// What the probes send as `User-Agent`, so that a backend can tell them
 /// from traffic in its logs.
-const USER_AGENT: &str = "gfe-health-checking/0.1";
+const USER_AGENT: &str = "netkit-health-checking/0.1";
 
 /// TCP connect probe: success = connection established.
 pub struct TcpProbe;

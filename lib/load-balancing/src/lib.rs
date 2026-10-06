@@ -3,7 +3,7 @@
 //!
 //! Pure selection logic: no HTTP, no I/O. A [`PoolSet`] is built from the
 //! dynamic config's pools and swapped whole on reload; each [`Pool`] picks a
-//! backend over the live [`HealthMap`](gfe_health_checking::HealthMap) on
+//! backend over the live [`HealthMap`](netkit_health_checking::HealthMap) on
 //! every call, and counts what is in flight for `least_request` and for its
 //! `max_in_flight` quota.
 //!

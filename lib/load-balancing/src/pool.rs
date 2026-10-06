@@ -4,7 +4,7 @@
 use crate::PoolError;
 use crate::policy::{MAX_RING_POINTS, RING_REPLICAS, build_ring, ring_pick, weighted_pick};
 use gfe_config::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
-use gfe_health_checking::HealthMap;
+use netkit_health_checking::HealthMap;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;

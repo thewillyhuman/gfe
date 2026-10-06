@@ -4,7 +4,7 @@ use crate::reload::test_support::{cert_entry, http_listener};
 use gfe_config::{
     CertEntry, ListenerId, PoolId, Route, RouteAction, RouteId, Scheme, Upstream, UpstreamPool,
 };
-use gfe_health_checking::HealthStatus;
+use netkit_health_checking::HealthStatus;
 
 fn pool(id: &str, backend: (&str, u16)) -> UpstreamPool {
     UpstreamPool {

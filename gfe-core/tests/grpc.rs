@@ -255,7 +255,7 @@ async fn fails_a_call_with_no_healthy_backend_with_unavailable() {
     proxy.state.health().set(
         &upstream.ip().to_string(),
         upstream.port(),
-        gfe_health_checking::HealthStatus::Unhealthy,
+        netkit_health_checking::HealthStatus::Unhealthy,
     );
 
     let call = GrpcCall::open(proxy.addr).await;

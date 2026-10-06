@@ -8,7 +8,7 @@ use crate::proxy::{App, State};
 use crate::reload::applier::{install, prepare};
 use crate::reload::{ReloadError, cache, watcher};
 use gfe_config::{DynamicConfig, HealthCheckConfig, NodeConfig, load_dynamic_config};
-use gfe_health_checking::HealthChecker;
+use netkit_health_checking::HealthChecker;
 use netkit_tls::CertFiles;
 use notify::RecommendedWatcher;
 use std::path::PathBuf;

@@ -6,10 +6,10 @@ mod common;
 use bytes::Bytes;
 use common::*;
 use gfe_config::{LbPolicy, Scheme};
-use gfe_health_checking::HealthStatus;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{Request, Response};
+use netkit_health_checking::HealthStatus;
 use std::net::SocketAddr;
 use std::time::Duration;
 

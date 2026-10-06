@@ -5,7 +5,7 @@ mod common;
 
 use common::*;
 use gfe_config::RouteAction;
-use gfe_health_checking::HealthStatus;
+use netkit_health_checking::HealthStatus;
 
 /// A request id the client sends, which the answer must carry back.
 const ID: &str = "client-id-1";

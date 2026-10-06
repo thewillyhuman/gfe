@@ -975,13 +975,13 @@ dependencies = [
  "dashmap 6.2.1",
  "gfe-config",
  "gfe-ebpf",
- "gfe-health-checking",
  "gfe-limits",
  "gfe-observability",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "netkit-health-checking",
  "netkit-load-balancing",
  "netkit-tls",
  "notify",
@@ -1011,29 +1011,6 @@ dependencies = [
  "rustix",
  "thiserror 2.0.21",
  "tokio",
-]
-
-[[package]]
-name = "gfe-health-checking"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "dashmap 6.2.1",
- "gfe-config",
- "gfe-observability",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "pingora-core",
- "pingora-error",
- "pingora-http",
- "rcgen",
- "rustls",
- "tokio",
- "tokio-rustls",
- "tracing",
 ]
 
 [[package]]
@@ -1480,12 +1457,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "netkit-health-checking"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "dashmap 6.2.1",
+ "gfe-config",
+ "gfe-observability",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "pingora-core",
+ "pingora-error",
+ "pingora-http",
+ "rcgen",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+]
+
+[[package]]
 name = "netkit-load-balancing"
 version = "0.1.0"
 dependencies = [
  "criterion",
  "gfe-config",
- "gfe-health-checking",
+ "netkit-health-checking",
  "rand",
  "thiserror 2.0.21",
 ]

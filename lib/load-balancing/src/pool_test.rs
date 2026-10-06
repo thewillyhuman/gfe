@@ -1,6 +1,6 @@
 use super::*;
 use crate::policy::hash64;
-use gfe_health_checking::HealthStatus;
+use netkit_health_checking::HealthStatus;
 use std::num::NonZeroU32;
 
 fn pool_with(policy: LbPolicy) -> UpstreamPool {

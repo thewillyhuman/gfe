@@ -1,5 +1,5 @@
 [package]
-name = "gfe-health-checking"
+name = "netkit-health-checking"
 description = "Which backends are alive: probes, thresholds, lame duck"
 version.workspace = true
 edition.workspace = true
