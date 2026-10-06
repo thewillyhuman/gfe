@@ -122,6 +122,12 @@ impl State {
         self.metrics.proxy.upstream_connections.set(open);
     }
 
+    /// The routes and pools now. A request loads them once, so that it is
+    /// routed and forwarded by one config.
+    pub(crate) fn routing(&self) -> Arc<Routing> {
+        self.routing.load_full()
+    }
+
     /// The client requests are sent to backends with.
     pub(crate) fn client(&self) -> &Client {
         &self.client
