@@ -1,5 +1,5 @@
-//! Loading the kernel program, attaching it to the node's cgroup, and reading
-//! what it reports.
+//! Loading the kernel program, attaching it to the cgroup of this process,
+//! and reading what it reports.
 
 use crate::wire::{self, CLOSED_LEN, KEY_LEN, OPEN_LEN};
 use crate::{ClosedConnection, Unavailable};
@@ -25,7 +25,7 @@ const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 /// of `/proc/self/cgroup`.
 fn own_cgroup(proc_self_cgroup: &str) -> Option<PathBuf> {
     // The cgroup v2 entry is the one with an empty hierarchy and controller
-    // list: `0::/system.slice/gfe-node.service`.
+    // list: `0::/system.slice/app.service`.
     let path = proc_self_cgroup
         .lines()
         .find_map(|line| line.strip_prefix("0::"))?;
@@ -96,8 +96,8 @@ fn monotonic_ns() -> u64 {
     (now.tv_sec as u64) * 1_000_000_000 + now.tv_nsec as u64
 }
 
-/// The kernel program, attached to the node's cgroup for as long as this
-/// lives.
+/// The kernel program, attached to the cgroup of this process for as long
+/// as this lives.
 pub struct TcpProbe {
     /// Owns the loaded program and its attachment.
     _ebpf: Ebpf,
@@ -117,8 +117,8 @@ impl TcpProbe {
     /// Load the kernel program and attach it to the cgroup of this process.
     ///
     /// `connections` is how many open connections the program must be able
-    /// to keep track of at once: the node's client and upstream connection
-    /// limits together. Must be called from within a Tokio runtime.
+    /// to keep track of at once: typically the process's limits on accepted
+    /// and opened connections together. Must be called from within a Tokio runtime.
     pub fn attach(connections: u32) -> Result<(TcpProbe, ClosedConnections), Unavailable> {
         let kernel = |e: &(dyn Error + 'static)| {
             if lacks_permission(e) {

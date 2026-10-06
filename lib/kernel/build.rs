@@ -1,8 +1,8 @@
 //! Compiles the kernel-side program (`bpf/tcp_events.bpf.c`) with clang.
 //!
 //! Only when building for Linux, and there it is required: a Linux build
-//! without its kernel program would be a node that can never see its TCP
-//! connections, so a missing clang fails the build rather than going
+//! without its kernel program would be a process that can never see its
+//! TCP connections, so a missing clang fails the build rather than going
 //! unnoticed. Other targets build a stand-in and need no compiler.
 
 use std::env;

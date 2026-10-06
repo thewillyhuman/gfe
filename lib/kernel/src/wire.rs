@@ -77,9 +77,9 @@ pub(crate) fn established_ns(open: &[u8; OPEN_LEN]) -> u64 {
 /// How a connection ended, from the state it was closed from.
 fn ending(state_before_close: u8) -> Ending {
     match state_before_close {
-        // The peer's FIN had arrived and the node had answered with its own.
+        // The peer's FIN had arrived and this end had answered with its own.
         TCP_LAST_ACK => Ending::PeerClosed,
-        // The node had sent its FIN first.
+        // This end had sent its FIN first.
         TCP_FIN_WAIT1 | TCP_FIN_WAIT2 | TCP_CLOSING | TCP_TIME_WAIT => Ending::NodeClosed,
         // No orderly shutdown: a reset in either direction, or the kernel
         // giving up on a peer that stopped answering.

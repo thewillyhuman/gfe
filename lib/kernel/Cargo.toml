@@ -1,6 +1,6 @@
 [package]
 name = "netkit-kernel"
-description = "The kernel's view of the node's TCP connections"
+description = "The kernel's view of a process's TCP connections"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
