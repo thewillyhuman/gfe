@@ -33,5 +33,7 @@ pub mod metrics;
 pub mod proxy;
 pub mod reload;
 pub mod routing;
+#[cfg(test)]
+mod test_logs;
 
 pub use frontend::{Frontend, StartError};

@@ -4,14 +4,15 @@
 
 use crate::edge::{ConnInfo, RequestHandler, Shared};
 use crate::metrics::GfeMetrics;
+use crate::test_logs::Captured;
+pub(crate) use crate::test_logs::Capturing;
 use gfe_config::{LimitsConfig, ListenProtocol, Listener, ListenerId, TimeoutsConfig};
 use netkit_http::body::{BoxBody, Incoming, full};
 use netkit_http::{Request, Response};
 use netkit_tls::{Acceptor, CertSpec, CertStore, MinVersion, SniResolver};
 use rustls::pki_types::CertificateDer;
-use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Once, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_rustls::TlsConnector;
@@ -230,61 +231,16 @@ pub(crate) async fn read_until_closed<S: AsyncRead + Unpin>(stream: &mut S) -> S
     String::from_utf8_lossy(&received).into_owned()
 }
 
-/// The JSON log lines emitted on this thread while the guard is alive.
-#[derive(Clone, Default)]
-pub(crate) struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
-
-thread_local! {
-    static CAPTURING: RefCell<Option<CapturedLogs>> = const { RefCell::new(None) };
-}
-
-/// Hands each log line to the test capturing on the thread that emitted it,
-/// and drops the lines of threads where no test captures.
-struct ToCapturingTest;
-
-impl std::io::Write for ToCapturingTest {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        CAPTURING.with(|capturing| {
-            if let Some(logs) = capturing.borrow().as_ref() {
-                logs.0
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .extend_from_slice(buf);
-            }
-        });
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-/// Stops capturing on this thread when dropped.
-pub(crate) struct Capturing;
-
-impl Drop for Capturing {
-    fn drop(&mut self) {
-        CAPTURING.with(|capturing| *capturing.borrow_mut() = None);
-    }
-}
+/// The log of one test: what was emitted on its thread while the guard is
+/// alive.
+#[derive(Clone)]
+pub(crate) struct CapturedLogs(Captured);
 
 impl CapturedLogs {
-    /// Capture the logs emitted on this thread, as JSON. A `#[tokio::test]`
-    /// runs its runtime, and so the connections it serves, on its own
-    /// thread. One subscriber serves the whole test binary: `tracing`
-    /// caches per callsite whether anybody listens.
+    /// Capture the logs emitted on this thread (see [`crate::test_logs`]).
     pub(crate) fn start() -> (CapturedLogs, Capturing) {
-        static SUBSCRIBER: Once = Once::new();
-        SUBSCRIBER.call_once(|| {
-            tracing_subscriber::fmt()
-                .json()
-                .with_writer(|| ToCapturingTest)
-                .init();
-        });
-        let logs = CapturedLogs::default();
-        CAPTURING.with(|capturing| *capturing.borrow_mut() = Some(logs.clone()));
-        (logs, Capturing)
+        let (captured, capturing) = Captured::start();
+        (CapturedLogs(captured), capturing)
     }
 
     /// The fields of the single `gfe::conn` event of the test, waiting for
@@ -298,17 +254,7 @@ impl CapturedLogs {
 
     /// The fields of every `gfe::conn` event emitted so far.
     pub(crate) fn connection_events(&self) -> Vec<serde_json::Value> {
-        let raw = self
-            .0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        String::from_utf8_lossy(&raw)
-            .lines()
-            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-            .filter(|event| event["target"] == "gfe::conn")
-            .map(|event| event["fields"].clone())
-            .collect()
+        self.0.events("gfe::conn")
     }
 }
 
