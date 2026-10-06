@@ -9,8 +9,8 @@
 //!   while it makes progress, whatever the protocol to the backend, and a
 //!   backend is not blamed for a slow client.
 //! - `request_total`, across attempts: once the request has been sent in
-//!   full, a response must arrive within this long of when forwarding
-//!   began, however many backends are tried.
+//!   full, a response must arrive within this long of that moment, however
+//!   many backends are tried.
 //!
 //! When the wait runs out, who is to blame depends on who holds the request
 //! up: the client, if GFE last asked it for more of the body and it had none
