@@ -1,8 +1,7 @@
 # GFE — General Front End
 
-A high-performance L7 TLS-terminating HTTP reverse proxy, written in Rust on
-top of [Cloudflare Pingora](https://github.com/cloudflare/pingora) and built
-to be observed and operated.
+A high-performance L7 TLS-terminating HTTP reverse proxy, written in Rust and
+built to be observed and operated.
 
 GFE terminates TLS for every service behind a shared set of addresses, routes
 HTTP by host and path to upstream pools, pools long-lived upstream
@@ -69,30 +68,54 @@ traffic reaches a node.
   `CAP_NET_ADMIN`), and a node that cannot attach it says so (its log,
   `gfe_ebpf_attached`, an alert) and serves without it.
 
-## Built on Pingora
+## Built on netkit
 
-Pingora is the HTTP engine: HTTP/1.1 and HTTP/2 on both legs, the proxy state
-machine, and the pooled, TLS-capable connections to backends. GFE is what a
-node adds around it.
+GFE is built on **netkit**, a set of libraries in this repository for
+building networked systems. They know nothing about GFE: each does one job,
+and reports what happened through return values and small traits, so that
+the product decides what becomes a metric or a log line.
+
+| Library | What it is for |
+|---|---|
+| `netkit-http` | HTTP/1.1 and HTTP/2 over any byte stream: serving a connection, and a pooled client and single connections towards servers |
+| `netkit-tls` | TLS in both directions: termination (certificates by SNI, the policy, what a handshake settled on or why it failed) and origination (the trust store, a client certificate) |
+| `netkit-dns` | Host names to addresses, through the system's resolver behind a cache |
+| `netkit-load-balancing` | Pools and selection policies: which backend, among the healthy ones, gets a request |
+| `netkit-health-checking` | Which backends are alive: probes, a per-backend state machine, the checker that runs them |
+| `netkit-rate-limiting` | Caps on how much is in use at once and on how often something happens |
+| `netkit-listen` | Listening sockets, accept loops and connection limits, draining, and handing sockets to a successor |
+| `netkit-kernel` | The kernel's view of a process's TCP connections, from an eBPF program |
+| `netkit-observability` | A Prometheus registry and its exposition, and a log that never blocks |
 
 ```
- clients ──► listening sockets ──► TLS termination ──► Pingora HTTP proxy ──► backends
-             (gfe-core: listener)   (gfe-tls, rustls)   │  calls into gfe-core: proxy
-                                                        │    host rules, routing      (gfe-core: routing)
-                                                        │    backend selection        (gfe-load-balancing)
-                                                        │    over the healthy set     (gfe-health-checking)
-                                                        │    retries, timeouts, the answers GFE writes itself
-                                                        └──► metrics and one event per request (gfe-observability)
+ clients ──► listening sockets ──► TLS termination ──► HTTP/1.1, HTTP/2 ──► gfe-proxy: the request handler
+             (netkit-listen)        (netkit-tls)        (netkit-http)         host rules, routing
+                                                                              backend selection     (netkit-load-balancing)
+                                                                              over the healthy set  (netkit-health-checking)
+                                                                              retries, timeouts, the answers GFE writes itself
+                                                                              metrics, one event per request and per connection
+                                                                                │                   (netkit-observability)
+ backends ◄── pooled connections, HTTP/1.1 or HTTP/2, over TLS or not ◄─────────┘
+              (netkit-http, netkit-tls, netkit-dns)
 ```
 
-The edge (listening sockets, accept loops, TLS termination, what is counted
-and logged about every connection, draining) and the process lifecycle
-(signals, upgrade in place) are GFE's own rather than Pingora's listening
-service and server, because of what a node promises its operators: listeners
-that come and go with a reload, a count and a reason for every handshake that
-fails and every connection that closes, a drain that ends when the last
-client has left, and an upgrade that changes nothing when the successor does
-not start.
+GFE itself (`gfe/`) is what makes them a front end: the two config files,
+the edge (which listener a connection came in on, what is counted and
+logged about it), the request handler, keeping in step with the config, and
+the binary with its signals, ops endpoints and upgrade in place.
+
+**Dependencies.** The project's rule, in its owner's words: "We don't want to depend on any other
+library (high level one) in this project. We need to reduce the dependency
+risks." Under the libraries, the only third-party code that speaks a
+protocol is hyper (with h2) and rustls, on the tokio runtime. hyper is named
+by `netkit-http` alone and rustls by `netkit-tls` alone; everything else
+reaches them through those libraries, so replacing either is a change to one
+crate. The few other crates with one job each are also named by one library
+only (`aya` by `netkit-kernel`, `socket2` by `netkit-listen`,
+`prometheus-client` and `tracing-subscriber` by `netkit-observability`). The
+libraries exist "to build future fast and reliable programmable networked
+systems", and GFE is the first built on them. The `gfe-node` binary is built from 207
+crates, 12 of them this repository's.
 
 ## Performance
 
@@ -104,7 +127,7 @@ read them as relative costs and lower bounds, not as a tuned benchmark.
 
 `cargo bench` (criterion, release profile, single thread):
 
-**Routing (`gfe-core`)** — matching is **O(1) in the number of routes** (an
+**Routing (`gfe-proxy`)** — matching is **O(1) in the number of routes** (an
 exact-host map and a bounded list of prefixes per host):
 
 ```
@@ -117,7 +140,7 @@ route_table_compile/100   36.5 µs
 route_table_compile/1000   418 µs      (on reload only)
 ```
 
-**Backend selection (`gfe-load-balancing`, 20 backends)**:
+**Backend selection (`netkit-load-balancing`, 20 backends)**:
 
 ```
 select_round_robin/20           800 ns
@@ -128,7 +151,7 @@ ring_build/20                   211 µs   (on reload only)
 hash64                         23.6 ns
 ```
 
-**TLS (`gfe-tls`)**:
+**TLS (`netkit-tls`)**:
 
 ```
 tls13_full_handshake_ecdsa_p256   134 µs   (client and server sides, in one thread)
@@ -149,23 +172,27 @@ a mock backend (`gfe-loadtest`), one scenario after the other. `./hack/loadtest.
 
 ```
 scenario                          mode        result
-http  · fixed (GFE overhead)      keepalive   120856 req/s   p50 506µs  p99 1.06ms  errors=0
-http  · proxy (+upstream)         keepalive    64509 req/s   p50 958µs  p99 1.95ms  errors=0
-https · proxy (warm TLS)          keepalive    63891 req/s   p50 966µs  p99 1.99ms  errors=0
-https · proxy (new TLS/req, c=8)  reconnect    11918 req/s   p50 649µs  p99 901µs   errors=0
+http  · fixed (GFE overhead)      keepalive   149577 req/s   p50 413µs  p99 803µs   errors=0
+http  · proxy (+upstream)         keepalive    68042 req/s   p50 911µs  p99 1.61ms  errors=0
+https · proxy (warm TLS)          keepalive    67856 req/s   p50 911µs  p99 1.63ms  errors=0
+https · proxy (new TLS/req, c=8)  reconnect    11452 req/s   p50 668µs  p99 995µs   errors=0
 ```
 
 - **The node's own work is small.** Answering a request itself (routing and
-  a fixed response, no backend) runs at about 120k req/s on kept
+  a fixed response, no backend) runs at about 150k req/s on kept
   connections.
 - **The hop to the backend is the main cost of a proxied request**, not TLS:
-  adding the backend roughly halves the throughput (121k → 65k), and TLS on
-  a connection that is already established costs about 1% more (65k → 64k).
-- **A new TLS connection per request runs at about 12k req/s with 8 client
+  adding the backend roughly halves the throughput (150k → 68k), and TLS on
+  a connection that is already established costs nothing measurable.
+- **A new TLS connection per request runs at about 11k req/s with 8 client
   workers.** The load client resumes its TLS sessions, so this row is the
   price of a connection (TCP, a resumed handshake, one request), not of a
   full handshake: a client that cannot resume pays the 134 µs above, most of
   it on the node.
+
+The released `v1.1.0`, measured the same way on the same laptop, ran the
+four scenarios at 150,487, 68,940, 66,967 and 10,337 req/s. Within the noise
+of such a measurement the two are the same.
 
 ### Sizing a node
 
@@ -188,8 +215,9 @@ per second alone.
 
 ## Quick start
 
-Building needs Rust (1.88 or later), a C compiler and `cmake` (Pingora builds
-zlib-ng) and, on Linux, `clang` (the eBPF program of the kernel view).
+Building needs Rust (1.88 or later), a C compiler (for `ring`, the
+cryptography under rustls) and, on Linux, `clang` (the eBPF program of the
+kernel view; a Linux build fails without it).
 
 ```bash
 cargo build --release
@@ -218,42 +246,44 @@ cd hack/demo && docker compose up -d --build   # then open http://localhost:1300
 
 ## Project structure
 
-A Cargo workspace with one crate per capability, each named after what it
-does, at the root of the repository.
+A Cargo workspace at the root of the repository: the libraries in `lib/`,
+the product in `gfe/`, and each crate named after what it does.
 
 ```
-gfe-core/             The reverse proxy, on Pingora: serving the connections of
-                      clients (listeners, TLS termination, limits, drain),
-                      what happens to a request (routing, forwarding, retries,
-                      errors, accounting), and keeping in step with the config
-gfe-tls/              TLS termination: certificates by SNI, the TLS policy,
-                      the handshake and what it negotiated
-gfe-load-balancing/   Which backend gets a request: pools, selection policies
-gfe-health-checking/  Which backends are alive: probes, state machine, checker
-gfe-config/           The two config files: their schema, loading, validation
-gfe-observability/    What a node tells about itself: Prometheus metrics, the
-                      log that never blocks
-gfe-limits/           Counting and capping what a node holds at once
-gfe-ebpf/             The kernel view: the eBPF program (bpf/) and its loader
-gfe-node/             The binary: CLI, wiring, signals, the ops endpoints,
-                      upgrade in place
-gfe-loadtest/         Load generator for benchmarks (not shipped)
+lib/                     netkit: building blocks for networked systems, knowing nothing about GFE
+  http/                  netkit-http             HTTP/1.1 and HTTP/2, serving and requesting
+  tls/                   netkit-tls              TLS termination and origination, the certificate store
+  dns/                   netkit-dns              Host names to addresses, cached
+  load-balancing/        netkit-load-balancing   Pools and selection policies
+  health-checking/       netkit-health-checking  Probes, the per-backend state machine, the checker
+  rate-limiting/         netkit-rate-limiting    Caps on what is in use at once and how often
+  listen/                netkit-listen           Listening sockets, accept loops, draining, handover
+  kernel/                netkit-kernel           The eBPF view of TCP connections (bpf/: the program)
+  observability/         netkit-observability    Prometheus metrics, the log that never blocks
+gfe/                     GFE, the product
+  config/                gfe-config              The two config files: schema, loading, validation
+  proxy/                 gfe-proxy               The reverse proxy: the edge, routing, the request
+                                                 handler, keeping in step with the config, metrics
+  node/                  gfe-node                The binary: CLI, wiring, signals, the ops endpoints,
+                                                 upgrade in place
 
-distribution/         What ships besides the binary
-  systemd/            The unit of gfe-node
-  docker/             The image of gfe-node
-  grafana/            Prebuilt dashboard
-  prometheus/         Alerting rules (GFE + host network)
-docs/                 Specification, guides, and the example configs
+distribution/            What ships besides the binary
+  systemd/               The unit of gfe-node
+  docker/                The image of gfe-node
+  grafana/               Prebuilt dashboard
+  prometheus/            Alerting rules (GFE + host network)
+docs/                    Specification, guides, and the example configs
 hack/
-  create-tag.sh       Tag a release, listing the commits since the last one
-  loadtest.sh         End-to-end load test of the real binary
-  demo/               Local playground: node, backends, traffic, monitoring
-  rpm/                What the RPM runs when installed and removed
+  loadtest/              gfe-loadtest: load generator for benchmarks (not shipped)
+  loadtest.sh            End-to-end load test of the real binary
+  create-tag.sh          Tag a release, listing the commits since the last one
+  demo/                  Local playground: node, backends, traffic, monitoring
+  rpm/                   What the RPM runs when installed and removed
 ```
 
-Dependencies go one way: `gfe-node` → `gfe-core` → the capability crates →
-`gfe-config`, `gfe-observability`, `gfe-limits`. No crate contains `unsafe`.
+Dependencies go one way: `gfe-node` → `gfe-proxy` → `gfe-config` and the
+netkit libraries. No library depends on a `gfe-*` crate. No crate contains
+`unsafe`.
 
 ## Development
 
@@ -270,9 +300,9 @@ there are three kinds:
 - **Unit tests** sit next to the code: `foo.rs` has its tests in
   `foo_test.rs`.
 - **Functional tests** are in each crate's `tests/` directory, one file per
-  feature. Those of `gfe-core` run a whole proxy in-process, with real TLS
+  feature. Those of `gfe-proxy` run a whole proxy in-process, with real TLS
   termination, in front of mock backends.
-- **Tests of the binary** are in `gfe-node/tests/`: they start `gfe-node` as
+- **Tests of the binary** are in `gfe/node/tests/`: they start `gfe-node` as
   an operator would and cover what only the process can show (its flags, its
   log, the ops endpoints, signals, draining, upgrading in place), and a
   smoke test walks through the product end to end.
@@ -287,7 +317,7 @@ that is not Linux, run the suite in a container as well:
 ```bash
 docker run --rm -v "$PWD":/gfe:ro -w /gfe -e CARGO_TARGET_DIR=/tmp/target \
     --cap-add BPF --cap-add NET_ADMIN rust:1 bash -c \
-    'apt-get update -qq && apt-get install -y -qq cmake clang >/dev/null && cargo test --workspace'
+    'apt-get update -qq && apt-get install -y -qq clang >/dev/null && cargo test --workspace'
 ```
 
 CI runs the tests with [cargo-nextest](https://nexte.st), which reports the
@@ -301,9 +331,9 @@ cargo test --workspace --doc    # doctests, which nextest does not run
 Benchmarks and the load test:
 
 ```bash
-cargo bench -p gfe-core --bench routing
-cargo bench -p gfe-load-balancing --bench selection
-cargo bench -p gfe-tls --bench handshake
+cargo bench -p gfe-proxy --bench routing
+cargo bench -p netkit-load-balancing --bench selection
+cargo bench -p netkit-tls --bench handshake
 ./hack/loadtest.sh 64 6         # end-to-end load test (mock upstream + real node)
 ```
 
