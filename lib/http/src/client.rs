@@ -8,12 +8,18 @@
 //! connections open at once. What went wrong comes back as a [`Failure`] of
 //! a [`FailureKind`] the caller acts on.
 //!
+//! A [`Connection`] is a single connection, opened the same way but with a
+//! fresh lookup, outside any pool and cap, for one-off exchanges such as
+//! health probes.
+//!
 //! The client sends what it is given: it does not follow redirects, add or
 //! strip hop-by-hop headers, retry a request that reached a server, nor
 //! bound how long a server may take to answer. Those are the caller's.
+mod connection;
 mod dial;
 mod failure;
 mod pool;
 
+pub use connection::{Connection, ConnectionOptions, Protocol};
 pub use failure::{Failure, FailureKind};
 pub use pool::{Client, KeepAlive, Options, Scheme};
