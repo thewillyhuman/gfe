@@ -1,6 +1,7 @@
 use super::*;
 use crate::listener::Connections;
 use crate::proxy::test_support::{node_config, state};
+use gfe_config::PoolId;
 use netkit_observability::GfeMetrics;
 use tokio::sync::watch;
 
@@ -93,7 +94,7 @@ fn swap_installs_routes_and_pools_together() {
 
     state.swap(
         crate::routing::RouteTable::compile(&config),
-        netkit_load_balancing::PoolSet::build(&config.pools).unwrap(),
+        netkit_load_balancing::PoolSet::build(&crate::reload::pool_specs(&config.pools)).unwrap(),
     );
 
     let routing = state.routing.load();

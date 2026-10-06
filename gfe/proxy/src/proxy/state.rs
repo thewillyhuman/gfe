@@ -6,7 +6,7 @@ use crate::proxy::error::ProxyError;
 use crate::proxy::peer::{UpstreamTls, Waits};
 use crate::routing::RouteTable;
 use arc_swap::ArcSwap;
-use gfe_config::{NodeConfig, TimeoutsConfig};
+use gfe_config::{NodeConfig, Scheme, TimeoutsConfig};
 use netkit_health_checking::HealthMap;
 use netkit_load_balancing::PoolSet;
 use netkit_observability::GfeMetrics;
@@ -24,7 +24,8 @@ const BACKEND_ADDRESS_TTL: Duration = Duration::from_secs(10);
 #[derive(Default)]
 pub(crate) struct Routing {
     pub(crate) routes: RouteTable,
-    pub(crate) pools: PoolSet,
+    /// Each pool carries the scheme its backends are spoken to in.
+    pub(crate) pools: PoolSet<Scheme>,
 }
 
 /// What every request reads: the route table and the pools (swapped by a
@@ -124,7 +125,7 @@ impl State {
 
     /// Install a new route table and pool set, atomically: requests that
     /// have already been routed finish against the old ones.
-    pub fn swap(&self, routes: RouteTable, pools: PoolSet) {
+    pub fn swap(&self, routes: RouteTable, pools: PoolSet<Scheme>) {
         self.routing.store(Arc::new(Routing { routes, pools }));
     }
 

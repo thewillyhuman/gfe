@@ -19,6 +19,9 @@ mod error;
 mod test_support;
 mod watcher;
 
+/// For the proxy's unit tests, which build pools without a reload.
+#[cfg(test)]
+pub(crate) use applier::pool_specs;
 pub use applier::{Prepared, prepare};
 pub use controller::{CERT_POLL_INTERVAL, Controller};
 pub use error::ReloadError;

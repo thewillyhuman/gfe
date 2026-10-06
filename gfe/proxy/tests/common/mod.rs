@@ -19,8 +19,8 @@ pub mod node;
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 use gfe_config::{
-    CertEntry, ControlPlaneConfig, DynamicConfig, ListenProtocol, Listener, ListenerId, NodeConfig,
-    NodeSection, PoolId, Route, RouteAction, RouteId, Scheme, Upstream, UpstreamPool,
+    CertEntry, ControlPlaneConfig, DynamicConfig, LbPolicy, ListenProtocol, Listener, ListenerId,
+    NodeConfig, NodeSection, PoolId, Route, RouteAction, RouteId, Scheme, Upstream, UpstreamPool,
 };
 use gfe_proxy::listener::{ConnInfo, Connections};
 use gfe_proxy::proxy::{self, State};
@@ -30,7 +30,7 @@ use hyper::body::{Frame, Incoming};
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use netkit_load_balancing::PoolSet;
+use netkit_load_balancing::{Backend, Policy, PoolSet, PoolSpec};
 use netkit_observability::GfeMetrics;
 use netkit_tls::{CertSpec, CertStore, TlsInfo};
 use pingora_core::apps::ServerApp;
@@ -107,7 +107,7 @@ impl Proxy {
             .swap(CertStore::build(&cert_specs(&cfg.certificates)).expect("certificates load"));
         state.swap(
             RouteTable::compile(cfg),
-            PoolSet::build(&cfg.pools).expect("pools build"),
+            PoolSet::build(&pool_specs(&cfg.pools)).expect("pools build"),
         );
         let app = proxy::app(Arc::clone(&state));
         let socket = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -282,6 +282,34 @@ pub fn certificate_files(names: &[&str]) -> (PathBuf, PathBuf, rcgen::CertifiedK
     std::fs::write(&cert_file, cert.cert.pem()).unwrap();
     std::fs::write(&key_file, cert.key_pair.serialize_pem()).unwrap();
     (cert_file, key_file, cert)
+}
+
+/// The pools of `pools`, as the load-balancing library takes them, each
+/// carrying its scheme: what the proxy does on a reload, for tests that
+/// build a proxy without one.
+fn pool_specs(pools: &[UpstreamPool]) -> Vec<PoolSpec<Scheme>> {
+    pools
+        .iter()
+        .map(|pool| PoolSpec {
+            id: pool.id.0.clone(),
+            policy: match pool.lb_policy {
+                LbPolicy::RoundRobin => Policy::RoundRobin,
+                LbPolicy::LeastRequest => Policy::LeastRequest,
+                LbPolicy::RingHash => Policy::RingHash,
+            },
+            backends: pool
+                .upstreams
+                .iter()
+                .map(|upstream| Backend {
+                    host: upstream.host.clone(),
+                    port: upstream.port,
+                    weight: upstream.weight,
+                })
+                .collect(),
+            max_in_flight: pool.max_in_flight,
+            payload: pool.scheme,
+        })
+        .collect()
 }
 
 /// The certificates `entries`, as the TLS library takes them: what the proxy

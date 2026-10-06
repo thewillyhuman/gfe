@@ -4,21 +4,32 @@
 //!   every backend has the same weight; otherwise a random pick in
 //!   proportion to the weights.
 //! - `least_request`: pick the healthy backend with the fewest in-flight
-//!   requests per unit of weight (the first in config order on a tie).
+//!   requests per unit of weight (the first in the order given on a tie).
 //! - `ring_hash`: consistent hash on a per-request key for session affinity;
 //!   minimal disruption when the backend set changes.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+/// How a pool chooses among its healthy backends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Policy {
+    /// In turn, or at random in proportion to the weights when they differ.
+    RoundRobin,
+    /// The fewest requests in flight per unit of weight.
+    LeastRequest,
+    /// Consistent hashing of a per-request key, for affinity.
+    RingHash,
+}
+
 /// Number of virtual nodes per backend on the hash ring. More replicas →
 /// smoother distribution at higher build cost.
 pub const RING_REPLICAS: usize = 160;
 
 /// The most points a ring may hold (`RING_REPLICAS` times the sum of the
-/// weights of its backends), about 16 MB of ring. Every node builds the ring
-/// on every reload and at start, so an unbounded one exhausts memory on the
-/// whole fleet at once.
+/// weights of its backends), about 16 MB of ring. The ring is built whenever
+/// the pools are, so an unbounded one would exhaust the memory of every
+/// process built from the same pools at once.
 pub const MAX_RING_POINTS: u64 = 1_000_000;
 
 /// Hash a value to a ring point.

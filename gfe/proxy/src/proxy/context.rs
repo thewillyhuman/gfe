@@ -12,6 +12,7 @@ use crate::listener::{ConnInfo, RequestGuard};
 use crate::proxy::State;
 use crate::proxy::record::{CLIENT_CLOSED_REQUEST, RequestRecord, Termination};
 use crate::proxy::respond::{Answer, Refusal};
+use gfe_config::Scheme;
 use netkit_load_balancing::{InflightGuard, Pool};
 use netkit_observability::{Gauge, UpstreamDurationLabels};
 use std::sync::Arc;
@@ -141,7 +142,7 @@ impl Drop for RequestCtx {
 
 /// A request on its way to a pool.
 pub(crate) struct Forward {
-    pub(crate) pool: Arc<Pool>,
+    pub(crate) pool: Arc<Pool<Scheme>>,
     /// The request's place among the pool's `max_in_flight`, shared by
     /// every attempt so that a retry does not count, or get refused, as
     /// another request.
@@ -163,7 +164,7 @@ pub(crate) struct Forward {
 impl Forward {
     /// A request admitted to `pool`.
     pub(crate) fn new(
-        pool: Arc<Pool>,
+        pool: Arc<Pool<Scheme>>,
         admitted: InflightGuard,
         replayable: bool,
         asks_for_trailers: bool,

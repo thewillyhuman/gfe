@@ -2,26 +2,24 @@
 //! building a ring on reload.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use gfe_config::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
 use netkit_health_checking::HealthMap;
-use netkit_load_balancing::PoolSet;
 use netkit_load_balancing::policy::{build_ring, hash64};
+use netkit_load_balancing::{Backend, Policy, PoolSet, PoolSpec};
 
-fn pool(policy: LbPolicy, n: usize, weighted: bool) -> UpstreamPool {
-    let upstreams = (0..n)
-        .map(|i| Upstream {
+fn pool(policy: Policy, n: usize, weighted: bool) -> PoolSpec<()> {
+    let backends = (0..n)
+        .map(|i| Backend {
             host: format!("10.0.0.{i}"),
             port: 8443,
             weight: if weighted { (i as u32 % 5) + 1 } else { 1 },
         })
         .collect();
-    UpstreamPool {
-        id: PoolId("p".into()),
-        scheme: Scheme::Http,
-        lb_policy: policy,
-        upstreams,
-        health_check: None,
+    PoolSpec {
+        id: "p".into(),
+        policy,
+        backends,
         max_in_flight: None,
+        payload: (),
     }
 }
 
@@ -29,26 +27,26 @@ fn bench(c: &mut Criterion) {
     let health = HealthMap::new(true);
     let n = 20;
 
-    let rr = PoolSet::build(&[pool(LbPolicy::RoundRobin, n, false)]).unwrap();
-    let rr_pool = rr.get(&PoolId("p".into())).unwrap().clone();
+    let rr = PoolSet::build(&[pool(Policy::RoundRobin, n, false)]).unwrap();
+    let rr_pool = rr.get("p").unwrap().clone();
     c.bench_function("select_round_robin/20", |b| {
         b.iter(|| black_box(rr_pool.select(black_box(&health), None)))
     });
 
-    let wrr = PoolSet::build(&[pool(LbPolicy::RoundRobin, n, true)]).unwrap();
-    let wrr_pool = wrr.get(&PoolId("p".into())).unwrap().clone();
+    let wrr = PoolSet::build(&[pool(Policy::RoundRobin, n, true)]).unwrap();
+    let wrr_pool = wrr.get("p").unwrap().clone();
     c.bench_function("select_weighted_round_robin/20", |b| {
         b.iter(|| black_box(wrr_pool.select(black_box(&health), None)))
     });
 
-    let lr = PoolSet::build(&[pool(LbPolicy::LeastRequest, n, true)]).unwrap();
-    let lr_pool = lr.get(&PoolId("p".into())).unwrap().clone();
+    let lr = PoolSet::build(&[pool(Policy::LeastRequest, n, true)]).unwrap();
+    let lr_pool = lr.get("p").unwrap().clone();
     c.bench_function("select_least_request/20", |b| {
         b.iter(|| black_box(lr_pool.select(black_box(&health), None)))
     });
 
-    let rh = PoolSet::build(&[pool(LbPolicy::RingHash, n, true)]).unwrap();
-    let rh_pool = rh.get(&PoolId("p".into())).unwrap().clone();
+    let rh = PoolSet::build(&[pool(Policy::RingHash, n, true)]).unwrap();
+    let rh_pool = rh.get("p").unwrap().clone();
     let mut k: u64 = 0;
     c.bench_function("select_ring_hash/20", |b| {
         b.iter(|| {

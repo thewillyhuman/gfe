@@ -4,8 +4,8 @@
 use crate::proxy::State;
 use crate::reload::ReloadError;
 use crate::routing::RouteTable;
-use gfe_config::{CertEntry, DynamicConfig, validate};
-use netkit_load_balancing::PoolSet;
+use gfe_config::{CertEntry, DynamicConfig, LbPolicy, Scheme, UpstreamPool, validate};
+use netkit_load_balancing::{Backend, Policy, PoolSet, PoolSpec};
 use netkit_observability::SniLabel;
 use netkit_tls::{CertSpec, CertStore};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct Prepared {
     certificates: CertStore,
     routes: RouteTable,
-    pools: PoolSet,
+    pools: PoolSet<Scheme>,
 }
 
 impl std::fmt::Debug for Prepared {
@@ -42,7 +42,7 @@ pub fn prepare(config: &DynamicConfig) -> Result<Prepared, ReloadError> {
     Ok(Prepared {
         certificates: CertStore::build(&cert_specs(&config.certificates))?,
         routes: RouteTable::compile(config),
-        pools: PoolSet::build(&config.pools)?,
+        pools: PoolSet::build(&pool_specs(&config.pools))?,
     })
 }
 
@@ -55,6 +55,34 @@ pub(crate) fn cert_specs(entries: &[CertEntry]) -> Vec<CertSpec> {
             default: entry.default,
             cert_file: entry.cert_file.clone(),
             key_file: entry.key_file.clone(),
+        })
+        .collect()
+}
+
+/// The pools of the dynamic config, as the load-balancing library takes
+/// them. Each carries its scheme, which the proxy reads back when it
+/// connects to the backend selected.
+pub(crate) fn pool_specs(pools: &[UpstreamPool]) -> Vec<PoolSpec<Scheme>> {
+    pools
+        .iter()
+        .map(|pool| PoolSpec {
+            id: pool.id.0.clone(),
+            policy: match pool.lb_policy {
+                LbPolicy::RoundRobin => Policy::RoundRobin,
+                LbPolicy::LeastRequest => Policy::LeastRequest,
+                LbPolicy::RingHash => Policy::RingHash,
+            },
+            backends: pool
+                .upstreams
+                .iter()
+                .map(|upstream| Backend {
+                    host: upstream.host.clone(),
+                    port: upstream.port,
+                    weight: upstream.weight,
+                })
+                .collect(),
+            max_in_flight: pool.max_in_flight,
+            payload: pool.scheme,
         })
         .collect()
 }

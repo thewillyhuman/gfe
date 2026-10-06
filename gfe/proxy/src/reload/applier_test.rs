@@ -180,3 +180,65 @@ fn hands_every_certificate_entry_to_the_library_unchanged() {
         }]
     );
 }
+
+#[test]
+fn hands_every_pool_to_the_library_carrying_its_scheme() {
+    let config = UpstreamPool {
+        id: PoolId("p".into()),
+        scheme: Scheme::H2c,
+        lb_policy: LbPolicy::RingHash,
+        upstreams: vec![Upstream {
+            host: "backend.example".into(),
+            port: 8080,
+            weight: 3,
+        }],
+        health_check: None,
+        max_in_flight: std::num::NonZeroU32::new(7),
+    };
+
+    let specs = pool_specs(std::slice::from_ref(&config));
+
+    assert_eq!(
+        specs,
+        vec![PoolSpec {
+            id: "p".into(),
+            policy: Policy::RingHash,
+            backends: vec![Backend {
+                host: "backend.example".into(),
+                port: 8080,
+                weight: 3,
+            }],
+            max_in_flight: config.max_in_flight,
+            payload: Scheme::H2c,
+        }]
+    );
+}
+
+#[test]
+fn maps_every_load_balancing_policy_to_its_namesake() {
+    let policies = [
+        (LbPolicy::RoundRobin, Policy::RoundRobin),
+        (LbPolicy::LeastRequest, Policy::LeastRequest),
+        (LbPolicy::RingHash, Policy::RingHash),
+    ];
+
+    for (configured, expected) in policies {
+        let mut config = pool("p", ("10.0.0.1", 80));
+        config.lb_policy = configured;
+
+        assert_eq!(pool_specs(&[config])[0].policy, expected);
+    }
+}
+
+#[test]
+fn a_backend_keeps_the_authority_of_its_upstream() {
+    // The authority places a backend on a ring_hash ring: the same
+    // backend must land on the same points as before the conversion.
+    for host in ["backend.example", "10.0.0.1", "2001:db8::1"] {
+        let config = pool("p", (host, 443));
+
+        let backend = &pool_specs(std::slice::from_ref(&config))[0].backends[0];
+
+        assert_eq!(backend.authority(), config.upstreams[0].authority());
+    }
+}

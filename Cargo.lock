@@ -1515,7 +1515,6 @@ name = "netkit-load-balancing"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "gfe-config",
  "netkit-health-checking",
  "rand",
  "thiserror 2.0.21",

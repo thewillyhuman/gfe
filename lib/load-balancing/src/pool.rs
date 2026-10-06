@@ -1,14 +1,59 @@
-//! Upstream pools: the immutable snapshot of pools compiled from the dynamic
-//! config, with per-pool selection over the healthy set.
+//! Pools of backends: what a caller asks for ([`PoolSpec`], [`Backend`]),
+//! the immutable snapshot built from it ([`PoolSet`]), and per-pool
+//! selection over the healthy set.
 
 use crate::PoolError;
-use crate::policy::{MAX_RING_POINTS, RING_REPLICAS, build_ring, ring_pick, weighted_pick};
-use gfe_config::{LbPolicy, PoolId, Scheme, Upstream, UpstreamPool};
+use crate::policy::{MAX_RING_POINTS, Policy, RING_REPLICAS, build_ring, ring_pick, weighted_pick};
 use netkit_health_checking::HealthMap;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// One backend of a pool: where it is and its share of the requests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Backend {
+    /// A host name or an IP literal (IPv6 without brackets).
+    pub host: String,
+    /// The port it serves on.
+    pub port: u16,
+    /// Its share of the requests relative to the other backends of the
+    /// pool. A weight of 0 gets requests only under `round_robin` when every
+    /// backend weighs 0.
+    pub weight: u32,
+}
+
+impl Backend {
+    /// `host:port`, with an IPv6 literal bracketed (`[2001:db8::1]:443`) as a
+    /// URI authority requires. It is also what places the backend on a
+    /// `ring_hash` ring, so it must not change for the same backend.
+    pub fn authority(&self) -> String {
+        if self.host.parse::<std::net::Ipv6Addr>().is_ok() {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
+/// What a pool is built from. `payload` is the caller's own data about the
+/// pool (how its backends are spoken to, for instance): the pool carries it
+/// and never reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolSpec<T> {
+    /// The pool's id, unique within a [`PoolSet`].
+    pub id: String,
+    /// How a backend is chosen.
+    pub policy: Policy,
+    /// The backends, in the caller's order: `least_request` breaks ties by
+    /// it.
+    pub backends: Vec<Backend>,
+    /// The most requests that may be in flight to the pool at once; `None`
+    /// admits every request.
+    pub max_in_flight: Option<NonZeroU32>,
+    /// The caller's data, handed back by [`Pool::payload`].
+    pub payload: T,
+}
 
 /// Decrements an in-flight counter when dropped: a backend's (for
 /// `least_request`), or a pool's (for its `max_in_flight`).
@@ -22,34 +67,34 @@ impl Drop for InflightGuard {
     }
 }
 
-/// The result of selecting a backend: the chosen upstream plus an in-flight
+/// The result of selecting a backend: the chosen backend plus an in-flight
 /// guard the caller holds for the request's duration.
 pub struct Selection {
     /// The backend to send the request to.
-    pub upstream: Upstream,
+    pub backend: Backend,
     /// Counts the request against the backend until dropped (a no-op guard
     /// for policies that do not count).
     pub guard: InflightGuard,
 }
 
 /// A single pool with its selection state.
-pub struct Pool {
-    /// The pool's id, as routes refer to it.
-    pub id: PoolId,
-    /// The scheme of the upstream leg.
-    pub scheme: Scheme,
+pub struct Pool<T> {
+    /// The pool's id, as given in its [`PoolSpec`].
+    pub id: String,
     /// How a backend is chosen.
-    pub policy: LbPolicy,
-    /// The backends, in config order; the in-flight counters and the ring
-    /// refer to them by index.
-    pub upstreams: Vec<Upstream>,
+    pub policy: Policy,
+    /// The backends, in the order given; the in-flight counters and the
+    /// ring refer to them by index.
+    pub backends: Vec<Backend>,
+    /// The caller's data about the pool.
+    payload: T,
     /// The round-robin position, shared by every request to the pool.
     counter: AtomicUsize,
-    /// In-flight request counters, aligned with `upstreams` (least_request).
+    /// In-flight request counters, aligned with `backends` (least_request).
     inflight: Vec<Arc<AtomicUsize>>,
     /// Consistent-hash ring (only built for `ring_hash`).
     ring: Vec<(u64, usize)>,
-    /// `true` when all upstream weights are equal — lets `round_robin` use the
+    /// `true` when all backend weights are equal — lets `round_robin` use the
     /// cheap lock-free atomic counter instead of weighted random.
     uniform_weights: bool,
     /// Requests admitted to the pool and not yet finished. Kept per pool
@@ -60,18 +105,18 @@ pub struct Pool {
     max_in_flight: Option<NonZeroU32>,
 }
 
-impl Pool {
+impl<T: Clone> Pool<T> {
     /// Fails if the pool is a `ring_hash` pool whose ring would hold more
     /// than [`MAX_RING_POINTS`] points.
-    fn new(p: &UpstreamPool) -> Result<Pool, PoolError> {
+    fn new(p: &PoolSpec<T>) -> Result<Pool<T>, PoolError> {
         let inflight = p
-            .upstreams
+            .backends
             .iter()
             .map(|_| Arc::new(AtomicUsize::new(0)))
             .collect();
-        let ring = if p.lb_policy == LbPolicy::RingHash {
-            let authorities: Vec<String> = p.upstreams.iter().map(|u| u.authority()).collect();
-            let weights: Vec<u32> = p.upstreams.iter().map(|u| u.weight).collect();
+        let ring = if p.policy == Policy::RingHash {
+            let authorities: Vec<String> = p.backends.iter().map(|b| b.authority()).collect();
+            let weights: Vec<u32> = p.backends.iter().map(|b| b.weight).collect();
             let points = RING_REPLICAS as u64 * weights.iter().map(|w| u64::from(*w)).sum::<u64>();
             if points > MAX_RING_POINTS {
                 return Err(PoolError::RingTooLarge {
@@ -83,13 +128,13 @@ impl Pool {
         } else {
             Vec::new()
         };
-        let first_weight = p.upstreams.first().map(|u| u.weight).unwrap_or(1);
-        let uniform_weights = p.upstreams.iter().all(|u| u.weight == first_weight);
+        let first_weight = p.backends.first().map(|b| b.weight).unwrap_or(1);
+        let uniform_weights = p.backends.iter().all(|b| b.weight == first_weight);
         Ok(Pool {
             id: p.id.clone(),
-            scheme: p.scheme,
-            policy: p.lb_policy,
-            upstreams: p.upstreams.clone(),
+            policy: p.policy,
+            backends: p.backends.clone(),
+            payload: p.payload.clone(),
             counter: AtomicUsize::new(0),
             inflight,
             ring,
@@ -97,6 +142,13 @@ impl Pool {
             in_flight: Arc::new(AtomicUsize::new(0)),
             max_in_flight: p.max_in_flight,
         })
+    }
+}
+
+impl<T> Pool<T> {
+    /// The caller's data about the pool, as given in its [`PoolSpec`].
+    pub fn payload(&self) -> &T {
+        &self.payload
     }
 
     /// Admit one more request to the pool, unless it already has
@@ -122,7 +174,7 @@ impl Pool {
         }
         let candidates: Vec<(usize, u32)> = healthy
             .iter()
-            .map(|&i| (i, self.upstreams[i].weight))
+            .map(|&i| (i, self.backends[i].weight))
             .collect();
         let total: u64 = candidates.iter().map(|(_, w)| *w as u64).sum();
         if total == 0 {
@@ -141,7 +193,7 @@ impl Pool {
             .min_by(|&&a, &&b| {
                 let score = |i: usize| {
                     let inflight = self.inflight[i].load(Ordering::Relaxed) as f64 + 1.0;
-                    let w = self.upstreams[i].weight.max(1) as f64;
+                    let w = self.backends[i].weight.max(1) as f64;
                     inflight / w
                 };
                 score(a).total_cmp(&score(b))
@@ -150,15 +202,15 @@ impl Pool {
     }
 
     fn healthy_indices(&self, health: &HealthMap) -> Vec<usize> {
-        (0..self.upstreams.len())
+        (0..self.backends.len())
             .filter(|&i| {
-                let u = &self.upstreams[i];
-                health.is_selectable(&u.host, u.port)
+                let b = &self.backends[i];
+                health.is_selectable(&b.host, b.port)
             })
             .collect()
     }
 
-    /// Select one healthy upstream, or `None` if the pool has none.
+    /// Select one healthy backend, or `None` if the pool has none.
     ///
     /// `health` is consulted on every call, so a backend that turns
     /// unhealthy or draining stops receiving new requests at once, without a
@@ -171,9 +223,9 @@ impl Pool {
         }
 
         let idx = match self.policy {
-            LbPolicy::RoundRobin => self.round_robin(&healthy),
-            LbPolicy::LeastRequest => self.least_request(&healthy),
-            LbPolicy::RingHash => {
+            Policy::RoundRobin => self.round_robin(&healthy),
+            Policy::LeastRequest => self.least_request(&healthy),
+            Policy::RingHash => {
                 let key = hash_key.unwrap_or(0);
                 let healthy_set: std::collections::HashSet<usize> =
                     healthy.iter().copied().collect();
@@ -183,7 +235,7 @@ impl Pool {
         };
 
         // For least_request, increment and hand back a decrementing guard.
-        let guard = if self.policy == LbPolicy::LeastRequest {
+        let guard = if self.policy == Policy::LeastRequest {
             self.inflight[idx].fetch_add(1, Ordering::Relaxed);
             InflightGuard(Some(self.inflight[idx].clone()))
         } else {
@@ -191,32 +243,42 @@ impl Pool {
         };
 
         Some(Selection {
-            upstream: self.upstreams[idx].clone(),
+            backend: self.backends[idx].clone(),
             guard,
         })
     }
 }
 
-/// An immutable set of pools, swapped atomically on config reload.
-#[derive(Default)]
-pub struct PoolSet {
-    pools: HashMap<PoolId, Arc<Pool>>,
+/// An immutable set of pools, swapped whole when the pools change.
+pub struct PoolSet<T> {
+    pools: HashMap<String, Arc<Pool<T>>>,
 }
 
-impl PoolSet {
-    /// Build a pool set from the dynamic config's pools. Fails, naming the
-    /// pool, if one of them cannot be built: a `ring_hash` pool whose ring
-    /// would hold more than [`MAX_RING_POINTS`] points.
-    pub fn build(pools: &[UpstreamPool]) -> Result<Self, PoolError> {
+impl<T> Default for PoolSet<T> {
+    fn default() -> Self {
+        PoolSet {
+            pools: HashMap::new(),
+        }
+    }
+}
+
+impl<T: Clone> PoolSet<T> {
+    /// Build a pool set from `pools`. Fails, naming the pool, if one of them
+    /// cannot be built: a `ring_hash` pool whose ring would hold more than
+    /// [`MAX_RING_POINTS`] points. Of two pools with the same id, the last
+    /// one is kept.
+    pub fn build(pools: &[PoolSpec<T>]) -> Result<Self, PoolError> {
         let mut map = HashMap::new();
         for p in pools {
             map.insert(p.id.clone(), Arc::new(Pool::new(p)?));
         }
         Ok(PoolSet { pools: map })
     }
+}
 
-    /// The pool with this id, if the config has one.
-    pub fn get(&self, id: &PoolId) -> Option<&Arc<Pool>> {
+impl<T> PoolSet<T> {
+    /// The pool with this id, if the set has one.
+    pub fn get(&self, id: &str) -> Option<&Arc<Pool<T>>> {
         self.pools.get(id)
     }
 
@@ -225,8 +287,8 @@ impl PoolSet {
     pub fn all_backends(&self) -> Vec<(String, u16)> {
         let mut out = Vec::new();
         for p in self.pools.values() {
-            for u in &p.upstreams {
-                out.push((u.host.clone(), u.port));
+            for b in &p.backends {
+                out.push((b.host.clone(), b.port));
             }
         }
         out

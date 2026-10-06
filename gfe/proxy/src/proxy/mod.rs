@@ -53,7 +53,7 @@ use crate::proxy::record::{Arrival, RequestRecord, Side, Termination, UpstreamLe
 use crate::proxy::respond::{Answer, Refusal};
 use crate::proxy::retry::{Attempted, MAX_ATTEMPTS};
 use async_trait::async_trait;
-use gfe_config::{PoolId, RouteAction};
+use gfe_config::RouteAction;
 use http::header::USER_AGENT;
 use netkit_observability::{
     PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels,
@@ -185,19 +185,19 @@ impl GfeProxy {
                     // refusing it says what happened.
                     return Decision::Refuse(Refusal::UpgradeNotSupported);
                 }
-                let Some(pool) = routing.pools.get(&PoolId(pool.clone())) else {
+                let Some(pool) = routing.pools.get(pool) else {
                     tracing::warn!(target: "gfe::proxy", %pool, "route references unknown pool");
                     return Decision::Refuse(Refusal::PoolNotFound);
                 };
                 record.upstream = Some(UpstreamLeg {
-                    pool: pool.id.0.clone(),
+                    pool: pool.id.clone(),
                     backend: None,
                     attempts: 0,
                     time_to_first_byte: None,
                 });
                 let Some(admitted) = pool.admit() else {
                     let label = PoolLabel {
-                        pool: pool.id.0.clone(),
+                        pool: pool.id.clone(),
                     };
                     state
                         .metrics()
@@ -421,10 +421,10 @@ impl ProxyHttp for GfeProxy {
                 "no healthy upstream",
             ));
         };
-        let upstream = selection.upstream;
+        let upstream = selection.backend;
         let backend = upstream.authority();
         let labels = UpstreamDurationLabels {
-            pool: forward.pool.id.0.clone(),
+            pool: forward.pool.id.clone(),
             backend: backend.clone(),
         };
         let metrics = &state.metrics().proxy;
@@ -442,7 +442,7 @@ impl ProxyHttp for GfeProxy {
         forward.first_attempt.get_or_insert(now);
         forward.attempt = Some(Attempt::begin(labels, in_flight, selection.guard));
         let attempts = forward.attempts;
-        let scheme = forward.pool.scheme;
+        let scheme = *forward.pool.payload();
         if let Some(leg) = ctx.record().upstream.as_mut() {
             leg.backend = Some(backend);
             leg.attempts = attempts;
