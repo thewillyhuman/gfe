@@ -1,5 +1,5 @@
 [package]
-name = "gfe-observability"
+name = "netkit-observability"
 description = "What a node tells about itself: Prometheus metrics and the log that never blocks"
 version.workspace = true
 edition.workspace = true

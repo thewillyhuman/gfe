@@ -55,8 +55,10 @@ use crate::proxy::respond::{Answer, Refusal};
 use crate::proxy::retry::{Attempted, MAX_ATTEMPTS};
 use async_trait::async_trait;
 use gfe_config::{PoolId, RouteAction};
-use gfe_observability::{PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels};
 use http::header::USER_AGENT;
+use netkit_observability::{
+    PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels,
+};
 use pingora_core::apps::HttpServerOptions;
 use pingora_core::protocols::http::v2::server::default_h2_options;
 use pingora_core::server::configuration::ServerConf;

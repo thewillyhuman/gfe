@@ -3,7 +3,7 @@
 
 use crate::listener::Shared;
 use gfe_config::{CertEntry, LimitsConfig, MinVersion, TimeoutsConfig};
-use gfe_observability::GfeMetrics;
+use netkit_observability::GfeMetrics;
 use netkit_tls::{Acceptor, CertStore, SniResolver};
 use rustls::pki_types::CertificateDer;
 use std::sync::Arc;

@@ -4,7 +4,7 @@
 //! queue, the certificate resolver's misses).
 
 use gfe_config::{LimitsConfig, TimeoutsConfig};
-use gfe_observability::GfeMetrics;
+use netkit_observability::GfeMetrics;
 use netkit_tls::SniResolver;
 use std::net::SocketAddr;
 use std::sync::Arc;

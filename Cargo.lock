@@ -974,7 +974,6 @@ dependencies = [
  "criterion",
  "dashmap 6.2.1",
  "gfe-config",
- "gfe-observability",
  "http",
  "http-body-util",
  "hyper",
@@ -982,6 +981,7 @@ dependencies = [
  "netkit-health-checking",
  "netkit-kernel",
  "netkit-load-balancing",
+ "netkit-observability",
  "netkit-rate-limiting",
  "netkit-tls",
  "notify",
@@ -1028,7 +1028,7 @@ dependencies = [
  "clap",
  "gfe-config",
  "gfe-core",
- "gfe-observability",
+ "netkit-observability",
  "pingora-core",
  "pingora-http",
  "rcgen",
@@ -1037,16 +1037,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "gfe-observability"
-version = "0.1.0"
-dependencies = [
- "prometheus-client",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1450,11 +1440,11 @@ dependencies = [
  "bytes",
  "dashmap 6.2.1",
  "gfe-config",
- "gfe-observability",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "netkit-observability",
  "pingora-core",
  "pingora-error",
  "pingora-http",
@@ -1484,6 +1474,16 @@ dependencies = [
  "netkit-health-checking",
  "rand",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "netkit-observability"
+version = "0.1.0"
+dependencies = [
+ "prometheus-client",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]

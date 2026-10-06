@@ -11,7 +11,7 @@ use crate::listener::{Connections, Drain, Listeners, Shared};
 use crate::proxy::{self, App, ProxyError, State};
 use crate::reload::{self, CERT_POLL_INTERVAL, Controller, ReloadError};
 use gfe_config::{DynamicConfig, ListenerId, NodeConfig};
-use gfe_observability::GfeMetrics;
+use netkit_observability::GfeMetrics;
 use netkit_tls::{Acceptor, TlsError};
 use std::io;
 use std::net::SocketAddr;

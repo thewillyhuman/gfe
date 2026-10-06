@@ -14,9 +14,9 @@ use gfe_config::{
     CertEntry, LimitsConfig, ListenProtocol, Listener, ListenerId, MinVersion, TimeoutsConfig,
 };
 use gfe_core::listener::{Connections, Drain, Listeners, Shared, serve_plain};
-use gfe_observability::GfeMetrics;
 use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use netkit_observability::GfeMetrics;
 use netkit_tls::{Acceptor, CertStore, SniResolver};
 use pingora_core::apps::HttpServerOptions;
 use pingora_core::apps::http_app::{HttpServer, ServeHttp};

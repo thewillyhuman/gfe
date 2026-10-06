@@ -11,7 +11,7 @@ use gfe_core::Frontend;
 use gfe_node::signals::{Request, Signals};
 use gfe_node::systemd;
 use gfe_node::upgrade::{self, Inherited, Predecessor};
-use gfe_observability::{GfeMetrics, Log};
+use netkit_observability::{GfeMetrics, Log};
 use ops::Ops;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

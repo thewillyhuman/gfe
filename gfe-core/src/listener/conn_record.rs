@@ -16,7 +16,7 @@ use crate::listener::activity::Expiry;
 use crate::listener::stream::{Metered, StreamState, WireEnd};
 use crate::listener::{ConnInfo, Shared};
 use gfe_config::Listener;
-use gfe_observability::{
+use netkit_observability::{
     CloseLabels, ListenerLabel, RejectLabel, TlsFailureLabel, TlsLabels, TlsResultLabel,
 };
 use netkit_tls::{HandshakeError, TlsInfo};

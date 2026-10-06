@@ -9,7 +9,7 @@ publish.workspace = true
 
 [dependencies]
 gfe-config = { workspace = true }
-gfe-observability = { workspace = true }
+netkit-observability = { workspace = true }
 netkit-rate-limiting = { workspace = true }
 netkit-kernel = { workspace = true }
 netkit-tls = { workspace = true }

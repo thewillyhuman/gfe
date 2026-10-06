@@ -18,7 +18,7 @@
 //! the connection is closed otherwise.
 
 use crate::proxy::failure::CONNECTION_LIMIT;
-use gfe_observability::Gauge;
+use netkit_observability::Gauge;
 use netkit_rate_limiting::{ConcurrencyLimit, Permit};
 use pingora_core::upstreams::peer::{PeerOptions, Tracer, Tracing};
 use pingora_error::Error;

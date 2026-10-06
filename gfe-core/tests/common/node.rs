@@ -9,10 +9,10 @@ use gfe_config::{
     NodeSection,
 };
 use gfe_core::{Frontend, StartError};
-use gfe_observability::GfeMetrics;
 use http_body_util::Empty;
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use netkit_observability::GfeMetrics;
 use rustls::pki_types::{CertificateDer, ServerName};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};

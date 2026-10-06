@@ -1,6 +1,6 @@
 use super::*;
 use gfe_config::{RouteAction, RouteId};
-use gfe_observability::GfeMetrics;
+use netkit_observability::GfeMetrics;
 
 fn headers(grpc_status: &'static str) -> HeaderMap {
     let mut map = HeaderMap::new();

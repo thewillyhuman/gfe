@@ -9,7 +9,7 @@ use crate::listener::stream::{ClientStream, Metered, StreamState};
 use crate::listener::{ConnInfo, Connections, Shared};
 use arc_swap::ArcSwap;
 use gfe_config::{Listener, TimeoutsConfig};
-use gfe_observability::Counter;
+use netkit_observability::Counter;
 use netkit_tls::Acceptor;
 use pingora_core::apps::ServerApp;
 use pingora_core::protocols::l4::socket::SocketAddr as PingoraAddr;

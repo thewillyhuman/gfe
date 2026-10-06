@@ -5,7 +5,7 @@ members = [
     "lib/tls",
     # What a node is told and what it tells: no dependency on the rest.
     "gfe-config",
-    "gfe-observability",
+    "lib/observability",
     "lib/rate-limiting",
     "lib/kernel",
     # What the proxy is made of, one capability per crate.
@@ -40,7 +40,7 @@ netkit-tls = { path = "lib/tls" }
 
 # Workspace crates
 gfe-config = { path = "gfe-config" }
-gfe-observability = { path = "gfe-observability" }
+netkit-observability = { path = "lib/observability" }
 netkit-rate-limiting = { path = "lib/rate-limiting" }
 netkit-kernel = { path = "lib/kernel" }
 netkit-health-checking = { path = "lib/health-checking" }

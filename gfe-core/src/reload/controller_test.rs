@@ -3,7 +3,7 @@ use crate::listener::{Connections, Drain, Shared};
 use crate::proxy;
 use crate::proxy::test_support::node_config;
 use crate::reload::test_support::{http_listener, scratch_dir};
-use gfe_observability::GfeMetrics;
+use netkit_observability::GfeMetrics;
 use std::path::Path;
 
 /// A node whose dynamic config is `dir/gfe-dynamic.json`, with a

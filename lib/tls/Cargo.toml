@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-# No dependency on gfe-observability: this crate records no metric. What it
+# No dependency on netkit-observability: this crate records no metric. What it
 # observes is returned (`TlsInfo`, `HandshakeError::reason`) or counted where
 # the caller can read it (`SniResolver::miss_count`), and the edge in
 # gfe-core turns that into metrics and logs.

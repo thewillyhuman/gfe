@@ -5,7 +5,7 @@
 use crate::listener::connection::{self, Edge};
 use arc_swap::ArcSwap;
 use gfe_config::Listener;
-use gfe_observability::RejectLabel;
+use netkit_observability::RejectLabel;
 use netkit_rate_limiting::{ConcurrencyLimit, Permit};
 use pingora_core::apps::ServerApp;
 use std::sync::Arc;

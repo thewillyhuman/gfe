@@ -10,11 +10,11 @@
 
 use crate::listener::{AcceptQueue, Listeners};
 use gfe_config::NodeConfig;
-use gfe_observability::{
+use netkit_kernel::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe};
+use netkit_observability::{
     BackendLabel, ClientEndingLabels, GfeMetrics, KernelMetrics, ListenerLabel,
     UpstreamEndingLabels,
 };
-use netkit_kernel::{ClosedConnection, ClosedConnections, Ending, Origin, TcpProbe};
 use pingora_core::apps::ServerApp;
 use std::net::SocketAddr;
 use std::sync::Arc;

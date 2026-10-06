@@ -7,7 +7,7 @@ use crate::HealthStatus;
 use crate::probe::make_probe;
 use crate::state_machine::BackendHealth;
 use gfe_config::{HealthCheckConfig, Scheme, UpstreamPool};
-use gfe_observability::{BackendLabels, GfeMetrics};
+use netkit_observability::{BackendLabels, GfeMetrics};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
