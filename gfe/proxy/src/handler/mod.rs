@@ -8,3 +8,4 @@ pub mod failure;
 pub mod host;
 pub mod request;
 pub mod respond;
+pub mod retry;
