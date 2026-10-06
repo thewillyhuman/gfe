@@ -104,18 +104,19 @@ the edge (which listener a connection came in on, what is counted and
 logged about it), the request handler, keeping in step with the config, and
 the binary with its signals, ops endpoints and upgrade in place.
 
-**Dependencies.** The project's rule, in its owner's words: "We don't want to depend on any other
-library (high level one) in this project. We need to reduce the dependency
-risks." Under the libraries, the only third-party code that speaks a
-protocol is hyper (with h2) and rustls, on the tokio runtime. hyper is named
-by `netkit-http` alone and rustls by `netkit-tls` alone; everything else
-reaches them through those libraries, so replacing either is a change to one
-crate. The few other crates with one job each are also named by one library
-only (`aya` by `netkit-kernel`, `socket2` by `netkit-listen`,
-`prometheus-client` and `tracing-subscriber` by `netkit-observability`). The
-libraries exist "to build future fast and reliable programmable networked
-systems", and GFE is the first built on them. The `gfe-node` binary is built from 207
-crates, 12 of them this repository's.
+**Dependencies.** The rule is to depend on as little as possible, and never
+on a library that decides how the program is built: a dependency is a risk,
+and a framework is a risk the whole program takes. Under the libraries, the
+only third-party code that speaks a protocol is hyper (with h2) and rustls,
+on the tokio runtime. hyper is named by `netkit-http` alone and rustls by
+`netkit-tls` alone; everything else reaches them through those libraries, so
+replacing either is a change to one crate. The few other crates with one job
+each are also named by one library only (`aya` by `netkit-kernel`, `socket2`
+by `netkit-listen`, `prometheus-client` and `tracing-subscriber` by
+`netkit-observability`). The libraries are meant to outlive this use of
+them, as the ground for the next networked system; GFE is the first one
+built on them. The `gfe-node` binary is built from 207 crates, 12 of them
+this repository's.
 
 ## Performance
 
