@@ -13,7 +13,6 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use gfe_config::{HealthCheckConfig, ProbeType, Scheme};
 use pingora_core::connectors::http::Connector;
 use pingora_core::protocols::ALPN;
 use pingora_core::protocols::http::client::HttpSession;
@@ -31,7 +30,8 @@ use tokio::net::TcpStream;
 pub enum ProbeResult {
     /// Backend responded as expected.
     Pass,
-    /// Backend signalled lame-duck drain (configured `drain_status`).
+    /// Backend signalled lame-duck drain (the probe's drain status, or a gRPC
+    /// `NOT_SERVING`).
     Drain,
     /// Backend failed the probe.
     Fail,
@@ -45,30 +45,41 @@ pub trait Probe: Send + Sync {
     async fn check(&self, host: &str, port: u16, timeout: Duration) -> ProbeResult;
 }
 
-/// Build a probe from a health-check config, for a backend of a pool with
-/// the given `scheme`.
-pub fn make_probe(cfg: &HealthCheckConfig, scheme: Scheme) -> Box<dyn Probe> {
-    match cfg.probe_type {
-        ProbeType::Tcp => Box::new(TcpProbe),
-        // A gRPC server is reached the way the pool's traffic reaches it.
-        ProbeType::Grpc => Box::new(GrpcProbe {
-            tls: scheme == Scheme::Https,
+/// What a probe does. Whether it speaks TLS is the caller's to say: it
+/// typically probes a backend the way the backend's traffic reaches it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeKind {
+    /// A TCP connection can be established.
+    Tcp,
+    /// `GET path` over HTTP/1.1 answers `expected_status` (pass) or
+    /// `drain_status` (drain); any other answer fails.
+    Http {
+        path: String,
+        expected_status: u16,
+        drain_status: Option<u16>,
+        tls: bool,
+    },
+    /// The gRPC health-checking protocol (`grpc.health.v1.Health/Check`)
+    /// over HTTP/2: negotiated by ALPN with TLS, by prior knowledge without.
+    Grpc { tls: bool },
+}
+
+/// Build the probe `kind` describes.
+pub fn make_probe(kind: &ProbeKind) -> Box<dyn Probe> {
+    match kind {
+        ProbeKind::Tcp => Box::new(TcpProbe),
+        ProbeKind::Http {
+            path,
+            expected_status,
+            drain_status,
+            tls,
+        } => Box::new(HttpProbe {
+            path: path.clone(),
+            expected: *expected_status,
+            drain: *drain_status,
+            tls: *tls,
         }),
-        // `http` is the node default, so it is what an `https` pool without
-        // its own check gets: probing its TLS port in cleartext would fail
-        // every backend.
-        ProbeType::Http => Box::new(HttpProbe {
-            path: cfg.path.clone(),
-            expected: cfg.expected_status,
-            drain: cfg.drain_status,
-            tls: scheme == Scheme::Https,
-        }),
-        ProbeType::Https => Box::new(HttpProbe {
-            path: cfg.path.clone(),
-            expected: cfg.expected_status,
-            drain: cfg.drain_status,
-            tls: true,
-        }),
+        ProbeKind::Grpc { tls } => Box::new(GrpcProbe { tls: *tls }),
     }
 }
 

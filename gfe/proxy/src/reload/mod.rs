@@ -15,6 +15,7 @@ mod applier;
 mod cache;
 mod controller;
 mod error;
+mod health;
 #[cfg(test)]
 mod test_support;
 mod watcher;

@@ -1450,7 +1450,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "dashmap 6.2.1",
- "gfe-config",
  "http",
  "http-body-util",
  "hyper",

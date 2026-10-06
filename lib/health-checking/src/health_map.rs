@@ -30,7 +30,7 @@ impl HealthStatus {
 pub struct HealthMap {
     map: DashMap<(String, u16), HealthStatus>,
     /// When `true`, a backend with no recorded status is treated as
-    /// selectable: a node that has just started serves before its first
+    /// selectable: a process that has just started serves before its first
     /// probes come back.
     assume_healthy_when_unknown: bool,
 }
@@ -66,7 +66,7 @@ impl HealthMap {
         }
     }
 
-    /// Remove entries not present in `keep` (called after a config reload so
+    /// Remove entries not present in `keep` (called when the pools change so
     /// removed backends don't linger).
     pub fn retain(&self, keep: &[(String, u16)]) {
         self.map.retain(|k, _| keep.contains(k));

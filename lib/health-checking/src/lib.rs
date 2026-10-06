@@ -9,7 +9,7 @@ mod mock_backend;
 mod probe;
 mod state_machine;
 
-pub use checker::HealthChecker;
+pub use checker::{CheckSpec, CheckedPool, HealthChecker};
 pub use health_map::{HealthMap, HealthStatus};
-pub use probe::{GrpcProbe, HttpProbe, Probe, ProbeResult, TcpProbe, make_probe};
+pub use probe::{GrpcProbe, HttpProbe, Probe, ProbeKind, ProbeResult, TcpProbe, make_probe};
 pub use state_machine::BackendHealth;

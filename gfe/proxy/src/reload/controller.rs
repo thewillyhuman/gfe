@@ -6,6 +6,7 @@
 use crate::listener::Listeners;
 use crate::proxy::{App, State};
 use crate::reload::applier::{cert_specs, install, prepare};
+use crate::reload::health::checked_pools;
 use crate::reload::{ReloadError, cache, watcher};
 use gfe_config::{DynamicConfig, HealthCheckConfig, NodeConfig, load_dynamic_config};
 use netkit_health_checking::HealthChecker;
@@ -87,7 +88,7 @@ impl Controller {
         let config = reloader.apply_initial()?;
         reloader
             .checker
-            .reconcile(&config.pools, &reloader.defaults);
+            .reconcile(&checked_pools(&config.pools, &reloader.defaults));
         tracing::info!(
             file = %reloader.config_file.display(),
             "watching the dynamic config for changes"
@@ -274,7 +275,8 @@ impl Reloader {
             .and_then(|config| self.apply(&config, tracked).map(|()| config));
         match applied {
             Ok(config) => {
-                self.checker.reconcile(&config.pools, &self.defaults);
+                self.checker
+                    .reconcile(&checked_pools(&config.pools, &self.defaults));
                 self.write_cache(&config);
                 control.config_reload_failed.set(0);
                 control.config_from_cache.set(0);

@@ -1,28 +1,50 @@
-//! The health checker: reconciles a set of probe loops against the configured
-//! pools, deduplicating by `(host, port)`, and writes committed transitions to
-//! the shared health map.
+//! The health checker: reconciles a set of probe loops against the pools it
+//! is given, deduplicating by `(host, port)`, and writes committed
+//! transitions to the shared health map.
 
 use crate::HealthMap;
 use crate::HealthStatus;
-use crate::probe::make_probe;
+use crate::probe::{ProbeKind, make_probe};
 use crate::state_machine::BackendHealth;
-use gfe_config::{HealthCheckConfig, Scheme, UpstreamPool};
 use netkit_observability::{BackendLabels, GfeMetrics};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
 type Key = (String, u16);
 
-/// What decides how a backend is probed: the check, and the scheme of the
-/// pool it belongs to (a gRPC probe uses TLS for `https` pools).
-type Check = (HealthCheckConfig, Scheme);
+/// How a backend is checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckSpec {
+    /// What a probe does.
+    pub probe: ProbeKind,
+    /// The time between the end of one probe and the start of the next.
+    pub interval: Duration,
+    /// How long one probe may take, as a whole, before it fails.
+    pub timeout: Duration,
+    /// Consecutive passes that make a backend healthy.
+    pub healthy_threshold: u32,
+    /// Consecutive failures that make a backend unhealthy.
+    pub unhealthy_threshold: u32,
+}
+
+/// A pool whose backends are to be checked, and how.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedPool {
+    /// The pool's id, as the observer is told it.
+    pub id: String,
+    /// How the pool's backends are checked.
+    pub check: CheckSpec,
+    /// The pool's backends, as `(host, port)`: `host` a name or an IP
+    /// literal, IPv6 without brackets.
+    pub backends: Vec<(String, u16)>,
+}
 
 /// A running probe loop, the check it was started with, and the pools it
 /// reports the backend's health under.
 struct Running {
-    check: Check,
+    check: CheckSpec,
     pools: Vec<String>,
     task: JoinHandle<()>,
 }
@@ -49,8 +71,8 @@ impl HealthChecker {
 
     /// Start probes for backends in `pools`, stop probes for backends no
     /// longer present, and restart those whose check or list of pools
-    /// changed. Deduplicates by `(host, port)`; the first pool's
-    /// health-check config wins for a shared backend.
+    /// changed. Deduplicates by `(host, port)`; the first pool's check wins
+    /// for a shared backend.
     ///
     /// The health series of a backend under a pool it no longer belongs to
     /// are removed, so alerts do not fire for objects that are gone.
@@ -59,16 +81,14 @@ impl HealthChecker {
     /// thresholds say otherwise, so changing a check does not flap traffic.
     ///
     /// Must be called within a Tokio runtime: the probe loops are tasks.
-    pub fn reconcile(self: &Arc<Self>, pools: &[UpstreamPool], defaults: &HealthCheckConfig) {
-        let mut desired: HashMap<Key, (Check, Vec<String>)> = HashMap::new();
+    pub fn reconcile(self: &Arc<Self>, pools: &[CheckedPool]) {
+        let mut desired: HashMap<Key, (CheckSpec, Vec<String>)> = HashMap::new();
         for p in pools {
-            let cfg = p.health_check.clone().unwrap_or_else(|| defaults.clone());
-            for u in &p.upstreams {
-                let key = (u.host.clone(), u.port);
+            for key in &p.backends {
                 let entry = desired
-                    .entry(key)
-                    .or_insert_with(|| ((cfg.clone(), p.scheme), Vec::new()));
-                entry.1.push(p.id.to_string());
+                    .entry(key.clone())
+                    .or_insert_with(|| (p.check.clone(), Vec::new()));
+                entry.1.push(p.id.clone());
             }
         }
 
@@ -132,21 +152,21 @@ impl HealthChecker {
         self: Arc<Self>,
         host: String,
         port: u16,
-        (cfg, scheme): Check,
+        check: CheckSpec,
         pools: Vec<String>,
     ) {
-        let probe = make_probe(&cfg, scheme);
+        let probe = make_probe(&check.probe);
         let mut bh = BackendHealth::default();
         let backend = format!("{host}:{port}");
         loop {
             let start = Instant::now();
-            let ok = probe.check(&host, port, cfg.timeout).await;
+            let ok = probe.check(&host, port, check.timeout).await;
             self.metrics
                 .control
                 .health_check_duration_seconds
                 .observe(start.elapsed().as_secs_f64());
 
-            if let Some(new) = bh.record(ok, cfg.healthy_threshold, cfg.unhealthy_threshold) {
+            if let Some(new) = bh.record(ok, check.healthy_threshold, check.unhealthy_threshold) {
                 self.health.set(&host, port, new);
                 let healthy_val = i64::from(new == HealthStatus::Healthy);
                 let draining_val = i64::from(new == HealthStatus::Draining);
@@ -169,7 +189,7 @@ impl HealthChecker {
                 tracing::info!(backend = %backend, status = ?new, "backend health transition");
             }
 
-            tokio::time::sleep(cfg.interval).await;
+            tokio::time::sleep(check.interval).await;
         }
     }
 }
