@@ -5,7 +5,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use gfe_config::{
     DynamicConfig, ListenProtocol, Listener, ListenerId, Route, RouteAction, RouteId,
 };
-use gfe_core::routing::RouteTable;
+use gfe_proxy::routing::RouteTable;
 use std::hint::black_box;
 
 fn config_with(n: usize) -> DynamicConfig {

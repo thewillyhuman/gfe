@@ -1,4 +1,4 @@
-//! `gfe-node`, the binary a node runs: the reverse proxy of `gfe-core`, its
+//! `gfe-node`, the binary a node runs: the reverse proxy of `gfe-proxy`, its
 //! ops endpoints, and the process around them (the command line, the log,
 //! signals, systemd, and the upgrade in place).
 
@@ -7,10 +7,10 @@ mod ops;
 use anyhow::{Context, Result};
 use clap::Parser;
 use gfe_config::NodeConfig;
-use gfe_core::Frontend;
 use gfe_node::signals::{Request, Signals};
 use gfe_node::systemd;
 use gfe_node::upgrade::{self, Inherited, Predecessor};
+use gfe_proxy::Frontend;
 use netkit_observability::{GfeMetrics, Log};
 use ops::Ops;
 use std::net::SocketAddr;

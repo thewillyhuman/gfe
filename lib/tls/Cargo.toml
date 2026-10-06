@@ -10,7 +10,7 @@ publish.workspace = true
 # No dependency on netkit-observability: this crate records no metric. What it
 # observes is returned (`TlsInfo`, `HandshakeError::reason`) or counted where
 # the caller can read it (`SniResolver::miss_count`), and the edge in
-# gfe-core turns that into metrics and logs.
+# gfe-proxy turns that into metrics and logs.
 [dependencies]
 gfe-config = { workspace = true }
 arc-swap = { workspace = true }

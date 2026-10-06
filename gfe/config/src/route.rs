@@ -16,7 +16,7 @@ impl std::fmt::Display for RouteId {
 /// A routing rule: match an incoming request and decide what to do with it.
 ///
 /// Matching precedence is resolved by the compiled route table in
-/// `gfe-core` (module `routing`): exact host beats wildcard host, and within
+/// `gfe-proxy` (module `routing`): exact host beats wildcard host, and within
 /// a host the longest matching path prefix (or an exact path) wins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

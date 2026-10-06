@@ -1,5 +1,5 @@
 [package]
-name = "gfe-core"
+name = "gfe-proxy"
 description = "The reverse proxy: serving client connections and proxying their requests, on Pingora"
 version.workspace = true
 edition.workspace = true

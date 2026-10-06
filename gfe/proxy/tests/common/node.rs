@@ -8,7 +8,7 @@ use gfe_config::{
     ControlPlaneConfig, DynamicConfig, ListenProtocol, Listener, ListenerId, NodeConfig,
     NodeSection,
 };
-use gfe_core::{Frontend, StartError};
+use gfe_proxy::{Frontend, StartError};
 use http_body_util::Empty;
 use hyper::Request;
 use hyper_util::rt::{TokioExecutor, TokioIo};

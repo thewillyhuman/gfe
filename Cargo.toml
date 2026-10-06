@@ -12,7 +12,7 @@ members = [
     "lib/health-checking",
     "lib/load-balancing",
     # The reverse proxy, and the binary a node runs.
-    "gfe-core",
+    "gfe/proxy",
     "gfe-node",
     # Development tools: not part of what a node runs or a package ships.
     "gfe-loadtest",
@@ -45,7 +45,7 @@ netkit-rate-limiting = { path = "lib/rate-limiting" }
 netkit-kernel = { path = "lib/kernel" }
 netkit-health-checking = { path = "lib/health-checking" }
 netkit-load-balancing = { path = "lib/load-balancing" }
-gfe-core = { path = "gfe-core" }
+gfe-proxy = { path = "gfe/proxy" }
 
 # The HTTP proxy engine: HTTP/1 and HTTP/2 on both legs, the proxy state
 # machine, and the pooled, TLS-capable connections to backends. Built with

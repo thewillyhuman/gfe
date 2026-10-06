@@ -1,7 +1,7 @@
 //! The node's own endpoints: `/healthz`, `/readyz` and `/metrics`.
 //!
 //! A small Pingora application, served by the edge's
-//! [`serve_plain`](gfe_core::listener::serve_plain) on a socket of its own:
+//! [`serve_plain`](gfe_proxy::listener::serve_plain) on a socket of its own:
 //! it must keep answering while the proxy drains, and must not show up as
 //! client traffic. It speaks HTTP/1.1, and drives its sessions itself
 //! rather than through Pingora's `HttpServerApp`, which waits a minute for a
@@ -9,7 +9,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use gfe_core::Frontend;
+use gfe_proxy::Frontend;
 use netkit_observability::{GfeMetrics, Log, LogDestinationLabel, without_histogram_metadata};
 use pingora_core::apps::ServerApp;
 use pingora_core::protocols::Stream;
@@ -283,7 +283,7 @@ pub(crate) async fn serve(
     ops: Arc<Ops>,
     handed_over: watch::Receiver<bool>,
 ) {
-    gfe_core::listener::serve_plain(&socket, ops, MAX_CONNECTIONS, handed_over).await;
+    gfe_proxy::listener::serve_plain(&socket, ops, MAX_CONNECTIONS, handed_over).await;
 }
 
 #[cfg(test)]

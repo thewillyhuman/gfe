@@ -965,7 +965,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "gfe-core"
+name = "gfe-loadtest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
+name = "gfe-node"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "clap",
+ "gfe-config",
+ "gfe-proxy",
+ "netkit-observability",
+ "pingora-core",
+ "pingora-http",
+ "rcgen",
+ "rustix",
+ "rustls",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "gfe-proxy"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
@@ -1001,42 +1037,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "x509-parser",
-]
-
-[[package]]
-name = "gfe-loadtest"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "http-body-util",
- "hyper",
- "hyper-util",
- "rustls",
- "tokio",
- "tokio-rustls",
-]
-
-[[package]]
-name = "gfe-node"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "clap",
- "gfe-config",
- "gfe-core",
- "netkit-observability",
- "pingora-core",
- "pingora-http",
- "rcgen",
- "rustix",
- "rustls",
- "serde_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]

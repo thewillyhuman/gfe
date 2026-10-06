@@ -145,7 +145,7 @@ fn traffic_events_are_the_ones_under_the_gfe_targets() {
     for target in ["gfe::access", "gfe::conn", "gfe::tcp"] {
         assert!(is_traffic(target), "{target}");
     }
-    for target in ["gfe_core::server", "gfe_node", "pingora_core::protocols"] {
+    for target in ["gfe_proxy::server", "gfe_node", "pingora_core::protocols"] {
         assert!(!is_traffic(target), "{target}");
     }
 }

@@ -22,9 +22,9 @@ use gfe_config::{
     CertEntry, ControlPlaneConfig, DynamicConfig, ListenProtocol, Listener, ListenerId, NodeConfig,
     NodeSection, PoolId, Route, RouteAction, RouteId, Scheme, Upstream, UpstreamPool,
 };
-use gfe_core::listener::{ConnInfo, Connections};
-use gfe_core::proxy::{self, State};
-use gfe_core::routing::RouteTable;
+use gfe_proxy::listener::{ConnInfo, Connections};
+use gfe_proxy::proxy::{self, State};
+use gfe_proxy::routing::RouteTable;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::{Frame, Incoming};
 use hyper::service::service_fn;

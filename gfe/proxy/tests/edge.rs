@@ -13,7 +13,7 @@ use bytes::Bytes;
 use gfe_config::{
     CertEntry, LimitsConfig, ListenProtocol, Listener, ListenerId, MinVersion, TimeoutsConfig,
 };
-use gfe_core::listener::{Connections, Drain, Listeners, Shared, serve_plain};
+use gfe_proxy::listener::{Connections, Drain, Listeners, Shared, serve_plain};
 use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use netkit_observability::GfeMetrics;
