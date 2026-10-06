@@ -16,9 +16,11 @@ gfe-config = { workspace = true }
 arc-swap = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
+rustls-native-certs = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
+tracing = { workspace = true }
 x509-parser = { workspace = true }
 
 [dev-dependencies]

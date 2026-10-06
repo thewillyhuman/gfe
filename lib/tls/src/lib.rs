@@ -13,6 +13,7 @@
 mod acceptor;
 mod cert_files;
 mod cert_store;
+mod connector;
 mod error;
 mod loader;
 mod policy;
@@ -23,6 +24,9 @@ mod test_support;
 pub use acceptor::{Acceptor, HandshakeError, TlsInfo};
 pub use cert_files::CertFiles;
 pub use cert_store::CertStore;
+pub use connector::{
+    Alpn, ClientTlsStream, Connector, ConnectorOptions, Identity, Trust, is_tls_error,
+};
 pub use error::TlsError;
 pub use loader::{LoadedCert, load_cert_files, load_cert_pem};
 pub use policy::{ALPN_PROTOCOLS, server_config};
