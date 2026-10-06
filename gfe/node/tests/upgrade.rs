@@ -137,25 +137,37 @@ impl Managed {
 
     /// Start a node with the given `drain_deadline` and wait until it is
     /// ready.
+    ///
+    /// Like [`Node::start`], it starts the node again on other ports if it
+    /// cannot become ready. Each attempt is given a service manager of its
+    /// own: one given up on may still have said it was ready, and the test
+    /// would take that for what the node it keeps says.
     fn start_draining_for(test: &str, drain_deadline: &str) -> Managed {
         let dir = scratch("up", test);
-        let notify_socket = dir.join("notify");
-        let service_manager = UnixDatagram::bind(&notify_socket).unwrap();
-        service_manager.set_read_timeout(Some(PATIENCE)).unwrap();
-        let node = Node::start(
-            &dir,
-            &Launch {
-                extra: &draining_for(drain_deadline),
-                command: &|command| {
-                    command.env("NOTIFY_SOCKET", &notify_socket);
+        let extra = draining_for(drain_deadline);
+        for attempt in 0..3 {
+            let notify_socket = dir.join(format!("notify-{attempt}"));
+            let service_manager = UnixDatagram::bind(&notify_socket).unwrap();
+            service_manager.set_read_timeout(Some(PATIENCE)).unwrap();
+            let mut node = Node::spawn(
+                &dir,
+                &Launch {
+                    extra: &extra,
+                    command: &|command| {
+                        command.env("NOTIFY_SOCKET", &notify_socket);
+                    },
+                    ..Launch::default()
                 },
-                ..Launch::default()
-            },
-        );
-        Managed {
-            node,
-            service_manager,
+            );
+            if node.wait_until_ready() {
+                return Managed {
+                    node,
+                    service_manager,
+                };
+            }
+            kill_group(&mut node.process);
         }
+        panic!("the node in {} did not become ready", dir.display());
     }
 
     /// The process id the node announces as the service's main process
