@@ -1466,6 +1466,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "netkit-http"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "tokio",
+]
+
+[[package]]
 name = "netkit-kernel"
 version = "0.1.0"
 dependencies = [

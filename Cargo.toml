@@ -3,6 +3,7 @@ members = [
     # Libraries: building blocks for networked systems. Nothing in them
     # knows about GFE.
     "lib/dns",
+    "lib/http",
     "lib/tls",
     "lib/load-balancing",
     "lib/health-checking",
@@ -38,6 +39,7 @@ unsafe_code = "forbid"
 [workspace.dependencies]
 # Libraries
 netkit-dns = { path = "lib/dns" }
+netkit-http = { path = "lib/http" }
 netkit-tls = { path = "lib/tls" }
 netkit-load-balancing = { path = "lib/load-balancing" }
 netkit-health-checking = { path = "lib/health-checking" }
@@ -60,8 +62,16 @@ pingora-error = "0.9"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
-bytes = "1"
+
+# HTTP/1.1 and HTTP/2 on the wire, and the vocabulary every HTTP library
+# shares. Named by netkit-http only (and by tests, as the peer a test talks
+# to): everything else sees HTTP through it.
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
 http = "1"
+http-body = "1"
+http-body-util = "0.1"
+bytes = "1"
 
 # TLS. The `ring` crypto provider (default-features off) keeps the build to
 # "Rust + a C compiler for ring's asm": no aws-lc-rs, no cmake.
@@ -109,10 +119,6 @@ rustix = "1"
 # Utilities
 rand = "0.8"
 
-# Tests, benchmarks and the load generator only: none of these is linked
-# into gfe-node.
-hyper = { version = "1", features = ["full"] }
-hyper-util = { version = "0.1", features = ["full"] }
-http-body-util = "0.1"
+# Tests and benchmarks only: none of these is linked into gfe-node.
 rcgen = "0.13"
 criterion = { version = "0.5", features = ["html_reports"] }
