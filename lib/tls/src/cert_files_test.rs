@@ -2,9 +2,9 @@ use super::*;
 use crate::test_support::scratch_dir;
 
 /// A certificate entry whose two files live in a fresh scratch directory.
-fn entry() -> CertEntry {
+fn entry() -> CertSpec {
     let dir = scratch_dir();
-    let entry = CertEntry {
+    let entry = CertSpec {
         sni: vec![],
         default: true,
         cert_file: dir.join("tls.crt"),
@@ -63,7 +63,7 @@ fn detects_a_swapped_symlink() {
     // The layout of a Kubernetes secret volume: the files are reached through
     // a `current` symlink, which is replaced atomically by a rename.
     std::os::unix::fs::symlink("v1", dir.join("current")).unwrap();
-    let certs = [CertEntry {
+    let certs = [CertSpec {
         sni: vec![],
         default: true,
         cert_file: dir.join("current").join("tls.crt"),

@@ -5,7 +5,7 @@
 
 use crate::listener::Listeners;
 use crate::proxy::{App, State};
-use crate::reload::applier::{install, prepare};
+use crate::reload::applier::{cert_specs, install, prepare};
 use crate::reload::{ReloadError, cache, watcher};
 use gfe_config::{DynamicConfig, HealthCheckConfig, NodeConfig, load_dynamic_config};
 use netkit_health_checking::HealthChecker;
@@ -219,7 +219,7 @@ impl Reloader {
     /// The certificate files are looked at before they are read, so a file
     /// replaced in between is seen as changed by the next poll.
     fn apply(&self, config: &DynamicConfig, tracked: &mut Tracked) -> Result<(), ReloadError> {
-        tracked.cert_files = CertFiles::snapshot(&config.certificates);
+        tracked.cert_files = CertFiles::snapshot(&cert_specs(&config.certificates));
         let prepared = prepare(config)?;
         let staged = self
             .listeners

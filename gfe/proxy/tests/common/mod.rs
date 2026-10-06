@@ -32,7 +32,7 @@ use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use netkit_load_balancing::PoolSet;
 use netkit_observability::GfeMetrics;
-use netkit_tls::{CertStore, TlsInfo};
+use netkit_tls::{CertSpec, CertStore, TlsInfo};
 use pingora_core::apps::ServerApp;
 use pingora_core::protocols::GetSocketDigest;
 use pingora_core::protocols::SocketDigest;
@@ -104,7 +104,7 @@ impl Proxy {
         .expect("the node config is valid");
         state
             .resolver()
-            .swap(CertStore::build(&cfg.certificates).expect("certificates load"));
+            .swap(CertStore::build(&cert_specs(&cfg.certificates)).expect("certificates load"));
         state.swap(
             RouteTable::compile(cfg),
             PoolSet::build(&cfg.pools).expect("pools build"),
@@ -282,6 +282,20 @@ pub fn certificate_files(names: &[&str]) -> (PathBuf, PathBuf, rcgen::CertifiedK
     std::fs::write(&cert_file, cert.cert.pem()).unwrap();
     std::fs::write(&key_file, cert.key_pair.serialize_pem()).unwrap();
     (cert_file, key_file, cert)
+}
+
+/// The certificates `entries`, as the TLS library takes them: what the proxy
+/// does on a reload, for tests that build a proxy without one.
+fn cert_specs(entries: &[CertEntry]) -> Vec<CertSpec> {
+    entries
+        .iter()
+        .map(|entry| CertSpec {
+            sni: entry.sni.clone(),
+            default: entry.default,
+            cert_file: entry.cert_file.clone(),
+            key_file: entry.key_file.clone(),
+        })
+        .collect()
 }
 
 /// A certificate entry of the dynamic config for `names`.

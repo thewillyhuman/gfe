@@ -4,10 +4,10 @@
 use crate::proxy::State;
 use crate::reload::ReloadError;
 use crate::routing::RouteTable;
-use gfe_config::{DynamicConfig, validate};
+use gfe_config::{CertEntry, DynamicConfig, validate};
 use netkit_load_balancing::PoolSet;
 use netkit_observability::SniLabel;
-use netkit_tls::CertStore;
+use netkit_tls::{CertSpec, CertStore};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A dynamic config validated and compiled into what the proxy serves from,
@@ -40,10 +40,23 @@ impl std::fmt::Debug for Prepared {
 pub fn prepare(config: &DynamicConfig) -> Result<Prepared, ReloadError> {
     validate(config)?;
     Ok(Prepared {
-        certificates: CertStore::build(&config.certificates)?,
+        certificates: CertStore::build(&cert_specs(&config.certificates))?,
         routes: RouteTable::compile(config),
         pools: PoolSet::build(&config.pools)?,
     })
+}
+
+/// The certificates of the dynamic config, as the TLS library takes them.
+pub(crate) fn cert_specs(entries: &[CertEntry]) -> Vec<CertSpec> {
+    entries
+        .iter()
+        .map(|entry| CertSpec {
+            sni: entry.sni.clone(),
+            default: entry.default,
+            cert_file: entry.cert_file.clone(),
+            key_file: entry.key_file.clone(),
+        })
+        .collect()
 }
 
 /// Swap a prepared config in; it cannot fail. Also forgets the health of

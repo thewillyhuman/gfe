@@ -16,6 +16,7 @@ mod cert_store;
 mod connector;
 mod error;
 mod loader;
+mod options;
 mod policy;
 mod resolver;
 #[cfg(test)]
@@ -29,5 +30,6 @@ pub use connector::{
 };
 pub use error::TlsError;
 pub use loader::{LoadedCert, load_cert_files, load_cert_pem};
+pub use options::{CertSpec, MinVersion};
 pub use policy::{ALPN_PROTOCOLS, server_config};
 pub use resolver::SniResolver;

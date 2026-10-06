@@ -10,14 +10,12 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use gfe_config::{
-    CertEntry, LimitsConfig, ListenProtocol, Listener, ListenerId, MinVersion, TimeoutsConfig,
-};
+use gfe_config::{LimitsConfig, ListenProtocol, Listener, ListenerId, TimeoutsConfig};
 use gfe_proxy::listener::{Connections, Drain, Listeners, Shared, serve_plain};
 use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use netkit_observability::GfeMetrics;
-use netkit_tls::{Acceptor, CertStore, SniResolver};
+use netkit_tls::{Acceptor, CertSpec, CertStore, MinVersion, SniResolver};
 use pingora_core::apps::HttpServerOptions;
 use pingora_core::apps::http_app::{HttpServer, ServeHttp};
 use pingora_core::protocols::http::ServerSession;
@@ -113,7 +111,7 @@ const NAME: &str = "a.example.org";
 /// A self-signed certificate for [`NAME`], written once per test binary.
 struct TestCert {
     der: CertificateDer<'static>,
-    entry: CertEntry,
+    entry: CertSpec,
 }
 
 fn cert() -> &'static TestCert {
@@ -122,7 +120,7 @@ fn cert() -> &'static TestCert {
         let cert = rcgen::generate_simple_self_signed(vec![NAME.to_string()]).unwrap();
         let dir = std::env::temp_dir().join(format!("gfe-core-edge-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let entry = CertEntry {
+        let entry = CertSpec {
             sni: vec![NAME.to_string()],
             default: true,
             cert_file: dir.join("tls.crt"),

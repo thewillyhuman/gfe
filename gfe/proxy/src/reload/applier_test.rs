@@ -158,3 +158,25 @@ fn prepare_changes_nothing_that_is_served() {
     assert_eq!(state.routing.load().routes.route_count(), 0);
     assert!(state.resolver().current().is_empty());
 }
+
+#[test]
+fn hands_every_certificate_entry_to_the_library_unchanged() {
+    let entry = CertEntry {
+        sni: vec!["a.example.org".into(), "*.b.example.org".into()],
+        default: true,
+        cert_file: "/etc/gfe/tls.crt".into(),
+        key_file: "/etc/gfe/tls.key".into(),
+    };
+
+    let specs = cert_specs(std::slice::from_ref(&entry));
+
+    assert_eq!(
+        specs,
+        vec![CertSpec {
+            sni: entry.sni.clone(),
+            default: true,
+            cert_file: entry.cert_file.clone(),
+            key_file: entry.key_file.clone(),
+        }]
+    );
+}

@@ -1,6 +1,6 @@
 use super::*;
-use gfe_config::CertEntry;
 use http::HeaderValue;
+use netkit_tls::CertSpec;
 
 fn host_of(host_header: Option<&str>, uri: &str) -> Result<String, HostError> {
     host_with(host_header, uri, Version::HTTP_11, None)
@@ -121,7 +121,7 @@ fn two_certificates() -> CertStore {
         let key_file = dir.join(format!("{tag}.key"));
         std::fs::write(&cert_file, cert.cert.pem()).unwrap();
         std::fs::write(&key_file, cert.key_pair.serialize_pem()).unwrap();
-        entries.push(CertEntry {
+        entries.push(CertSpec {
             sni: names,
             default: false,
             cert_file,

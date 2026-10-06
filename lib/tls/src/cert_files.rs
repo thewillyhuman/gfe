@@ -1,12 +1,12 @@
-//! Detects changes to the certificate files a dynamic config refers to.
+//! Detects changes to the certificate files a set of [`CertSpec`]s refers to.
 //!
-//! The dynamic config names certificate and key files by path, so replacing a
-//! file in place (a rotation) does not change the config itself. The caller
+//! A configuration names certificate and key files by path, so replacing a
+//! file in place (a rotation) does not change the configuration itself. The caller
 //! therefore remembers what those files looked like when it last loaded them
 //! and polls for a difference; that poll is what picks up a certificate
 //! rotated on disk.
 
-use gfe_config::CertEntry;
+use crate::CertSpec;
 use std::path::{Path, PathBuf};
 
 /// What identifies one version of a file on disk without reading it. `None`
@@ -52,7 +52,7 @@ fn stamp(path: &Path) -> Stamp {
     })
 }
 
-/// The certificate and key files of a dynamic config, as seen on disk at one
+/// The certificate and key files of a set of [`CertSpec`]s, as seen on disk at one
 /// point in time.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CertFiles {
@@ -64,7 +64,7 @@ impl CertFiles {
     ///
     /// Take the snapshot *before* reading the files: a file replaced in
     /// between then shows up as changed, instead of going unnoticed.
-    pub fn snapshot(certificates: &[CertEntry]) -> Self {
+    pub fn snapshot(certificates: &[CertSpec]) -> Self {
         let seen = certificates
             .iter()
             .flat_map(|entry| [&entry.cert_file, &entry.key_file])

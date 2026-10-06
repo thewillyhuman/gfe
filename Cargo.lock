@@ -1541,7 +1541,6 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "criterion",
- "gfe-config",
  "rcgen",
  "rustls",
  "rustls-native-certs 0.8.4",

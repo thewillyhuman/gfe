@@ -3,16 +3,15 @@
 //! lookup on its own.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use gfe_config::{CertEntry, MinVersion};
-use netkit_tls::{CertStore, SniResolver, server_config};
+use netkit_tls::{CertSpec, CertStore, MinVersion, SniResolver, server_config};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn temp_cert() -> (PathBuf, PathBuf) {
     let cert = rcgen::generate_simple_self_signed(vec!["bench.local".to_string()]).unwrap();
     let dir = std::env::temp_dir();
-    let cp = dir.join(format!("gfe-tls-bench-{}.crt", std::process::id()));
-    let kp = dir.join(format!("gfe-tls-bench-{}.key", std::process::id()));
+    let cp = dir.join(format!("netkit-tls-bench-{}.crt", std::process::id()));
+    let kp = dir.join(format!("netkit-tls-bench-{}.key", std::process::id()));
     std::fs::write(&cp, cert.cert.pem()).unwrap();
     std::fs::write(&kp, cert.key_pair.serialize_pem()).unwrap();
     (cp, kp)
@@ -65,7 +64,7 @@ fn one_handshake(server_cfg: Arc<rustls::ServerConfig>, client_cfg: Arc<rustls::
 
 fn bench(c: &mut Criterion) {
     let (cp, kp) = temp_cert();
-    let store = CertStore::build(&[CertEntry {
+    let store = CertStore::build(&[CertSpec {
         sni: vec!["bench.local".into()],
         default: true,
         cert_file: cp.clone(),

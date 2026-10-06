@@ -78,3 +78,15 @@ fn can_be_shared_between_tasks() {
     fn shareable<T: Send + Sync + 'static>() {}
     shareable::<Frontend>();
 }
+
+#[test]
+fn passes_the_configured_minimum_tls_version_to_the_library() {
+    assert_eq!(
+        tls_min_version(gfe_config::MinVersion::Tls12),
+        netkit_tls::MinVersion::Tls12
+    );
+    assert_eq!(
+        tls_min_version(gfe_config::MinVersion::Tls13),
+        netkit_tls::MinVersion::Tls13
+    );
+}

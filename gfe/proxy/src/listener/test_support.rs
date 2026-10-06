@@ -2,9 +2,9 @@
 //! the shared state, and a connected pair of loopback sockets.
 
 use crate::listener::Shared;
-use gfe_config::{CertEntry, LimitsConfig, MinVersion, TimeoutsConfig};
+use gfe_config::{LimitsConfig, TimeoutsConfig};
 use netkit_observability::GfeMetrics;
-use netkit_tls::{Acceptor, CertStore, SniResolver};
+use netkit_tls::{Acceptor, CertSpec, CertStore, MinVersion, SniResolver};
 use rustls::pki_types::CertificateDer;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -15,7 +15,7 @@ use tokio_rustls::TlsConnector;
 /// directory and served as the default certificate.
 pub(crate) struct TestCert {
     pub(crate) der: CertificateDer<'static>,
-    pub(crate) entry: CertEntry,
+    pub(crate) entry: CertSpec,
 }
 
 impl TestCert {
@@ -29,7 +29,7 @@ impl TestCert {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).expect("the temp dir is writable");
-        let entry = CertEntry {
+        let entry = CertSpec {
             sni: vec![name.to_string()],
             default: true,
             cert_file: dir.join("tls.crt"),
@@ -47,7 +47,7 @@ impl TestCert {
 
 /// The acceptor serving `certs`, and its resolver.
 pub(crate) fn acceptor(certs: &[&TestCert]) -> (Acceptor, Arc<SniResolver>) {
-    let entries: Vec<CertEntry> = certs.iter().map(|cert| cert.entry.clone()).collect();
+    let entries: Vec<CertSpec> = certs.iter().map(|cert| cert.entry.clone()).collect();
     let resolver = Arc::new(SniResolver::new(
         CertStore::build(&entries).expect("test certificates load"),
     ));

@@ -108,7 +108,10 @@ impl Frontend {
         let shared = Arc::new(shared);
         // One TLS policy for every HTTPS listener. Certificates rotate
         // through the resolver's store, so it is never rebuilt.
-        let tls = netkit_tls::server_config(Arc::clone(state.resolver()), node.tls.min_version)?;
+        let tls = netkit_tls::server_config(
+            Arc::clone(state.resolver()),
+            tls_min_version(node.tls.min_version),
+        )?;
         let listeners = Arc::new(Listeners::new(
             Arc::clone(&shared),
             proxy::app(Arc::clone(&state)),
@@ -202,6 +205,14 @@ impl Frontend {
         self.controller.shutdown();
         self.drain.trigger(&self.shared);
         self.listeners.serve_until_drained().await;
+    }
+}
+
+/// The library's name for the `[tls] min_version` of the node config.
+fn tls_min_version(min_version: gfe_config::MinVersion) -> netkit_tls::MinVersion {
+    match min_version {
+        gfe_config::MinVersion::Tls12 => netkit_tls::MinVersion::Tls12,
+        gfe_config::MinVersion::Tls13 => netkit_tls::MinVersion::Tls13,
     }
 }
 

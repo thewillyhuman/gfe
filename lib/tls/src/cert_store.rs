@@ -1,9 +1,9 @@
-//! The SNI → certificate map, built from the dynamic config and swapped
+//! The SNI → certificate map, built from the caller's certificates and swapped
 //! atomically on reload (see [`SniResolver`](crate::SniResolver)).
 
+use crate::CertSpec;
 use crate::TlsError;
 use crate::loader::load_cert_files;
-use gfe_config::CertEntry;
 use rustls::sign::CertifiedKey;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,10 +25,10 @@ pub struct CertStore {
 }
 
 impl CertStore {
-    /// Build a certificate store from the dynamic config's certificate
-    /// entries, loading each referenced PEM file. Fails on the first entry
+    /// Build a certificate store from `entries`, loading each referenced
+    /// PEM file. Fails on the first entry
     /// that cannot be loaded, naming its SNI names, or on a second default.
-    pub fn build(entries: &[CertEntry]) -> Result<Self, TlsError> {
+    pub fn build(entries: &[CertSpec]) -> Result<Self, TlsError> {
         let mut store = CertStore::default();
         let mut default_file = None;
         for entry in entries {
@@ -100,9 +100,9 @@ impl CertStore {
         }
     }
 
-    /// `(sni-name, not_after_unix)` pairs, for `gfe_cert_expiry_timestamp`:
+    /// `(sni-name, not_after_unix)` pairs, for expiry metrics and alerts:
     /// one per configured SNI name (lowercased, wildcards as written), plus
-    /// `<default>` for the default certificate, in config order.
+    /// `<default>` for the default certificate, in the order given.
     pub fn expiries(&self) -> &[(String, i64)] {
         &self.expiries
     }
@@ -119,7 +119,7 @@ impl CertStore {
 }
 
 /// How errors name an entry: by its SNI names, or as the default.
-fn entry_names(entry: &CertEntry) -> Vec<String> {
+fn entry_names(entry: &CertSpec) -> Vec<String> {
     if entry.sni.is_empty() {
         vec![DEFAULT_NAME.to_string()]
     } else {

@@ -33,7 +33,8 @@ fn parts(node: &NodeConfig) -> (Arc<State>, Arc<Listeners<App>>, Drain) {
         node.timeouts.clone(),
     ));
     let tls =
-        netkit_tls::server_config(Arc::clone(state.resolver()), node.tls.min_version).unwrap();
+        netkit_tls::server_config(Arc::clone(state.resolver()), netkit_tls::MinVersion::Tls12)
+            .unwrap();
     let listeners = Arc::new(Listeners::new(
         shared,
         proxy::app(Arc::clone(&state)),

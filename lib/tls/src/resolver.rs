@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// answers with a fatal alert) and is counted.
 pub struct SniResolver {
     store: ArcSwap<CertStore>,
-    /// Bumped on every miss; surfaced by the proxy as `gfe_tls_sni_no_cert`.
+    /// Bumped on every miss; read through [`SniResolver::miss_count`].
     misses: AtomicU64,
 }
 

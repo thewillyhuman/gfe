@@ -1,6 +1,6 @@
 //! Certificates for unit tests: self-signed, written to scratch files.
 
-use gfe_config::CertEntry;
+use crate::CertSpec;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub(crate) fn scratch_dir() -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "gfe-tls-test-{}-{}",
+        "netkit-tls-test-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
@@ -34,7 +34,7 @@ pub(crate) fn self_signed(names: &[&str]) -> (Vec<u8>, Vec<u8>) {
 /// A certificate entry serving `sni` (and the default when `default`), with
 /// its files written to a fresh scratch directory. The certificate itself
 /// names the SNI names without their wildcard label.
-pub(crate) fn entry(sni: &[&str], default: bool) -> CertEntry {
+pub(crate) fn entry(sni: &[&str], default: bool) -> CertSpec {
     let names = if sni.is_empty() {
         vec!["placeholder.local"]
     } else {
@@ -44,7 +44,7 @@ pub(crate) fn entry(sni: &[&str], default: bool) -> CertEntry {
     };
     let (cert, key) = self_signed(&names);
     let dir = scratch_dir();
-    let entry = CertEntry {
+    let entry = CertSpec {
         sni: sni.iter().map(|name| name.to_string()).collect(),
         default,
         cert_file: dir.join("tls.crt"),
