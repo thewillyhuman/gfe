@@ -1,6 +1,6 @@
 [package]
 name = "gfe-proxy"
-description = "The reverse proxy: serving client connections and proxying their requests, on Pingora"
+description = "The reverse proxy: serving client connections and proxying their requests, on the netkit libraries"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,34 +10,19 @@ publish.workspace = true
 [dependencies]
 gfe-config = { workspace = true }
 netkit-observability = { workspace = true }
-netkit-rate-limiting = { workspace = true }
 netkit-kernel = { workspace = true }
-netkit-dns = { workspace = true }
 netkit-http = { workspace = true }
 netkit-listen = { workspace = true }
 netkit-tls = { workspace = true }
 netkit-health-checking = { workspace = true }
 netkit-load-balancing = { workspace = true }
-pingora-core = { workspace = true }
-pingora-proxy = { workspace = true }
-pingora-http = { workspace = true }
-pingora-error = { workspace = true }
 tokio = { workspace = true }
-tokio-rustls = { workspace = true }
-rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
-rustls-native-certs = { workspace = true }
-async-trait = { workspace = true }
-bytes = { workspace = true }
-http = { workspace = true }
 arc-swap = { workspace = true }
-dashmap = { workspace = true }
 tracing = { workspace = true }
 serde_json = { workspace = true }
 notify = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
-x509-parser = { workspace = true }
 
 [dev-dependencies]
 hyper = { workspace = true }
