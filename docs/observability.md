@@ -20,17 +20,8 @@ Both logs are JSON lines, emitted when the request or connection is **over**,
 so sizes, durations and outcomes are final. Each target can be silenced on
 its own, e.g. `RUST_LOG=info,gfe::conn=off`.
 
-What Pingora, the HTTP engine, logs is written as JSON lines too, with the
-Pingora module as `target` and `log.target`, `log.module_path`, `log.file`
-and `log.line` in `fields`. Healthy traffic produces none at the default
-level. What it logs at error level about a client that misbehaves (a client
-that leaves halfway through a request head or a response, a failed HTTP/2
-handshake; targets `pingora_proxy` and `pingora_core::apps`) is not written
-by default: the connection and access logs already say so, and a line per
-such client would let a scanner fill the journal.
-`RUST_LOG=info,pingora_proxy=error,pingora_core::apps=error` turns it back
-on. Why a failed request failed, as Pingora tells it, is at debug level under
-`gfe::proxy`.
+Why a request to a backend failed, in more detail than the access log's
+`error`, is logged at debug level under `gfe::proxy`, with the backend.
 
 Where they go is set by `[log] file` in the bootstrap config:
 
@@ -90,33 +81,34 @@ So a `502` with `error=upstream_connect_refused` is GFE reporting a dead
 backend, a `502` without `error` is the backend's own answer, and a `200` with
 `termination=client_abort` is a download the client never finished.
 
-A few requests never reach GFE's request path and have no access event at
-all: Pingora answers them itself with a `400` (a malformed request head, more
-than 256 headers, a head that does not end within 1 MiB, a target authority
-that differs from `Host`). They show only in the connection log, as
-`reason=protocol_error` when the request was the connection's first.
+A few requests never reach GFE's request handler and have no access event
+at all: the HTTP layer answers them itself, an HTTP/1.1 request with a
+malformed head with `400`, one whose head is over `max_header_bytes` with
+`431`, and closes the connection. They show only in the connection log, as
+`reason=protocol_error`.
 
 ### Reading why a connection ended
 
-Pingora does not say why it gave a connection up, so the connection log's
-`reason` (and `gfe_connections_closed_total{reason}`) is derived from what
-the node observes on the connection: the handshake, how reading the client's
-side ended, whether the node was draining, whether a request was in flight,
-and what the node's own timers did. The full table is in
-[section 11.1 of the spec](spec.md#111-metrics). Where two causes cannot be
-told apart the more general reason is given, never a guess:
+The connection log's `reason` (and `gfe_connections_closed_total{reason}`)
+says how the connection ended, as the node's HTTP layer saw it, or how its
+TLS handshake failed before that. The full table is in
+[section 11.1 of the spec](spec.md#111-metrics). In short:
 
-- `closed` is an orderly end: the client closed with nothing in flight, or
-  the connection ended after at least one request. It also covers a client
-  that left while sending a request head.
-- `client_abort` is a reset or a broken pipe from the client, or the client
-  closing with a request still in flight.
+- `closed` is an orderly end: the client closed the connection between
+  requests, or it ended after a response that closed it.
+- `client_abort` is the client resetting the connection or going away in
+  the middle of a message, a request head included.
+- `client_unresponsive` is a client taken for gone: an HTTP/2 client that
+  did not acknowledge a PING, or one the kernel gave up on after
+  unanswered TCP keepalive probes.
 - `idle_timeout`, `header_timeout` and `drain` are the node closing the
   connection on its own timers; `shutdown` is a connection still open at the
   drain deadline, cut.
-- `protocol_error` is a connection Pingora gave up before any request reached
-  GFE: a malformed head, a broken HTTP/2 preface.
-- `error` is any other I/O or TLS error, in the `error` field.
+- `protocol_error` is a client that sent what is not HTTP, or a head over
+  `max_header_bytes`.
+- `tls_handshake_failed` and `tls_handshake_timeout` are connections that
+  never got past TLS; `tls_error` says why a handshake failed.
+- `error` is anything else, with the error in the `error` field.
 
 ### Querying the logs
 
@@ -256,8 +248,9 @@ backend shows for those series. Prometheus itself needs none of this.
   time, retransmissions and the accept-queue wait come from the eBPF
   program. On a node that could not attach it (`gfe_ebpf_attached == 0`),
   only the host-level retransmission ratio from node_exporter is available.
-- **Requests Pingora answers itself** (a malformed head, a host conflict):
-  no access event and no request metric; the connection log has them.
+- **Requests the HTTP layer refuses before GFE reads them** (a malformed
+  head, a head over `max_header_bytes`): no access event and no request
+  metric; the connection log has them.
 - **Distributed traces.** `X-Request-Id` is propagated and logged at both
   ends, which correlates a request across GFE and the backend, but GFE does
   not emit spans.
