@@ -3,6 +3,8 @@
 mod common;
 
 use common::*;
+use http_body_util::{BodyExt, Full};
+use netkit_http::Bytes;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -83,6 +85,36 @@ async fn upload_slower_than_upstream_first_byte_succeeds_while_it_progresses() {
         None,
     )
     .await;
+
+    // 10 bytes every 100 ms: one second in total, three times the timeout.
+    let mut stream = TcpStream::connect(proxy.addr).await.unwrap();
+    let head = "POST /upload HTTP/1.1\r\nhost: a.example.org\r\ncontent-length: 100\r\nconnection: close\r\n\r\n";
+    stream.write_all(head.as_bytes()).await.unwrap();
+    for _ in 0..10 {
+        stream.write_all(b"0123456789").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let response = read_until_closed(&mut stream).await;
+
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.ends_with("received 100"), "{response}");
+}
+
+/// The same upload to an `h2c` pool: HTTP/2 to the backend changes nothing
+/// to how the wait for its answer is bounded.
+#[tokio::test]
+async fn upload_to_an_h2c_pool_slower_than_upstream_first_byte_succeeds_while_it_progresses() {
+    let upstream = serve_h2c(|req: hyper::Request<hyper::body::Incoming>| async move {
+        let received = req.into_body().collect().await.unwrap().to_bytes();
+        hyper::Response::new(Full::new(Bytes::from(format!(
+            "received {}",
+            received.len()
+        ))))
+    })
+    .await;
+    let mut config = forwarding_config(upstream);
+    config.pools[0] = pool("pool", gfe_config::Scheme::H2c, &[upstream]);
+    let proxy = Proxy::start_with(&config, first_byte(Duration::from_millis(300)), None).await;
 
     // 10 bytes every 100 ms: one second in total, three times the timeout.
     let mut stream = TcpStream::connect(proxy.addr).await.unwrap();
