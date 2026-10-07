@@ -37,8 +37,7 @@ impl Frame {
     pub fn setting(&self, id: u16) -> Option<u32> {
         let (entries, _) = self.payload.as_chunks::<6>();
         entries.iter().find_map(|&[id_hi, id_lo, v0, v1, v2, v3]| {
-            (u16::from_be_bytes([id_hi, id_lo]) == id)
-                .then(|| u32::from_be_bytes([v0, v1, v2, v3]))
+            (u16::from_be_bytes([id_hi, id_lo]) == id).then(|| u32::from_be_bytes([v0, v1, v2, v3]))
         })
     }
 
