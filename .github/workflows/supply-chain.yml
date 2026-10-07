@@ -88,10 +88,14 @@ jobs:
       - name: Generate coverage (LCOV)
         # `--workspace --all-targets` mirrors the ci.yml test job so the
         # coverage report reflects what CI exercises. `--no-fail-fast` so a
-        # single flaky test doesn't blank the whole report.
+        # single flaky test doesn't blank the whole report. `--failure-mode
+        # all` so a profile that cannot be read does not either: the node
+        # tests kill `gfe-node` processes outright, by design, and one
+        # killed while writing its profile at exit leaves a truncated file,
+        # which the default mode (`any`) makes fatal to the whole merge.
         run: |
-          cargo llvm-cov --workspace --all-targets --no-fail-fast --lcov \
-            --output-path lcov.info
+          cargo llvm-cov --workspace --all-targets --no-fail-fast \
+            --failure-mode all --lcov --output-path lcov.info
       - name: Generate summary
         run: cargo llvm-cov report --summary-only | tee coverage-summary.txt
       - name: Upload LCOV
