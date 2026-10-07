@@ -45,6 +45,11 @@ enum Cmd {
         /// `keepalive` (reuse each connection) or `reconnect` (new conn/request).
         #[arg(long, default_value = "keepalive")]
         mode: String,
+        /// Do not resume TLS sessions across connections: every `reconnect`
+        /// is then a full handshake, as from a client without a session,
+        /// instead of a resumed one, as from a browser.
+        #[arg(long)]
+        no_resume: bool,
         /// Label for the printed result row.
         #[arg(long, default_value = "")]
         label: String,
@@ -64,8 +69,19 @@ fn main() -> Result<()> {
                 connections,
                 duration_secs,
                 mode,
+                no_resume,
                 label,
-            } => run_load(&target, connections, duration_secs, &mode, &label).await,
+            } => {
+                run_load(
+                    &target,
+                    connections,
+                    duration_secs,
+                    &mode,
+                    !no_resume,
+                    &label,
+                )
+                .await
+            }
         }
     })
 }
@@ -119,20 +135,21 @@ fn parse_target(target: &str) -> Result<Target> {
     })
 }
 
+/// Drive `connections` workers at `target` for `duration_secs`; over TLS
+/// they resume sessions across connections when `resume`.
 async fn run_load(
     target: &str,
     connections: usize,
     duration_secs: u64,
     mode: &str,
+    resume: bool,
     label: &str,
 ) -> Result<()> {
     let t = Arc::new(parse_target(target)?);
     let reconnect = mode == "reconnect";
-    let tls_connector = if t.tls {
-        Some(insecure_tls_connector())
-    } else {
-        None
-    };
+    let tls_connector = t
+        .tls
+        .then(|| tokio_rustls::TlsConnector::from(tls_client_config(resume)));
 
     let deadline = Instant::now() + Duration::from_secs(duration_secs);
     let started = Instant::now();
@@ -159,7 +176,12 @@ async fn run_load(
     }
     let elapsed = started.elapsed().as_secs_f64();
 
-    report(label, mode, &mut latencies, errors, elapsed);
+    let mode = if t.tls && reconnect && !resume {
+        format!("{mode}+full-tls")
+    } else {
+        mode.to_string()
+    };
+    report(label, &mode, &mut latencies, errors, elapsed);
     Ok(())
 }
 
@@ -299,15 +321,21 @@ fn report(label: &str, mode: &str, latencies: &mut [u64], errors: u64, elapsed: 
 
 // ───────────────────────── TLS (insecure: load tool only) ─────────────────────────
 
-fn insecure_tls_connector() -> tokio_rustls::TlsConnector {
+/// A client that trusts any certificate (this is a load tool, not a
+/// client) and, when `resume`, resumes sessions across connections as a
+/// browser does; otherwise every connection is a full handshake.
+fn tls_client_config(resume: bool) -> Arc<rustls::ClientConfig> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let cfg = rustls::ClientConfig::builder_with_provider(provider)
+    let mut cfg = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("tls versions")
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoVerify))
         .with_no_client_auth();
-    tokio_rustls::TlsConnector::from(Arc::new(cfg))
+    if !resume {
+        cfg.resumption = rustls::client::Resumption::disabled();
+    }
+    Arc::new(cfg)
 }
 
 #[derive(Debug)]
