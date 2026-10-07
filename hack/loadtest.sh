@@ -2,8 +2,12 @@
 # End-to-end load test: mock upstream + the real gfe-node + load client.
 #
 # Spins everything up on loopback, runs a matrix of scenarios, prints a table,
-# tears down. All three processes share this host's CPUs, so numbers are
-# conservative/comparative (relative cost per layer), not a tuned NIC benchmark.
+# tears down. The node runs as it does in production: its access log on and
+# written to a file, an ECDSA P-256 certificate on the HTTPS listener. All
+# three processes share this host's CPUs, so req/s and latencies are
+# conservative/comparative (relative cost per layer), not a tuned NIC
+# benchmark; the node's CPU per request, printed with each row, is what
+# isolates the node from the two processes it shares the cores with.
 #
 # Usage: ./hack/loadtest.sh [connections] [duration_secs]
 set -euo pipefail
@@ -30,8 +34,10 @@ TMP="$(mktemp -d)"
 cleanup() { kill "${UP_PID:-}" "${NODE_PID:-}" 2>/dev/null || true; rm -rf "$TMP"; }
 trap cleanup EXIT
 
-# A throwaway certificate for the https listener, gone with the run.
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$TMP/key.pem" 2>/dev/null
+# A throwaway ECDSA P-256 certificate for the https listener, gone with the
+# run: what a node should serve with (an RSA signature costs several times
+# as much per full handshake).
+openssl ecparam -name prime256v1 -genkey -noout -out "$TMP/key.pem" 2>/dev/null
 openssl req -x509 -key "$TMP/key.pem" -out "$TMP/cert.pem" -days 1 -subj "/CN=localhost" 2>/dev/null
 
 cat > "$TMP/dynamic.json" <<JSON
@@ -59,6 +65,8 @@ cat > "$TMP/dynamic.json" <<JSON
 }
 JSON
 
+# The access log goes to a file, as in production: one line per request
+# and per connection is part of what a request costs the node.
 cat > "$TMP/node.toml" <<TOML
 [node]
 id = "gfe-load"
@@ -66,6 +74,8 @@ metrics_addr = "$METRICS"
 [control_plane]
 config_file = "$TMP/dynamic.json"
 local_cache = "$TMP/cache.json"
+[log]
+file = "$TMP/gfe.log"
 [health_check_defaults]
 TOML
 
@@ -75,10 +85,12 @@ NODE=./target/release/gfe-node
 echo ">> starting mock upstream ($UPSTREAM)"
 "$LT" upstream --listen "$UPSTREAM" --body-bytes 64 >/dev/null 2>&1 &
 UP_PID=$!
+disown
 
 echo ">> starting gfe-node"
-RUST_LOG=warn "$NODE" --config "$TMP/node.toml" >"$TMP/node.log" 2>&1 &
+RUST_LOG=info "$NODE" --config "$TMP/node.toml" >"$TMP/node.log" 2>&1 &
 NODE_PID=$!
+disown
 
 # Wait for readiness: the ops endpoints answer before the listeners are
 # bound, with a 503 until they are.
@@ -86,6 +98,45 @@ for _ in $(seq 1 50); do
   if curl -sf -o /dev/null "http://$METRICS/readyz"; then break; fi
   sleep 0.1
 done
+
+# The node's CPU time so far, user and system together, in seconds: from
+# /proc on Linux (10 ms resolution), from ps elsewhere.
+node_cpu_seconds() {
+  if [ -r "/proc/$NODE_PID/stat" ]; then
+    awk -v tck="$(getconf CLK_TCK)" '{ print ($14 + $15) / tck }' "/proc/$NODE_PID/stat"
+  else
+    ps -p "$NODE_PID" -o cputime= |
+      awk -F: '{ print (NF == 3 ? $1 * 3600 + $2 * 60 + $3 : $1 * 60 + $2) }'
+  fi
+}
+
+# Run one scenario (its label, then the load client's arguments) and print
+# its row, with the node's CPU per request appended.
+scenario() {
+  local label="$1"
+  shift
+  local before after row requests
+  before=$(node_cpu_seconds)
+  row=$("$LT" run --duration-secs "$DUR" --label "$label" "$@")
+  after=$(node_cpu_seconds)
+  requests=$(sed -E 's/.*reqs=([0-9]+).*/\1/' <<<"$row")
+  awk -v row="$row" -v a="$after" -v b="$before" -v n="$requests" \
+    'BEGIN { printf "%s  node_cpu=%.0fµs/req\n", row, (n > 0 ? (a - b) * 1e6 / n : 0) }'
+}
+
+# Connection churn leaves loopback sockets in TIME_WAIT, which exhausts the
+# ephemeral ports: give them a moment to clear before churning again.
+settle() {
+  local waited=0
+  while [ "$waited" -lt 60 ]; do
+    local tw
+    tw=$( (netstat -an 2>/dev/null || ss -tan 2>/dev/null) | grep -c TIME_WAIT || true)
+    [ "$tw" -lt 2000 ] && return
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 echo ">> ready; running scenarios (connections=$CONNS, duration=${DUR}s each)"
 echo
 
@@ -93,13 +144,20 @@ printf '%-38s %-10s %s\n' "scenario" "mode" "result"
 printf '%-38s %-10s %s\n' "--------" "----" "------"
 
 # Reconnect churn exhausts loopback ephemeral ports at high concurrency
-# (TIME_WAIT), so the handshake-bound row uses low concurrency on purpose.
+# (TIME_WAIT), so the connection-bound rows use low concurrency on purpose.
 RECONN_CONNS=8
 
-"$LT" run --target "http://$HTTP/fixed"     --connections "$CONNS"        --duration-secs "$DUR" --mode keepalive --label "http  · fixed (GFE overhead)"
-"$LT" run --target "http://$HTTP/proxy/x"   --connections "$CONNS"        --duration-secs "$DUR" --mode keepalive --label "http  · proxy (+upstream)"
-"$LT" run --target "https://$HTTPS/proxy/x" --connections "$CONNS"        --duration-secs "$DUR" --mode keepalive --label "https · proxy (warm TLS)"
-"$LT" run --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --duration-secs "$DUR" --mode reconnect --label "https · proxy (new TLS/req, c=$RECONN_CONNS)"
+scenario "http  · fixed (GFE overhead)"      --target "http://$HTTP/fixed"     --connections "$CONNS"        --mode keepalive
+scenario "http  · proxy (+upstream)"         --target "http://$HTTP/proxy/x"   --connections "$CONNS"        --mode keepalive
+scenario "https · proxy (warm TLS)"          --target "https://$HTTPS/proxy/x" --connections "$CONNS"        --mode keepalive
+scenario "https · proxy (resumed TLS/req, c=$RECONN_CONNS)" --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --mode reconnect
+settle
+scenario "https · proxy (full TLS/req, c=$RECONN_CONNS)"    --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --mode reconnect --no-resume
 
 echo
+# What the node counted, so that the rows can be read for what they were:
+# the TLS connections by version and whether they resumed a session.
+echo ">> tls connections, as the node counted them:"
+curl -s "http://$METRICS/metrics" | grep '^gfe_tls_connections_total' | sed 's/^/   /'
+echo ">> access log: $(wc -l < "$TMP/gfe.log" | tr -d ' ') lines ($(du -h "$TMP/gfe.log" | cut -f1))"
 echo ">> done"
