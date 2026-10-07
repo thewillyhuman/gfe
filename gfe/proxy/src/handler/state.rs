@@ -22,8 +22,13 @@ use std::time::Duration;
 const BACKEND_ADDRESS_TTL: Duration = Duration::from_secs(10);
 
 /// The idle connections kept per backend when `[upstream] idle_per_host`
-/// is unset or 0, as `v1.1.0` kept.
-const DEFAULT_IDLE_PER_HOST: usize = 32;
+/// is unset or 0: all of them. A cap below the requests in flight to a
+/// backend makes the pool close a connection on every response beyond the
+/// cap and dial a new one for the next request, with the churn, the
+/// latency and the ephemeral ports that costs; what bounds idle connections
+/// instead is `idle_timeout` and `max_upstream_connections`, as HAProxy
+/// bounds them. `v1.1.0` kept 32.
+const NO_IDLE_CAP: usize = usize::MAX;
 
 /// What a config is compiled into for request handling: the routes and the
 /// pools they forward to. Swapped as one, so that no request sees routes of
@@ -156,7 +161,7 @@ fn client_options(config: &NodeConfig) -> Result<Options, ProxyError> {
     let timeouts = &config.timeouts;
     Ok(Options {
         idle_per_host: match config.upstream.idle_per_host {
-            None | Some(0) => DEFAULT_IDLE_PER_HOST,
+            None | Some(0) => NO_IDLE_CAP,
             Some(n) => n,
         },
         idle_timeout: Some(config.upstream.idle_timeout),

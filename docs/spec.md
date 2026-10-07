@@ -526,7 +526,7 @@ If a pool has **no healthy upstreams**, GFE returns `503` and increments `gfe_no
 
 Long-lived pooled upstream connections are a primary reason to run a shared edge: they amortize TCP + TLS handshake cost across all client requests to a backend. The pool is `netkit-http`'s client (hyper-util's pool underneath).
 
-- **Per-backend idle pools.** Keyed by scheme and `host:port`. Idle connections are reused; the pool keeps at most `[upstream] idle_per_host` idle connections per backend (unset or `0`: 32), and closes a connection idle for `[upstream] idle_timeout` (default `60s`), so connections to a backend that is no longer used (removed, or dead) do not linger and count against `max_upstream_connections`.
+- **Per-backend idle pools.** Keyed by scheme and `host:port`. Idle connections are reused; the pool keeps at most `[upstream] idle_per_host` idle connections per backend (unset or `0`: every one of them, so that a backend with more requests in flight than the cap is not sent a new connection for every response beyond it), and closes a connection idle for `[upstream] idle_timeout` (default `60s`), so connections to a backend that is no longer used (removed, or dead) do not linger and count against `max_upstream_connections`.
 - **HTTP/1.1 and HTTP/2 upstreams.** HTTP/2 upstream connections (gRPC calls to `https` pools via ALPN, or `h2c`) are multiplexed: many concurrent requests share one connection per backend, subject to the backend's `SETTINGS_MAX_CONCURRENT_STREAMS`. For h1, one request per connection at a time.
 - **Opening a connection.** The backend's name is looked up through the system's resolver (`netkit-dns`), and the answer trusted for 10 s; when a lookup fails, the last answer is kept. TCP is connected with `TCP_NODELAY`, then TLS is run for an `https` pool. `upstream_connect` bounds the three together.
 - **Upstream TLS (`connector.rs`).** When `scheme=https`, GFE verifies the upstream certificate and its hostname against the system's trust store, plus `[upstream] extra_ca_file` when set. A system root that cannot be parsed is skipped, and a system store that cannot be read is a warning at startup, not a failure. Optional mTLS (`[upstream] client_cert_file` / `client_key_file`, a client certificate shown to upstreams) is supported for zero-trust backends.
@@ -730,7 +730,7 @@ client_idle       = "75s"
 drain_deadline    = "30s"
 
 [upstream]
-idle_per_host     = 32                  # idle pooled connections kept per backend (unset or 0: 32)
+idle_per_host     = 0                   # most idle pooled connections kept per backend (unset or 0: every one)
 idle_timeout      = "60s"               # close a pooled upstream connection idle for this long
 # client_cert_file = "/etc/gfe/upstream-client.pem"   # mTLS to https backends
 # client_key_file  = "/etc/gfe/upstream-client.key"
@@ -1154,6 +1154,7 @@ Backends:
 - Upstream TLS is verified against the system's trust store (plus `extra_ca_file`), not against roots compiled into the binary. A store that cannot be read is a warning at startup, not a failure.
 - `upstream_connect` bounds the name lookup, the TCP connect and the TLS handshake together; it bounded the TCP connect alone.
 - The address of a named backend is cached for 10 s, and the last answer is kept when a lookup fails.
+- Every idle connection to a backend is kept, bounded by `[upstream] idle_timeout` and `max_upstream_connections`. `v1.1.0` kept 32 per backend (`[upstream] idle_per_host`, still accepted), and so, with more requests in flight to a backend than that, closed a connection on every response beyond 32 and opened a new one for the next request.
 
 Connections and draining:
 

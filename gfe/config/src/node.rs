@@ -85,7 +85,9 @@ pub struct EbpfConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpstreamConfig {
-    /// Idle pooled connections kept per backend. `None` or 0 means 32.
+    /// The most idle pooled connections kept per backend. `None` or 0
+    /// keeps every idle connection, bounded by `idle_timeout` and
+    /// `max_upstream_connections` alone.
     #[serde(default)]
     pub idle_per_host: Option<usize>,
     /// How long a pooled connection may stay idle before it is closed.

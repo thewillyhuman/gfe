@@ -65,7 +65,7 @@ fn swap_installs_routes_and_pools_together() {
 }
 
 #[test]
-fn keeps_32_idle_connections_per_backend_unless_told_otherwise() {
+fn keeps_every_idle_connection_per_backend_unless_told_otherwise() {
     let mut config = node_config();
 
     let unset = client_options(&config).unwrap();
@@ -74,8 +74,8 @@ fn keeps_32_idle_connections_per_backend_unless_told_otherwise() {
     config.upstream.idle_per_host = Some(4);
     let four = client_options(&config).unwrap();
 
-    assert_eq!(unset.idle_per_host, 32);
-    assert_eq!(zero.idle_per_host, 32);
+    assert_eq!(unset.idle_per_host, usize::MAX);
+    assert_eq!(zero.idle_per_host, usize::MAX);
     assert_eq!(four.idle_per_host, 4);
 }
 
