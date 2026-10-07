@@ -15,24 +15,33 @@ use std::net::IpAddr;
 /// The longest client-supplied `X-Request-Id` GFE adopts.
 const MAX_REQUEST_ID_LEN: usize = 128;
 
+/// The id of a request, as the client may send it and as GFE answers and
+/// forwards it.
+pub(crate) const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+const X_FORWARDED_FOR: HeaderName = HeaderName::from_static("x-forwarded-for");
+const X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto");
+const X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
+const FORWARDED: HeaderName = HeaderName::from_static("forwarded");
+
 /// Headers that must not be forwarded across a proxy hop (RFC 9110 §7.6.1).
-const HOP_BY_HOP: [&str; 9] = [
-    "connection",
-    "proxy-connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
+/// Named once, here, rather than parsed from text on every request.
+const HOP_BY_HOP: [HeaderName; 9] = [
+    CONNECTION,
+    HeaderName::from_static("proxy-connection"),
+    HeaderName::from_static("keep-alive"),
+    HeaderName::from_static("proxy-authenticate"),
+    HeaderName::from_static("proxy-authorization"),
+    TE,
+    HeaderName::from_static("trailer"),
+    HeaderName::from_static("transfer-encoding"),
+    UPGRADE,
 ];
 
 /// The client's `X-Request-Id` if it is a usable one (non-empty, printable
 /// ASCII, at most 128 bytes), else a new random 128-bit id in hex.
 pub(crate) fn request_id(headers: &HeaderMap) -> String {
     let supplied = headers
-        .get("x-request-id")
+        .get(X_REQUEST_ID)
         .and_then(|value| value.to_str().ok())
         .filter(|id| !id.is_empty() && id.len() <= MAX_REQUEST_ID_LEN && id.is_ascii());
     match supplied {
@@ -108,7 +117,7 @@ pub(crate) fn strip_hop_by_hop(headers: &mut HeaderMap) {
         .flat_map(|value| value.split(','))
         .filter_map(|token| HeaderName::from_bytes(token.trim().as_bytes()).ok())
         .collect();
-    for name in HOP_BY_HOP {
+    for name in &HOP_BY_HOP {
         headers.remove(name);
     }
     for name in named {
@@ -152,22 +161,22 @@ pub(crate) fn to_backend(head: &mut Parts, forwarding: &Forwarding<'_>) {
     }
     let client = forwarding.client.to_string();
     let forwarded_for = match headers
-        .get("x-forwarded-for")
+        .get(X_FORWARDED_FOR)
         .and_then(|value| value.to_str().ok())
     {
         Some(existing) => format!("{existing}, {client}"),
         None => client.clone(),
     };
-    set(headers, "x-forwarded-for", &forwarded_for);
-    set(headers, "x-forwarded-proto", forwarding.proto);
-    set(headers, "x-forwarded-host", forwarding.host);
+    set(headers, X_FORWARDED_FOR, &forwarded_for);
+    set(headers, X_FORWARDED_PROTO, forwarding.proto);
+    set(headers, X_FORWARDED_HOST, forwarding.host);
     let forwarded = format!(
         "for={client};host={};proto={}",
         forwarding.host, forwarding.proto
     );
-    set(headers, "forwarded", &forwarded);
-    if !headers.contains_key("x-request-id") {
-        set(headers, "x-request-id", forwarding.request_id);
+    set(headers, FORWARDED, &forwarded);
+    if !headers.contains_key(X_REQUEST_ID) {
+        set(headers, X_REQUEST_ID, forwarding.request_id);
     }
     // Any userinfo (`user@`) is not part of the host.
     let target_host = head.uri.authority().and_then(|authority| {
@@ -181,9 +190,9 @@ pub(crate) fn to_backend(head: &mut Parts, forwarding: &Forwarding<'_>) {
 
 /// Set a header, leaving it out if `value` cannot be a header value (a host
 /// or id that came from the client).
-fn set(headers: &mut HeaderMap, name: &'static str, value: &str) {
+fn set(headers: &mut HeaderMap, name: HeaderName, value: &str) {
     if let Ok(value) = HeaderValue::from_str(value) {
-        headers.insert(HeaderName::from_static(name), value);
+        headers.insert(name, value);
     }
 }
 

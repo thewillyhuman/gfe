@@ -8,9 +8,14 @@
 //! is the caller's.
 
 use crate::handler::failure::FailureKind;
+use crate::handler::request::X_REQUEST_ID;
 use netkit_http::body::{self, BoxBody};
 use netkit_http::header::{CONTENT_TYPE, LOCATION};
 use netkit_http::{HeaderName, HeaderValue, Response, StatusCode};
+
+/// The headers a gRPC "trailers-only" failure carries.
+pub(crate) const GRPC_STATUS: HeaderName = HeaderName::from_static("grpc-status");
+const GRPC_MESSAGE: HeaderName = HeaderName::from_static("grpc-message");
 
 /// Why GFE answers a request itself instead of relaying a backend's answer.
 /// Each says how it is answered and what the access log's `error` is.
@@ -166,12 +171,9 @@ pub(crate) fn grpc_failure(code: GrpcCode, message: &str, request_id: &str) -> R
     let mut response = answer(StatusCode::OK, body::empty(), request_id);
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/grpc"));
-    headers.insert(
-        HeaderName::from_static("grpc-status"),
-        HeaderValue::from(code as u16),
-    );
+    headers.insert(GRPC_STATUS, HeaderValue::from(code as u16));
     if let Ok(message) = HeaderValue::from_str(message) {
-        headers.insert(HeaderName::from_static("grpc-message"), message);
+        headers.insert(GRPC_MESSAGE, message);
     }
     response
 }
@@ -207,9 +209,7 @@ fn answer(status: StatusCode, content: BoxBody, request_id: &str) -> Response<Bo
     let mut response = Response::new(content);
     *response.status_mut() = status;
     if let Ok(id) = HeaderValue::from_str(request_id) {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static("x-request-id"), id);
+        response.headers_mut().insert(X_REQUEST_ID, id);
     }
     response
 }

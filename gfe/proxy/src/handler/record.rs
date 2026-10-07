@@ -14,6 +14,7 @@
 
 use crate::edge::ConnInfo;
 use crate::handler::request;
+use crate::handler::respond::GRPC_STATUS;
 use crate::metrics::{AbortLabels, GfeMetrics, GrpcLabels, RequestLabels, RouteLabels};
 use crate::routing::CompiledRoute;
 use netkit_http::body::{Body, BoxBody, BoxError, Frame, SizeHint};
@@ -39,7 +40,7 @@ const NO_ROUTE: &str = "none";
 
 /// The `grpc-status` in a set of response headers or trailers, if valid.
 pub(crate) fn grpc_status(headers: &HeaderMap) -> Option<u8> {
-    let status: u8 = headers.get("grpc-status")?.to_str().ok()?.parse().ok()?;
+    let status: u8 = headers.get(GRPC_STATUS)?.to_str().ok()?.parse().ok()?;
     (status <= MAX_GRPC_STATUS).then_some(status)
 }
 

@@ -20,15 +20,16 @@ use crate::handler::State;
 use crate::handler::failure::{FailureKind, classify};
 use crate::handler::progress::{CountedBody, SendProgress};
 use crate::handler::record::RequestRecord;
-use crate::handler::request::{self, Forwarding};
+use crate::handler::request::{self, Forwarding, X_REQUEST_ID};
 use crate::handler::respond::Refusal;
 use crate::handler::retry::{self, Attempted};
 use crate::metrics::{PoolLabel, UpstreamDurationLabels, UpstreamErrorLabels, UpstreamLabels};
 use gfe_config::Scheme;
 use netkit_http::body::{self, Body, BoxBody, Incoming};
 use netkit_http::client::Scheme as ClientScheme;
+use netkit_http::header::STRICT_TRANSPORT_SECURITY;
 use netkit_http::uri::PathAndQuery;
-use netkit_http::{HeaderName, HeaderValue, Request, Response, Version};
+use netkit_http::{HeaderValue, Request, Response, Version};
 use netkit_load_balancing::{InflightGuard, Pool};
 use netkit_observability::Gauge;
 use std::sync::Arc;
@@ -287,12 +288,12 @@ pub(crate) fn to_client(
         && !hsts.is_empty()
         && let Ok(value) = HeaderValue::from_str(hsts)
     {
-        headers.insert(HeaderName::from_static("strict-transport-security"), value);
+        headers.insert(STRICT_TRANSPORT_SECURITY, value);
     }
-    if !headers.contains_key("x-request-id")
+    if !headers.contains_key(X_REQUEST_ID)
         && let Ok(id) = HeaderValue::from_str(request_id)
     {
-        headers.insert(HeaderName::from_static("x-request-id"), id);
+        headers.insert(X_REQUEST_ID, id);
     }
     Response::from_parts(head, body::boxed(content))
 }
