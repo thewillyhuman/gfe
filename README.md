@@ -122,7 +122,9 @@ this repository's.
 
 All numbers below were measured on one laptop (Apple M-series), where the
 load client and the mock backend compete with the node for the same cores:
-read them as relative costs and lower bounds, not as a tuned benchmark.
+read req/s and latencies as relative costs and lower bounds, not as a tuned
+benchmark. What isolates the node is its own CPU per request, which the
+load test prints with each row.
 
 ### Micro-benchmarks
 
@@ -141,13 +143,15 @@ route_table_compile/100   36.5 µs
 route_table_compile/1000   418 µs      (on reload only)
 ```
 
-**Backend selection (`netkit-load-balancing`, 20 backends)**:
+**Backend selection (`netkit-load-balancing`, 20 backends)** — a pool reads
+the health of each backend from a handle it took when it was built, so
+selecting looks nothing up:
 
 ```
-select_round_robin/20           800 ns
-select_weighted_round_robin/20  861 ns
-select_least_request/20        1.09 µs
-select_ring_hash/20            1.12 µs
+select_round_robin/20           167 ns
+select_weighted_round_robin/20  234 ns
+select_least_request/20         462 ns
+select_ring_hash/20             640 ns
 ring_build/20                   211 µs   (on reload only)
 hash64                         23.6 ns
 ```
@@ -159,59 +163,79 @@ tls13_full_handshake_ecdsa_p256   134 µs   (client and server sides, in one thr
 sni_cert_resolve                 38.1 ns   (certificate lookup per ClientHello)
 ```
 
-What they say: routing (48 ns) and selection (about 1 µs) are noise next to a
-full TLS handshake (134 µs for both sides; the server's share, an ECDSA
-signature and a key exchange, is what costs a serving core). Everything that
-grows with the size of the config (`route_table_compile`, `ring_build`) runs
-on reload, on a copy that is then swapped in, never on the path of a request.
+What they say: routing (48 ns) and selection (under a microsecond) are
+noise next to a full TLS handshake (134 µs for both sides in memory; the
+server's share, an ECDSA signature and a key exchange, is what costs a
+serving core). Everything that grows with the size of the config
+(`route_table_compile`, `ring_build`) runs on reload, on a copy that is then
+swapped in, never on the path of a request.
 
 ### End-to-end load test
 
 `hack/loadtest.sh` runs the **real `gfe-node` binary** on loopback in front of
-a mock backend (`gfe-loadtest`), one scenario after the other. `./hack/loadtest.sh 64 6`
-(64 connections, 6 s per scenario):
+a mock backend (`gfe-loadtest`), one scenario after the other, with the node
+set up as in production: its access log written to a file, an ECDSA P-256
+certificate on the HTTPS listener. Each row ends with the node's own CPU per
+request. `./hack/loadtest.sh 64 6` (64 connections, 6 s per scenario):
 
 ```
-scenario                          mode        result
-http  · fixed (GFE overhead)      keepalive   150342 req/s   p50 408µs  p99 819µs   errors=0
-http  · proxy (+upstream)         keepalive    66931 req/s   p50 925µs  p99 1.63ms  errors=0
-https · proxy (warm TLS)          keepalive    67906 req/s   p50 907µs  p99 1.62ms  errors=0
-https · proxy (new TLS/req, c=8)  reconnect    11173 req/s   p50 678µs  p99 1.14ms  errors=0
+scenario                              mode                result                                         node CPU
+http  · fixed (GFE overhead)          keepalive           145477 req/s   p50 418µs  p99 907µs   errors=0   33 µs/req
+http  · proxy (+upstream)             keepalive            73947 req/s   p50 842µs  p99 1.51ms  errors=0   69 µs/req
+https · proxy (warm TLS)              keepalive            72602 req/s   p50 855µs  p99 1.59ms  errors=0   69 µs/req
+https · proxy (resumed TLS/req, c=8)  reconnect            11613 req/s   p50 663µs  p99 925µs   errors=0  274 µs/req
+https · proxy (full TLS/req, c=8)     reconnect+full-tls   11644 req/s   p50 668µs  p99 916µs   errors=0  289 µs/req
 ```
 
 - **The node's own work is small.** Answering a request itself (routing and
-  a fixed response, no backend) runs at about 150k req/s on kept
-  connections.
-- **The hop to the backend is the main cost of a proxied request**, not TLS:
-  adding the backend roughly halves the throughput (150k → 67k), and TLS on
-  a connection that is already established costs nothing measurable.
-- **A new TLS connection per request runs at about 11k req/s with 8 client
-  workers.** The load client resumes its TLS sessions, so this row is the
-  price of a connection (TCP, a resumed handshake, one request), not of a
-  full handshake: a client that cannot resume pays the 134 µs above, most of
-  it on the node.
+  a fixed response, no backend) costs the node about 33 µs of CPU, its log
+  line included (the access log is 6 to 9 µs of any request), and runs at
+  about 145k req/s on kept connections.
+- **The hop to the backend is the main cost of a proxied request**, not
+  TLS: the backend doubles the CPU per request (33 → 69 µs) and halves the
+  throughput, and TLS on a connection that is already established costs
+  nothing measurable. Most of a proxied request's CPU goes to the kernel,
+  moving bytes on four sockets, and to the HTTP stack on both legs; GFE's
+  own code is a few microseconds of it.
+- **A new TLS connection per request costs the node about 280 µs**, of
+  which the handshake is a small part: a full TLS 1.3 handshake with a
+  P-256 certificate costs some 15 µs more than a resumed one, because
+  resumption still runs a key exchange. What a fresh connection costs is
+  the connection itself: accept, socket options, the TLS records, the
+  request, the close, its log line. An RSA-2048 certificate makes a full
+  handshake about 2.4 times as dear per connection (in a measurement with
+  `curl`, which does not resume: 930 µs against 390 µs).
 
-The released `v1.1.0`, run the same way on the same laptop minutes apart
-(each run started once loopback had no sockets left in `TIME_WAIT` from the
-one before), ran the four scenarios at 150,597, 67,940, 67,271 and 11,452
-req/s. Within the noise of such a measurement the two are the same.
+`v1.1.0`, measured by the earlier form of the load test (access log off,
+RSA certificate), ran within noise of this version's previous build on kept
+connections; the comparison is in the spec (Section 15).
 
 ### Sizing a node
 
 - **Clients that reuse connections** (keep-alive, HTTP/2: the normal case)
-  make a node request-bound, at tens of thousands of requests per second per
-  node on this laptop: the backends or the network saturate first.
-- **Clients that open a connection per request** make it handshake-bound.
-  This is the regime to size for, and why **session resumption** and
-  **ECDSA rather than RSA certificates** matter: an RSA-2048 signature costs
-  several times an ECDSA P-256 one, an RSA-4096 one far more.
+  make a node request-bound: at about 70 µs of CPU per proxied request, a
+  core serves some 14,000 of them per second, and the backends or the
+  network saturate first.
+- **Clients that open a connection per request** make it connection-bound:
+  at about 280 µs of CPU per connection, a core serves some 3,500 of them
+  per second with an ECDSA certificate, fewer than half that with RSA. This
+  is the regime to size for, and why **ECDSA rather than RSA certificates**
+  matter: an RSA-2048 signature costs several times an ECDSA P-256 one, an
+  RSA-4096 one far more. Session resumption saves the client a round trip
+  and the node little.
+- **Pooled upstream connections.** Leave `[upstream] idle_per_host` unset.
+  A cap below the requests in flight to a backend makes the pool close a
+  connection on every response beyond the cap and dial a new one for the
+  next request: with the earlier default of 32 and 64 concurrent clients,
+  that was some 1,200 connects per second to one backend and 6 to 8% of
+  the throughput.
 - **Large uploads and many idle connections** are bound by bytes and by
   memory, not by request rate: bodies are streamed, never buffered whole, and
   an idle TLS connection costs memory and a file descriptor (the unit sets
   `LimitNOFILE=1048576`; `max_connections` defaults to 100,000).
 
 Nodes are stateless, so capacity grows with their number: size a fleet so
-that it carries its peak with one node missing, by its **handshake rate**,
+that it carries its peak with one node missing, by its **connection rate**,
 its **concurrent connections** and its **bytes**, rather than by requests
 per second alone.
 

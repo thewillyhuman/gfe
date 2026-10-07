@@ -1170,14 +1170,16 @@ Building:
 
 - Rust 1.88 or later (edition 2024); clang on Linux, for the eBPF program.
 
-Throughput is the same within the noise of the measurement: `hack/loadtest.sh 64 6`, on one laptop (loopback; the load client and the mock backend share its cores), the two binaries run minutes apart, each run started once loopback had no sockets left in `TIME_WAIT` from the one before:
+Throughput on proxied requests over kept connections is 6 to 8% higher, from keeping every idle upstream connection (above); the rest is the same within the noise of the measurement. Measured by the earlier form of `hack/loadtest.sh 64 6` (the node's access log off, an RSA certificate), on one laptop (loopback; the load client and the mock backend share its cores), each run started once loopback had no sockets left in `TIME_WAIT` from the one before:
 
 | scenario | v1.1.0 | this version |
 |---|---|---|
-| http, fixed response, kept connections | 150,597 req/s | 150,342 req/s |
-| http, proxied, kept connections | 67,940 req/s | 66,931 req/s |
-| https, proxied, kept connections | 67,271 req/s | 67,906 req/s |
-| https, proxied, a new TLS connection per request (8 clients) | 11,452 req/s | 11,173 req/s |
+| http, fixed response, kept connections | 150,597 req/s | 148,278 req/s |
+| http, proxied, kept connections | 67,940 req/s | 73,755 req/s |
+| https, proxied, kept connections | 67,271 req/s | 73,571 req/s |
+| https, proxied, a new (resumed) TLS connection per request (8 clients) | 11,452 req/s | 11,915 req/s |
+
+The load test now runs the node as in production, access log on, and prints the node's CPU per request with each row: the README's numbers are those, not this table's.
 
 ---
 
