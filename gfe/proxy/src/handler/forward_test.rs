@@ -353,6 +353,31 @@ async fn retries_a_bodyless_get_once_against_another_backend() {
 }
 
 #[tokio::test]
+async fn a_retried_attempt_carries_the_headers_of_the_first() {
+    let closed = closed_port();
+    let up = describing_backend().await;
+    let (proxy, state) = forwarding(pool(Scheme::Http, &[closed, up])).await;
+
+    // Round robin: one of the two requests is tried on the closed port
+    // first and retried on the other backend; which one is not known.
+    let first = text(send(proxy, get("a.example.org", "/")).await).await;
+    let second = text(send(proxy, get("a.example.org", "/")).await).await;
+
+    assert!(exposes(
+        &state,
+        r#"gfe_upstream_retries_total{pool="pool"} "#
+    ));
+    for seen in [first, second] {
+        assert_eq!(header_line(&seen, "host"), Some("a.example.org"), "{seen}");
+        assert_eq!(
+            header_line(&seen, "x-forwarded-for"),
+            Some("127.0.0.1"),
+            "{seen}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn retries_once_only() {
     let closed = closed_port();
     let (proxy, state) = forwarding(pool(Scheme::Http, &[closed])).await;

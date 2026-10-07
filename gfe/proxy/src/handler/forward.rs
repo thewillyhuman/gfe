@@ -161,7 +161,14 @@ pub(crate) async fn forward(
         *attempt.method_mut() = head.method.clone();
         *attempt.version_mut() = version;
         *attempt.uri_mut() = path_and_query.clone().into();
-        *attempt.headers_mut() = head.headers.clone();
+        // Cloned only while another attempt may follow; the last one takes
+        // the headers, so a request that is not retried copies nothing.
+        let may_follow = replayable && attempts < retry::MAX_ATTEMPTS;
+        *attempt.headers_mut() = if may_follow {
+            head.headers.clone()
+        } else {
+            std::mem::take(&mut head.headers)
+        };
 
         let started = Instant::now();
         progress.attempt_started(started);
