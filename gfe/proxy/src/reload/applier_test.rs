@@ -4,7 +4,7 @@ use crate::reload::test_support::{cert_entry, http_listener};
 use gfe_config::{
     CertEntry, ListenerId, PoolId, Route, RouteAction, RouteId, Scheme, Upstream, UpstreamPool,
 };
-use netkit_health_checking::HealthStatus;
+use netkit_health_checking::{HealthMap, HealthStatus};
 
 fn pool(id: &str, backend: (&str, u16)) -> UpstreamPool {
     UpstreamPool {
@@ -45,7 +45,7 @@ fn config() -> DynamicConfig {
 fn install_swaps_routes_pools_and_certificates() {
     let state = state();
 
-    install(&state, prepare(&config()).unwrap());
+    install(&state, prepare(&config(), state.health()).unwrap());
 
     let routing = state.routing();
     assert_eq!(routing.routes.route_count(), 1);
@@ -57,7 +57,7 @@ fn install_swaps_routes_pools_and_certificates() {
 fn install_describes_the_config_in_the_metrics() {
     let state = state();
 
-    install(&state, prepare(&config()).unwrap());
+    install(&state, prepare(&config(), state.health()).unwrap());
 
     let exported = state.metrics().encode();
     for expected in [
@@ -85,9 +85,9 @@ fn install_stops_exporting_the_expiry_of_a_removed_certificate() {
         certificates: vec![cert_entry(&["new.example.org"])],
         ..old.clone()
     };
-    install(&state, prepare(&old).unwrap());
+    install(&state, prepare(&old, state.health()).unwrap());
 
-    install(&state, prepare(&new).unwrap());
+    install(&state, prepare(&new, state.health()).unwrap());
 
     let exported = state.metrics().encode();
     assert!(!exported.contains("old.example.org"), "{exported}");
@@ -97,16 +97,17 @@ fn install_stops_exporting_the_expiry_of_a_removed_certificate() {
 #[test]
 fn install_forgets_the_health_of_backends_no_longer_configured() {
     let state = state();
-    install(&state, prepare(&config()).unwrap());
+    install(&state, prepare(&config(), state.health()).unwrap());
     state.health().set("10.0.0.1", 80, HealthStatus::Unhealthy);
     let moved = DynamicConfig {
         pools: vec![pool("p", ("10.0.0.2", 80))],
         ..config()
     };
 
-    install(&state, prepare(&moved).unwrap());
+    install(&state, prepare(&moved, state.health()).unwrap());
 
-    assert!(state.health().is_empty());
+    assert_eq!(state.health().get("10.0.0.1", 80), HealthStatus::Unknown);
+    assert_eq!(state.health().len(), 1);
 }
 
 #[test]
@@ -122,7 +123,7 @@ fn prepare_rejects_a_certificate_that_cannot_be_loaded() {
         ..Default::default()
     };
 
-    let error = prepare(&config).unwrap_err();
+    let error = prepare(&config, &HealthMap::new(true)).unwrap_err();
 
     assert!(
         error.to_string().contains("/nonexistent/gfe.crt"),
@@ -144,7 +145,7 @@ fn prepare_rejects_an_invalid_config() {
         ..Default::default()
     };
 
-    let error = prepare(&config).unwrap_err();
+    let error = prepare(&config, &HealthMap::new(true)).unwrap_err();
 
     assert!(error.to_string().contains("missing"), "{error}");
 }
@@ -153,7 +154,7 @@ fn prepare_rejects_an_invalid_config() {
 fn prepare_changes_nothing_that_is_served() {
     let state = state();
 
-    prepare(&config()).unwrap();
+    prepare(&config(), state.health()).unwrap();
 
     assert_eq!(state.routing().routes.route_count(), 0);
     assert!(state.resolver().current().is_empty());

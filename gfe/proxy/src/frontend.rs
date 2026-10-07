@@ -12,6 +12,7 @@ use crate::kernel::{self, KernelView};
 use crate::metrics::GfeMetrics;
 use crate::reload::{self, CERT_POLL_INTERVAL, Controller, ReloadError};
 use gfe_config::{DynamicConfig, ListenerId, NodeConfig};
+use netkit_health_checking::HealthMap;
 use netkit_http::server::InvalidOptions;
 use netkit_listen::Drain;
 use netkit_tls::{Acceptor, TlsError};
@@ -153,9 +154,10 @@ impl Frontend {
 
     /// Check `config` the way a reload would before applying it: validate
     /// it, load its certificates, compile its routes and build its pools.
-    /// What `--check-config` runs. Its listeners are not bound.
+    /// What `--check-config` runs. Its listeners are not bound, and its
+    /// pools read a health map of their own, dropped with them.
     pub fn check(config: &DynamicConfig) -> Result<(), ReloadError> {
-        reload::prepare(config).map(drop)
+        reload::prepare(config, &HealthMap::new(true)).map(drop)
     }
 
     /// Whether the node drains: `/readyz` then fails.

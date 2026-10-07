@@ -56,7 +56,7 @@ fn swap_installs_routes_and_pools_together() {
 
     state.swap(
         RouteTable::compile(&config),
-        PoolSet::build(&crate::reload::pool_specs(&config.pools)).unwrap(),
+        PoolSet::build(&crate::reload::pool_specs(&config.pools), state.health()).unwrap(),
     );
 
     let routing = state.routing.load();

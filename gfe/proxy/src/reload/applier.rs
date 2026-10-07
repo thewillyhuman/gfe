@@ -6,6 +6,7 @@ use crate::metrics::SniLabel;
 use crate::reload::ReloadError;
 use crate::routing::RouteTable;
 use gfe_config::{CertEntry, DynamicConfig, LbPolicy, Scheme, UpstreamPool, validate};
+use netkit_health_checking::HealthMap;
 use netkit_load_balancing::{Backend, Policy, PoolSet, PoolSpec};
 use netkit_tls::{CertSpec, CertStore};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,17 +33,19 @@ impl std::fmt::Debug for Prepared {
 
 /// Do everything a reload does short of binding listeners and swapping
 /// anything in: validate the config, load its certificates, compile its
-/// routes and build its pools.
+/// routes and build its pools, which read their backends' health from
+/// `health` from then on (a backend it does not know yet is entered as
+/// unknown; that is all `prepare` touches).
 ///
 /// A config this accepts is one a reload accepts unless one of its
 /// listeners cannot be bound, so it is what `gfe-node --check-config` runs,
 /// and what a node runs before it touches any listening socket.
-pub fn prepare(config: &DynamicConfig) -> Result<Prepared, ReloadError> {
+pub fn prepare(config: &DynamicConfig, health: &HealthMap) -> Result<Prepared, ReloadError> {
     validate(config)?;
     Ok(Prepared {
         certificates: CertStore::build(&cert_specs(&config.certificates))?,
         routes: RouteTable::compile(config),
-        pools: PoolSet::build(&pool_specs(&config.pools))?,
+        pools: PoolSet::build(&pool_specs(&config.pools), health)?,
     })
 }
 

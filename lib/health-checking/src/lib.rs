@@ -13,6 +13,6 @@ mod probe;
 mod state_machine;
 
 pub use checker::{CheckSpec, CheckedPool, HealthChecker, HealthObserver};
-pub use health_map::{HealthMap, HealthStatus};
+pub use health_map::{HealthHandle, HealthMap, HealthStatus};
 pub use probe::{GrpcProbe, HttpProbe, Probe, ProbeKind, ProbeResult, TcpProbe, make_probe};
 pub use state_machine::BackendHealth;

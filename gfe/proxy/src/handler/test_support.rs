@@ -18,6 +18,7 @@ use gfe_config::{
     PoolId, Scheme, Upstream, UpstreamPool,
 };
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use netkit_health_checking::HealthMap;
 use netkit_http::body::{self, Body, BodyExt, BoxBody, Frame, Incoming};
 use netkit_http::server::{self, Options};
 use netkit_http::{Bytes, Request, Response};
@@ -234,10 +235,17 @@ pub(crate) fn pool_config(
     }
 }
 
-/// The pool `config` is built into.
-pub(crate) fn pool_of(config: UpstreamPool) -> Arc<Pool<Scheme>> {
-    let pools = PoolSet::build(&crate::reload::pool_specs(&[config])).unwrap();
+/// The pool `config` is built into, reading the health of its backends
+/// from `health`: a node's, for a test that marks a backend unhealthy.
+pub(crate) fn pool_reading(health: &HealthMap, config: UpstreamPool) -> Arc<Pool<Scheme>> {
+    let pools = PoolSet::build(&crate::reload::pool_specs(&[config]), health).unwrap();
     Arc::clone(pools.get("pool").unwrap())
+}
+
+/// The pool `config` is built into, every backend presumed healthy: it
+/// reads a health map of its own, which nothing probes.
+pub(crate) fn pool_of(config: UpstreamPool) -> Arc<Pool<Scheme>> {
+    pool_reading(&HealthMap::new(true), config)
 }
 
 /// A round-robin pool of `scheme` with one backend per address.

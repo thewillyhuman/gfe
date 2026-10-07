@@ -39,6 +39,16 @@ impl RequestHandler for Forwarder {
     }
 }
 
+/// A node with `state` forwarding to `pool`, its connections told they
+/// negotiated `tls`.
+async fn forwarding_from(
+    state: Arc<State>,
+    pool: Arc<Pool<Scheme>>,
+    tls: Option<TlsInfo>,
+) -> SocketAddr {
+    serve(Arc::new(Forwarder { state, pool }), tls).await
+}
+
 /// A node configured by `config` forwarding to `pool`, its connections
 /// told they negotiated `tls`.
 async fn forwarding_with(
@@ -47,11 +57,8 @@ async fn forwarding_with(
     tls: Option<TlsInfo>,
 ) -> (SocketAddr, Arc<State>) {
     let state = state_with(config);
-    let forwarder = Forwarder {
-        state: Arc::clone(&state),
-        pool,
-    };
-    (serve(Arc::new(forwarder), tls).await, state)
+    let proxy = forwarding_from(Arc::clone(&state), pool, tls).await;
+    (proxy, state)
 }
 
 /// A node with a default config forwarding to `pool` over cleartext.
@@ -886,7 +893,12 @@ async fn a_grpc_call_to_an_https_backend_without_alpn_fails_as_other() {
 #[tokio::test]
 async fn answers_503_when_no_backend_is_healthy() {
     let backend = describing_backend().await;
-    let (proxy, state) = forwarding(pool(Scheme::Http, &[backend])).await;
+    let state = state();
+    let pool = pool_reading(
+        state.health(),
+        pool_config(Scheme::Http, LbPolicy::RoundRobin, &[backend], None),
+    );
+    let proxy = forwarding_from(Arc::clone(&state), pool, None).await;
     state
         .health()
         .set("127.0.0.1", backend.port(), HealthStatus::Unhealthy);
@@ -902,7 +914,17 @@ async fn answers_503_when_no_backend_is_healthy() {
 async fn a_draining_backend_gets_no_new_request() {
     let draining = describing_backend().await;
     let serving = backend(|_request| async { Response::new(body::full("serving")) }).await;
-    let (proxy, state) = forwarding(pool(Scheme::Http, &[draining, serving])).await;
+    let state = state();
+    let pool = pool_reading(
+        state.health(),
+        pool_config(
+            Scheme::Http,
+            LbPolicy::RoundRobin,
+            &[draining, serving],
+            None,
+        ),
+    );
+    let proxy = forwarding_from(Arc::clone(&state), pool, None).await;
     state
         .health()
         .set("127.0.0.1", draining.port(), HealthStatus::Draining);

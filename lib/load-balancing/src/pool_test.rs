@@ -24,15 +24,19 @@ fn backends(count: u8, weight: u32) -> Vec<Backend> {
         .collect()
 }
 
-/// The single pool `p` built from `config`.
-fn build(config: PoolSpec<()>) -> Arc<Pool<()>> {
-    PoolSet::build(&[config]).unwrap().get("p").unwrap().clone()
+/// The single pool `p` built from `config`, reading `health`.
+fn build(config: PoolSpec<()>, health: &HealthMap) -> Arc<Pool<()>> {
+    PoolSet::build(&[config], health)
+        .unwrap()
+        .get("p")
+        .unwrap()
+        .clone()
 }
 
 fn pool_admitting(max_in_flight: Option<u32>) -> Arc<Pool<()>> {
     let mut config = pool_with(Policy::RoundRobin);
     config.max_in_flight = max_in_flight.and_then(NonZeroU32::new);
-    build(config)
+    build(config, &HealthMap::new(true))
 }
 
 const POLICIES: [Policy; 3] = [Policy::RoundRobin, Policy::LeastRequest, Policy::RingHash];
@@ -73,7 +77,7 @@ fn a_pool_hands_back_the_payload_it_was_built_with() {
         payload: "https",
     };
 
-    let set = PoolSet::build(&[spec]).unwrap();
+    let set = PoolSet::build(&[spec], &HealthMap::new(true)).unwrap();
 
     assert_eq!(set.get("p").unwrap().payload(), &"https");
 }
@@ -84,7 +88,9 @@ fn ring_hash_pool_with_too_many_ring_points_is_refused() {
     let mut pool = pool_with(Policy::RingHash);
     pool.backends = backends(7, 1000);
 
-    let err = PoolSet::build(&[pool]).err().unwrap();
+    let err = PoolSet::build(&[pool], &HealthMap::new(true))
+        .err()
+        .unwrap();
 
     assert!(matches!(
         &err,
@@ -102,7 +108,7 @@ fn ring_hash_pool_with_exactly_the_maximum_of_ring_points_is_built() {
     pool.backends = backends(7, 1000);
     pool.backends[6].weight = 250;
 
-    assert!(PoolSet::build(&[pool]).is_ok());
+    assert!(PoolSet::build(&[pool], &HealthMap::new(true)).is_ok());
 }
 
 #[test]
@@ -110,7 +116,7 @@ fn round_robin_pool_with_the_same_weights_is_built() {
     let mut pool = pool_with(Policy::RoundRobin);
     pool.backends = backends(7, 1000);
 
-    assert!(PoolSet::build(&[pool]).is_ok());
+    assert!(PoolSet::build(&[pool], &HealthMap::new(true)).is_ok());
 }
 
 #[test]
@@ -119,7 +125,7 @@ fn a_pool_set_is_refused_when_one_of_its_pools_is() {
     big.id = "big".into();
     big.backends = backends(7, 1000);
 
-    let err = PoolSet::build(&[pool_with(Policy::RoundRobin), big]).err();
+    let err = PoolSet::build(&[pool_with(Policy::RoundRobin), big], &HealthMap::new(true)).err();
 
     assert!(err.unwrap().to_string().contains("pool big"));
 }
@@ -129,7 +135,11 @@ fn a_pool_set_finds_its_pools_by_id() {
     let mut other = pool_with(Policy::LeastRequest);
     other.id = "q".into();
 
-    let set = PoolSet::build(&[pool_with(Policy::RoundRobin), other]).unwrap();
+    let set = PoolSet::build(
+        &[pool_with(Policy::RoundRobin), other],
+        &HealthMap::new(true),
+    )
+    .unwrap();
 
     assert_eq!(set.len(), 2);
     assert!(!set.is_empty());
@@ -139,7 +149,7 @@ fn a_pool_set_finds_its_pools_by_id() {
 
 #[test]
 fn an_empty_pool_set_is_empty() {
-    let set = PoolSet::<()>::build(&[]).unwrap();
+    let set = PoolSet::<()>::build(&[], &HealthMap::new(true)).unwrap();
 
     assert!(set.is_empty());
     assert_eq!(set.len(), 0);
@@ -154,7 +164,11 @@ fn all_backends_lists_every_backend_of_every_pool() {
         port: 8443,
         weight: 1,
     }];
-    let set = PoolSet::build(&[pool_with(Policy::RoundRobin), other]).unwrap();
+    let set = PoolSet::build(
+        &[pool_with(Policy::RoundRobin), other],
+        &HealthMap::new(true),
+    )
+    .unwrap();
 
     let mut all = set.all_backends();
     all.sort();
@@ -219,10 +233,10 @@ fn without_max_in_flight_admits_every_request() {
 
 #[test]
 fn round_robin_alternates() {
-    let p = build(pool_with(Policy::RoundRobin));
     let h = HealthMap::new(true);
-    let a = p.select(&h, None).unwrap().backend.host;
-    let b = p.select(&h, None).unwrap().backend.host;
+    let p = build(pool_with(Policy::RoundRobin), &h);
+    let a = p.select(None).unwrap().backend.host;
+    let b = p.select(None).unwrap().backend.host;
     assert_ne!(a, b);
 }
 
@@ -230,12 +244,12 @@ fn round_robin_alternates() {
 fn round_robin_with_the_same_weights_visits_each_backend_once_per_cycle() {
     let mut config = pool_with(Policy::RoundRobin);
     config.backends = backends(5, 2);
-    let p = build(config);
     let h = HealthMap::new(true);
+    let p = build(config, &h);
 
     for _ in 0..3 {
         let mut cycle: Vec<String> = (0..5)
-            .map(|_| p.select(&h, None).unwrap().backend.host)
+            .map(|_| p.select(None).unwrap().backend.host)
             .collect();
         cycle.sort();
         assert_eq!(
@@ -250,12 +264,12 @@ fn weighted_round_robin_distribution() {
     let mut config = pool_with(Policy::RoundRobin);
     config.backends[0].weight = 1;
     config.backends[1].weight = 3;
-    let p = build(config);
     let h = HealthMap::new(true);
+    let p = build(config, &h);
 
     let n = 20_000;
     let b = (0..n)
-        .filter(|_| p.select(&h, None).unwrap().backend.host == "10.0.0.2")
+        .filter(|_| p.select(None).unwrap().backend.host == "10.0.0.2")
         .count();
 
     // Weights 1:3 → ~25% / ~75%; the pick is random, so allow a tolerance
@@ -276,12 +290,12 @@ fn round_robin_with_every_weight_zero_still_selects() {
         port: 80,
         weight: 1,
     });
-    let p = build(config);
     let h = HealthMap::new(true);
+    let p = build(config, &h);
     h.set("10.0.0.3", 80, HealthStatus::Unhealthy);
 
-    let a = p.select(&h, None).unwrap().backend.host;
-    let b = p.select(&h, None).unwrap().backend.host;
+    let a = p.select(None).unwrap().backend.host;
+    let b = p.select(None).unwrap().backend.host;
 
     assert_ne!(a, b);
 }
@@ -290,29 +304,29 @@ fn round_robin_with_every_weight_zero_still_selects() {
 
 #[test]
 fn least_request_prefers_idle() {
-    let p = build(pool_with(Policy::LeastRequest));
     let h = HealthMap::new(true);
-    let first = p.select(&h, None).unwrap();
+    let p = build(pool_with(Policy::LeastRequest), &h);
+    let first = p.select(None).unwrap();
     let busy = first.backend.host.clone();
-    let second = p.select(&h, None).unwrap();
+    let second = p.select(None).unwrap();
     assert_ne!(second.backend.host, busy);
 }
 
 #[test]
 fn least_request_counts_a_request_until_its_guard_drops() {
-    let p = build(pool_with(Policy::LeastRequest));
     let h = HealthMap::new(true);
-    let first = p.select(&h, None).unwrap();
-    let second = p.select(&h, None).unwrap();
+    let p = build(pool_with(Policy::LeastRequest), &h);
+    let first = p.select(None).unwrap();
+    let second = p.select(None).unwrap();
     let (freed, still_busy) = (first.backend.host.clone(), second.backend.host.clone());
 
     // Both backends have one in flight; finishing the first request leaves
     // its backend with none, so it is picked next, every time.
     drop(first);
-    let third = p.select(&h, None).unwrap();
+    let third = p.select(None).unwrap();
     assert_eq!(third.backend.host, freed);
     drop(third);
-    let fourth = p.select(&h, None).unwrap();
+    let fourth = p.select(None).unwrap();
     assert_eq!(fourth.backend.host, freed);
     assert_ne!(fourth.backend.host, still_busy);
 }
@@ -321,12 +335,12 @@ fn least_request_counts_a_request_until_its_guard_drops() {
 fn least_request_divides_the_load_by_the_weight() {
     let mut config = pool_with(Policy::LeastRequest);
     config.backends[1].weight = 3;
-    let p = build(config);
     let h = HealthMap::new(true);
+    let p = build(config, &h);
 
     // Held, never finished: a weight-3 backend takes three requests for every
     // one of a weight-1 backend.
-    let held: Vec<Selection> = (0..8).map(|_| p.select(&h, None).unwrap()).collect();
+    let held: Vec<Selection> = (0..8).map(|_| p.select(None).unwrap()).collect();
 
     let on_heavy = held.iter().filter(|s| s.backend.host == "10.0.0.2").count();
     assert_eq!(on_heavy, 6);
@@ -336,11 +350,11 @@ fn least_request_divides_the_load_by_the_weight() {
 
 #[test]
 fn ring_hash_is_sticky() {
-    let p = build(pool_with(Policy::RingHash));
     let h = HealthMap::new(true);
+    let p = build(pool_with(Policy::RingHash), &h);
     let key = Some(hash64("client-x"));
-    let a = p.select(&h, key).unwrap().backend.host;
-    let b = p.select(&h, key).unwrap().backend.host;
+    let a = p.select(key).unwrap().backend.host;
+    let b = p.select(key).unwrap().backend.host;
     assert_eq!(a, b, "same key sticks to same backend");
 }
 
@@ -348,41 +362,41 @@ fn ring_hash_is_sticky() {
 fn ring_hash_falls_to_another_backend_while_the_owner_is_unhealthy_and_back_after() {
     let mut config = pool_with(Policy::RingHash);
     config.backends = backends(5, 1);
-    let p = build(config);
     let h = HealthMap::new(true);
+    let p = build(config, &h);
     let key = Some(hash64("client-x"));
-    let owner = p.select(&h, key).unwrap().backend;
+    let owner = p.select(key).unwrap().backend;
 
     h.set(&owner.host, owner.port, HealthStatus::Unhealthy);
-    let fallback = p.select(&h, key).unwrap().backend;
+    let fallback = p.select(key).unwrap().backend;
     assert_ne!(fallback, owner);
     assert_eq!(
-        p.select(&h, key).unwrap().backend,
+        p.select(key).unwrap().backend,
         fallback,
         "the fallback is sticky too"
     );
 
     h.set(&owner.host, owner.port, HealthStatus::Healthy);
-    assert_eq!(p.select(&h, key).unwrap().backend, owner);
+    assert_eq!(p.select(key).unwrap().backend, owner);
 }
 
 #[test]
 fn ring_hash_without_a_key_selects_a_backend() {
-    let p = build(pool_with(Policy::RingHash));
     let h = HealthMap::new(true);
+    let p = build(pool_with(Policy::RingHash), &h);
 
-    assert!(p.select(&h, None).is_some());
+    assert!(p.select(None).is_some());
 }
 
 #[test]
 fn ring_hash_with_every_weight_zero_falls_back_to_round_robin() {
     let mut config = pool_with(Policy::RingHash);
     config.backends = backends(2, 0);
-    let p = build(config);
     let h = HealthMap::new(true);
+    let p = build(config, &h);
 
-    let a = p.select(&h, Some(1)).unwrap().backend.host;
-    let b = p.select(&h, Some(1)).unwrap().backend.host;
+    let a = p.select(Some(1)).unwrap().backend.host;
+    let b = p.select(Some(1)).unwrap().backend.host;
 
     assert_ne!(a, b);
 }
@@ -391,11 +405,11 @@ fn ring_hash_with_every_weight_zero_falls_back_to_round_robin() {
 
 #[test]
 fn skips_unhealthy() {
-    let p = build(pool_with(Policy::RoundRobin));
     let h = HealthMap::new(true);
+    let p = build(pool_with(Policy::RoundRobin), &h);
     h.set("10.0.0.1", 80, HealthStatus::Unhealthy);
     for _ in 0..4 {
-        assert_eq!(p.select(&h, None).unwrap().backend.host, "10.0.0.2");
+        assert_eq!(p.select(None).unwrap().backend.host, "10.0.0.2");
     }
 }
 
@@ -404,13 +418,13 @@ fn no_policy_selects_an_unhealthy_or_draining_backend() {
     for policy in POLICIES {
         let mut config = pool_with(policy);
         config.backends = backends(3, 1);
-        let p = build(config);
         let h = HealthMap::new(true);
+        let p = build(config, &h);
         h.set("10.0.0.1", 80, HealthStatus::Unhealthy);
         h.set("10.0.0.2", 80, HealthStatus::Draining);
 
         for key in 0..50 {
-            let host = p.select(&h, Some(hash64(key))).unwrap().backend.host;
+            let host = p.select(Some(hash64(key))).unwrap().backend.host;
             assert_eq!(host, "10.0.0.3", "{policy:?}");
         }
     }
@@ -419,20 +433,20 @@ fn no_policy_selects_an_unhealthy_or_draining_backend() {
 #[test]
 fn none_when_all_unhealthy() {
     for policy in POLICIES {
-        let p = build(pool_with(policy));
         let h = HealthMap::new(true);
+        let p = build(pool_with(policy), &h);
         h.set("10.0.0.1", 80, HealthStatus::Unhealthy);
         h.set("10.0.0.2", 80, HealthStatus::Draining);
 
-        assert!(p.select(&h, Some(1)).is_none(), "{policy:?}");
+        assert!(p.select(Some(1)).is_none(), "{policy:?}");
     }
 }
 
 #[test]
 fn none_when_no_backend_has_been_found_healthy_yet_and_unknown_is_not_trusted() {
-    let p = build(pool_with(Policy::RoundRobin));
     let h = HealthMap::new(false);
-    assert!(p.select(&h, None).is_none());
+    let p = build(pool_with(Policy::RoundRobin), &h);
+    assert!(p.select(None).is_none());
 }
 
 #[test]
@@ -440,24 +454,32 @@ fn none_for_a_pool_without_backends() {
     for policy in POLICIES {
         let mut config = pool_with(policy);
         config.backends.clear();
-        let p = build(config);
+        let p = build(config, &HealthMap::new(true));
 
-        assert!(
-            p.select(&HealthMap::new(true), Some(1)).is_none(),
-            "{policy:?}"
-        );
+        assert!(p.select(Some(1)).is_none(), "{policy:?}");
+    }
+}
+
+#[test]
+fn a_backend_unhealthy_before_the_pool_is_built_is_skipped() {
+    let h = HealthMap::new(true);
+    h.set("10.0.0.1", 80, HealthStatus::Unhealthy);
+    let p = build(pool_with(Policy::RoundRobin), &h);
+
+    for _ in 0..4 {
+        assert_eq!(p.select(None).unwrap().backend.host, "10.0.0.2");
     }
 }
 
 #[test]
 fn selection_follows_the_health_map_as_it_changes() {
-    let p = build(pool_with(Policy::RoundRobin));
     let h = HealthMap::new(true);
+    let p = build(pool_with(Policy::RoundRobin), &h);
 
     h.set("10.0.0.1", 80, HealthStatus::Unhealthy);
-    assert_eq!(p.select(&h, None).unwrap().backend.host, "10.0.0.2");
+    assert_eq!(p.select(None).unwrap().backend.host, "10.0.0.2");
 
     h.set("10.0.0.1", 80, HealthStatus::Healthy);
     h.set("10.0.0.2", 80, HealthStatus::Draining);
-    assert_eq!(p.select(&h, None).unwrap().backend.host, "10.0.0.1");
+    assert_eq!(p.select(None).unwrap().backend.host, "10.0.0.1");
 }

@@ -132,7 +132,7 @@ pub(crate) async fn forward(
 
     let mut attempts = 0;
     loop {
-        let Some(selection) = pool.select(state.health(), hash_key) else {
+        let Some(selection) = pool.select(hash_key) else {
             metrics.no_healthy_upstream.inc();
             return Err(Refusal::NoHealthyUpstream.into());
         };

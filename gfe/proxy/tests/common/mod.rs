@@ -101,7 +101,7 @@ impl Proxy {
             .swap(CertStore::build(&cert_specs(&cfg.certificates)).expect("certificates load"));
         state.swap(
             RouteTable::compile(cfg),
-            PoolSet::build(&pool_specs(&cfg.pools)).expect("pools build"),
+            PoolSet::build(&pool_specs(&cfg.pools), state.health()).expect("pools build"),
         );
         let proxy = Arc::new(handler::Proxy::new(Arc::clone(&state)));
         let options = http_options(&node);

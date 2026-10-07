@@ -4,7 +4,7 @@
 
 use crate::PoolError;
 use crate::policy::{MAX_RING_POINTS, Policy, RING_REPLICAS, build_ring, ring_pick, weighted_pick};
-use netkit_health_checking::HealthMap;
+use netkit_health_checking::{HealthHandle, HealthMap};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -92,6 +92,9 @@ pub struct Pool<T> {
     counter: AtomicUsize,
     /// In-flight request counters, aligned with `backends` (least_request).
     inflight: Vec<Arc<AtomicUsize>>,
+    /// The health of each backend, aligned with `backends`: taken from the
+    /// health map once, read on every selection.
+    health: Vec<Arc<HealthHandle>>,
     /// Consistent-hash ring (only built for `ring_hash`).
     ring: Vec<(u64, usize)>,
     /// `true` when all backend weights are equal — lets `round_robin` use the
@@ -106,9 +109,10 @@ pub struct Pool<T> {
 }
 
 impl<T: Clone> Pool<T> {
-    /// Fails if the pool is a `ring_hash` pool whose ring would hold more
-    /// than [`MAX_RING_POINTS`] points.
-    fn new(p: &PoolSpec<T>) -> Result<Pool<T>, PoolError> {
+    /// A pool reading its backends' health from `health`. Fails if the pool
+    /// is a `ring_hash` pool whose ring would hold more than
+    /// [`MAX_RING_POINTS`] points.
+    fn new(p: &PoolSpec<T>, health: &HealthMap) -> Result<Pool<T>, PoolError> {
         let inflight = p
             .backends
             .iter()
@@ -128,6 +132,11 @@ impl<T: Clone> Pool<T> {
         } else {
             Vec::new()
         };
+        let health = p
+            .backends
+            .iter()
+            .map(|b| health.handle(&b.host, b.port))
+            .collect();
         let first_weight = p.backends.first().map(|b| b.weight).unwrap_or(1);
         let uniform_weights = p.backends.iter().all(|b| b.weight == first_weight);
         Ok(Pool {
@@ -137,6 +146,7 @@ impl<T: Clone> Pool<T> {
             payload: p.payload.clone(),
             counter: AtomicUsize::new(0),
             inflight,
+            health,
             ring,
             uniform_weights,
             in_flight: Arc::new(AtomicUsize::new(0)),
@@ -201,23 +211,21 @@ impl<T> Pool<T> {
             .expect("non-empty")
     }
 
-    fn healthy_indices(&self, health: &HealthMap) -> Vec<usize> {
+    fn healthy_indices(&self) -> Vec<usize> {
         (0..self.backends.len())
-            .filter(|&i| {
-                let b = &self.backends[i];
-                health.is_selectable(&b.host, b.port)
-            })
+            .filter(|&i| self.health[i].is_selectable())
             .collect()
     }
 
     /// Select one healthy backend, or `None` if the pool has none.
     ///
-    /// `health` is consulted on every call, so a backend that turns
-    /// unhealthy or draining stops receiving new requests at once, without a
-    /// rebuild of the pool. `hash_key` is the request's affinity key for
-    /// `ring_hash` (`None` hashes as 0); the other policies ignore it.
-    pub fn select(&self, health: &HealthMap, hash_key: Option<u64>) -> Option<Selection> {
-        let healthy = self.healthy_indices(health);
+    /// The health of every backend is read on every call, from the map the
+    /// pool was built against, so a backend that turns unhealthy or
+    /// draining stops receiving new requests at once, without a rebuild of
+    /// the pool. `hash_key` is the request's affinity key for `ring_hash`
+    /// (`None` hashes as 0); the other policies ignore it.
+    pub fn select(&self, hash_key: Option<u64>) -> Option<Selection> {
+        let healthy = self.healthy_indices();
         if healthy.is_empty() {
             return None;
         }
@@ -263,14 +271,15 @@ impl<T> Default for PoolSet<T> {
 }
 
 impl<T: Clone> PoolSet<T> {
-    /// Build a pool set from `pools`. Fails, naming the pool, if one of them
+    /// Build a pool set from `pools`, each reading its backends' health
+    /// from `health` from then on. Fails, naming the pool, if one of them
     /// cannot be built: a `ring_hash` pool whose ring would hold more than
     /// [`MAX_RING_POINTS`] points. Of two pools with the same id, the last
     /// one is kept.
-    pub fn build(pools: &[PoolSpec<T>]) -> Result<Self, PoolError> {
+    pub fn build(pools: &[PoolSpec<T>], health: &HealthMap) -> Result<Self, PoolError> {
         let mut map = HashMap::new();
         for p in pools {
-            map.insert(p.id.clone(), Arc::new(Pool::new(p)?));
+            map.insert(p.id.clone(), Arc::new(Pool::new(p, health)?));
         }
         Ok(PoolSet { pools: map })
     }

@@ -231,7 +231,7 @@ impl Reloader {
     /// replaced in between is seen as changed by the next poll.
     fn apply(&self, config: &DynamicConfig, tracked: &mut Tracked) -> Result<(), ReloadError> {
         tracked.cert_files = CertFiles::snapshot(&cert_specs(&config.certificates));
-        let prepared = prepare(config)?;
+        let prepared = prepare(config, self.state.health())?;
         let staged = self
             .listeners
             .stage(&config.listeners)

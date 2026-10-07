@@ -1198,7 +1198,7 @@ Each third-party crate is named, in the `[dependencies]` of a manifest, by the c
 | Config serialization | `serde` + `toml` + `serde_json` | `gfe-config` (`serde_json` also `gfe-proxy`, for the last-known-good cache) | TOML bootstrap, JSON dynamic config |
 | File watching | `notify` | `gfe-proxy` | inotify-based hot reload |
 | Atomic config swap | `arc-swap` | `gfe-proxy`, `netkit-tls`, `netkit-listen` | Lock-free snapshot reads on the hot path |
-| Concurrent maps | `dashmap` | `netkit-health-checking`, `netkit-dns` | The health map and the address cache, read from the data plane |
+| Concurrent maps | `dashmap` | `netkit-health-checking`, `netkit-dns` | The health map (written by the checker; a pool takes a handle per backend when it is built and reads that on each request) and the address cache, read from the data plane |
 | Metrics | `prometheus-client` | `netkit-observability` | Direct Prometheus exposition; the metric types are re-exported |
 | Logging | `tracing` (all); `tracing-subscriber` + `tracing-appender` | `netkit-observability` | Structured events; a writer thread so the log never blocks |
 | eBPF | a C program built with clang; `aya` to load it | `netkit-kernel` | Pure-Rust loader, no libbpf, static musl builds keep working |

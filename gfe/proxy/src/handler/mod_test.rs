@@ -56,7 +56,7 @@ async fn proxy_with(config: &DynamicConfig, tls: Option<TlsInfo>) -> (SocketAddr
     let state = state();
     state.swap(
         RouteTable::compile(config),
-        PoolSet::build(&crate::reload::pool_specs(&config.pools)).unwrap(),
+        PoolSet::build(&crate::reload::pool_specs(&config.pools), state.health()).unwrap(),
     );
     let address = serve(Arc::new(Proxy::new(Arc::clone(&state))), tls).await;
     (address, state)
