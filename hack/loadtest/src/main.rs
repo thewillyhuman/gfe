@@ -1,12 +1,14 @@
 //! `gfe-loadtest`: a self-contained end-to-end load harness for GFE.
 //!
-//! Two subcommands:
+//! Three subcommands:
 //!   * `upstream`: a fast mock backend returning a fixed body.
 //!   * `run`: a concurrent load client measuring req/s and latency.
+//!   * `compare`: whether a run made the node slower than a base run.
 //!
 //! Not a runtime component; a development tool. See hack/loadtest.sh.
 
 mod client;
+mod compare;
 mod cpu;
 mod outcome;
 mod tls;
@@ -62,6 +64,20 @@ enum Cmd {
         #[arg(long, value_name = "FILE")]
         json_out: Option<PathBuf>,
     },
+    /// Compare the outcomes of a run with those of a base run, scenario
+    /// by scenario, on the node's CPU per request; fail when one is
+    /// slower than the base by more than the tolerance.
+    Compare {
+        /// The outcomes of the base run, as `run --json-out` wrote them.
+        #[arg(long, value_name = "FILE")]
+        base: PathBuf,
+        /// The outcomes of the run under test.
+        #[arg(long, value_name = "FILE")]
+        head: PathBuf,
+        /// How much slower than the base, in percent, a scenario may be.
+        #[arg(long, default_value_t = 10.0, value_name = "PERCENT")]
+        tolerance: f64,
+    },
 }
 
 fn main() -> Result<()> {
@@ -95,6 +111,22 @@ fn main() -> Result<()> {
                 println!("{outcome}");
                 if let Some(path) = json_out {
                     outcome.append_to(&path)?;
+                }
+                Ok(())
+            }
+            Cmd::Compare {
+                base,
+                head,
+                tolerance,
+            } => {
+                let comparison = compare::Comparison::of(
+                    &outcome::Outcome::read_all(&base)?,
+                    &outcome::Outcome::read_all(&head)?,
+                    tolerance,
+                );
+                print!("{comparison}");
+                if !comparison.passed() {
+                    std::process::exit(1);
                 }
                 Ok(())
             }

@@ -68,6 +68,18 @@ impl Outcome {
         self.cpu_us_per_request = Some(per_request);
     }
 
+    /// Every outcome of `path`, one JSON line each, in order.
+    pub fn read_all(path: &Path) -> Result<Vec<Outcome>> {
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        text.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str(line).with_context(|| format!("in {}", path.display()))
+            })
+            .collect()
+    }
+
     /// Append this outcome to `path` as one JSON line, creating the file.
     pub fn append_to(&self, path: &Path) -> Result<()> {
         let mut file = OpenOptions::new()

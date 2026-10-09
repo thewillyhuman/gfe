@@ -70,6 +70,19 @@ fn outcomes_are_appended_to_a_file_as_one_json_line_each() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(lines, vec![first, second]);
+    assert_eq!(lines, vec![first.clone(), second.clone()]);
+    assert_eq!(Outcome::read_all(&path).unwrap(), vec![first, second]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_file_that_is_not_outcomes_is_rejected() {
+    let dir = std::env::temp_dir().join(format!("gfe-loadtest-bad-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("outcomes.jsonl");
+    std::fs::write(&path, "{\"label\": \"a\"}\n").unwrap();
+
+    assert!(Outcome::read_all(&path).is_err());
+    assert!(Outcome::read_all(&dir.join("missing.jsonl")).is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
