@@ -226,9 +226,12 @@ A change does not raise the node's CPU per request on any scenario of the
 end-to-end load test by more than 10% against the commit it is based on,
 and finishes every scenario with no error. Proven by `hack/loadtest.sh`
 run against a base commit (`./hack/loadtest.sh --against <ref>`), which
-fails when a scenario regresses beyond that tolerance; the
-micro-benchmarks (`cargo bench`) compared against a saved baseline show
-where in the node it happened.
+fails when a scenario regresses beyond that tolerance, and which the
+`perf` workflow (`.github/workflows/perf.yml`) runs on every pull request
+against its base, allowing 15% on a shared runner. The same workflow runs
+the micro-benchmarks (`cargo bench`) of both commits, which say where in
+the node a regression happened, and fails on a bench slower by more than
+a quarter.
 
 ## R16. The build is sound
 

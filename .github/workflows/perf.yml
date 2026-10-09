@@ -1,0 +1,92 @@
+name: perf
+
+# Whether a pull request makes the node slower, measured against the
+# commit it is based on, on the same runner, in the same run: absolute
+# numbers belong to a machine, a difference between two builds does not.
+#
+#   * micro-benchmarks (criterion): each bench of the base, then the same
+#     bench of the head against it. Runners are shared and noisy, so only
+#     a bench that is slower by more than a quarter fails the job; the
+#     table is in the log for anything smaller.
+#   * the end-to-end load test: `hack/loadtest.sh --against <base>`, the
+#     real binary of each commit, two rounds each, compared on the node's
+#     CPU per request. A scenario slower by more than 15% fails the job
+#     (10% is the tolerance on a quiet machine; a shared runner gets some
+#     more).
+#
+# Only on pull requests: a push to main has nothing to compare with.
+
+on:
+  pull_request:
+
+concurrency:
+  group: perf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  BASE: ${{ github.event.pull_request.base.sha }}
+
+jobs:
+  benchmarks:
+    name: micro-benchmarks against the base
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The base commit has to be in the clone, to be built.
+          fetch-depth: 0
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install the build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends clang
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      # Each bench target is named: `cargo bench --workspace` would also run
+      # the unit tests of every crate in bench mode, which do not take
+      # criterion's arguments.
+      - name: Benchmark the base
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          git checkout --quiet "$BASE"
+          for target in "gfe-proxy routing" "netkit-load-balancing selection" "netkit-tls handshake"; do
+            set -- $target
+            cargo bench --locked -p "$1" --bench "$2" -- --save-baseline base
+          done
+          git checkout --quiet "$head"
+      - name: Benchmark the head against it
+        run: |
+          set -euo pipefail
+          for target in "gfe-proxy routing" "netkit-load-balancing selection" "netkit-tls handshake"; do
+            set -- $target
+            cargo bench --locked -p "$1" --bench "$2" -- --baseline base --noise-threshold 0.10
+          done 2>&1 | tee benchmarks.txt
+      - name: Fail on a bench slower by more than a quarter
+        # criterion prints, under a bench's name, its change against the
+        # baseline as `change: [low mid high]` and then its verdict.
+        run: |
+          awk '
+            /^[^ ]/ { name = $1 }
+            /change: \[/ { mid = $3; sub(/%/, "", mid) }
+            /Performance has regressed/ && mid + 0 > 25 { print name " is slower by " mid "%"; slower = 1 }
+            END { exit slower }
+          ' benchmarks.txt
+
+  load-test:
+    name: load test against the base
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install the build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends clang
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      # 32 connections and 5 s per scenario: the runner has four cores for
+      # the node, the load client and the mock backend together.
+      - name: hack/loadtest.sh --against the base
+        run: ./hack/loadtest.sh --against "$BASE" --tolerance 15 32 5
