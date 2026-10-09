@@ -55,22 +55,76 @@ impl fmt::Display for RateLimited {
 
 impl Error for RateLimited {}
 
+/// What a bucket holds, and as of when: the arithmetic of a token bucket,
+/// without its rate and burst, so that whoever keeps a level per key keeps
+/// those once.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Level {
+    /// Permits held, in [`UNITS_PER_PERMIT`]ths.
+    units: u64,
+    /// When the level was last refilled; `None` until it is first asked.
+    refilled_at: Option<Instant>,
+}
+
+impl Level {
+    /// A full level: `burst` permits.
+    pub(crate) fn full(burst: u32) -> Level {
+        Level {
+            units: u64::from(burst) * UNITS_PER_PERMIT,
+            refilled_at: None,
+        }
+    }
+
+    /// Add what the time between the last call and `now` earns at
+    /// `per_second`, up to `burst`. A `now` earlier than a previous one
+    /// earns nothing and does not move the level's time back.
+    pub(crate) fn refill(&mut self, now: Instant, per_second: u32, burst: u32) {
+        let elapsed = self
+            .refilled_at
+            .map_or(Duration::ZERO, |then| now.saturating_duration_since(then));
+        if self.refilled_at.is_none_or(|then| now > then) {
+            self.refilled_at = Some(now);
+        }
+        let full = u64::from(burst) * UNITS_PER_PERMIT;
+        // A second earns `per_second` permits, so a nanosecond earns
+        // `per_second` billionths of one: units are billionths.
+        let earned = elapsed.as_nanos() * u128::from(per_second);
+        let units = u128::from(self.units) + earned;
+        self.units = u64::try_from(units).map_or(full, |units| units.min(full));
+    }
+
+    /// Take one permit, as of `now`, unless the level is empty once
+    /// refilled.
+    pub(crate) fn take(
+        &mut self,
+        now: Instant,
+        per_second: u32,
+        burst: u32,
+    ) -> Result<(), RateLimited> {
+        self.refill(now, per_second, burst);
+        match self.units.checked_sub(UNITS_PER_PERMIT) {
+            Some(left) => {
+                self.units = left;
+                Ok(())
+            }
+            None => Err(RateLimited { per_second, burst }),
+        }
+    }
+
+    /// Whether the level holds every one of `burst` permits, as of its last
+    /// refill: nothing has been taken from it that time has not given back.
+    pub(crate) fn is_full(&self, burst: u32) -> bool {
+        self.units == u64::from(burst) * UNITS_PER_PERMIT
+    }
+}
+
 /// So many permits per second, of which up to `burst` may be taken at once.
 /// It starts full. Safe to share between threads.
 #[derive(Debug)]
 pub struct TokenBucket {
     per_second: u32,
     burst: u32,
-    state: Mutex<State>,
-}
-
-/// What a bucket holds, and as of when.
-#[derive(Debug)]
-struct State {
-    /// Permits held, in [`UNITS_PER_PERMIT`]ths.
-    units: u64,
-    /// When the bucket was last refilled; `None` until it is first asked.
-    refilled_at: Option<Instant>,
+    level: Mutex<Level>,
 }
 
 impl TokenBucket {
@@ -86,10 +140,7 @@ impl TokenBucket {
         Ok(TokenBucket {
             per_second,
             burst,
-            state: Mutex::new(State {
-                units: u64::from(burst) * UNITS_PER_PERMIT,
-                refilled_at: None,
-            }),
+            level: Mutex::new(Level::full(burst)),
         })
     }
 
@@ -99,36 +150,10 @@ impl TokenBucket {
     /// its burst. A `now` earlier than a previous one refills nothing and
     /// does not move the bucket's time back.
     pub fn try_acquire(&self, now: Instant) -> Result<(), RateLimited> {
-        // The state is consistent between any two statements, so a panic
+        // The level is consistent between any two statements, so a panic
         // elsewhere while it was held leaves nothing to repair.
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let elapsed = state
-            .refilled_at
-            .map_or(Duration::ZERO, |then| now.saturating_duration_since(then));
-        if state.refilled_at.is_none_or(|then| now > then) {
-            state.refilled_at = Some(now);
-        }
-        state.units = self.refilled(state.units, elapsed);
-        match state.units.checked_sub(UNITS_PER_PERMIT) {
-            Some(left) => {
-                state.units = left;
-                Ok(())
-            }
-            None => Err(RateLimited {
-                per_second: self.per_second,
-                burst: self.burst,
-            }),
-        }
-    }
-
-    /// `units` after `elapsed` of refilling, at most a full bucket.
-    fn refilled(&self, units: u64, elapsed: Duration) -> u64 {
-        let full = u64::from(self.burst) * UNITS_PER_PERMIT;
-        // A second earns `per_second` permits, so a nanosecond earns
-        // `per_second` billionths of one: units are billionths.
-        let earned = elapsed.as_nanos() * u128::from(self.per_second);
-        let units = u128::from(units) + earned;
-        u64::try_from(units).map_or(full, |units| units.min(full))
+        let mut level = self.level.lock().unwrap_or_else(PoisonError::into_inner);
+        level.take(now, self.per_second, self.burst)
     }
 }
 

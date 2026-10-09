@@ -200,7 +200,8 @@ The crates:
 ├── netkit-rate-limiting/            # lib/rate-limiting
 │   └── src/
 │       ├── concurrency.rs           # A cap on how many of something are in use
-│       └── token_bucket.rs          # A cap on how often something happens
+│       ├── token_bucket.rs          # A cap on how often something happens
+│       └── keyed_buckets.rs         # The same per key, bounded in how many keys
 │
 ├── netkit-listen/                   # lib/listen
 │   └── src/
