@@ -52,3 +52,24 @@ fn cpu_of_a_run_that_answered_nothing_is_zero_not_infinite() {
 
     assert_eq!(outcome.cpu_us_per_request, Some(0.0));
 }
+
+#[test]
+fn outcomes_are_appended_to_a_file_as_one_json_line_each() {
+    let dir = std::env::temp_dir().join(format!("gfe-loadtest-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("outcomes.jsonl");
+    let mut first = Outcome::measure("a", "keepalive", &mut [1_000, 2_000], 0, 1.0);
+    first.charge_cpu(Duration::from_micros(100));
+    let second = Outcome::measure("b", "reconnect", &mut [], 2, 1.0);
+
+    first.append_to(&path).unwrap();
+    second.append_to(&path).unwrap();
+
+    let lines: Vec<Outcome> = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(lines, vec![first, second]);
+    std::fs::remove_dir_all(dir).unwrap();
+}

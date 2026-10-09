@@ -14,6 +14,7 @@ mod upstream;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -56,6 +57,10 @@ enum Cmd {
         /// reports: user and system time, over the run.
         #[arg(long, value_name = "PID")]
         cpu_of: Option<u32>,
+        /// Also append the outcome to this file as one JSON line, for
+        /// `compare`.
+        #[arg(long, value_name = "FILE")]
+        json_out: Option<PathBuf>,
     },
 }
 
@@ -75,6 +80,7 @@ fn main() -> Result<()> {
                 no_resume,
                 label,
                 cpu_of,
+                json_out,
             } => {
                 let scenario = client::Scenario {
                     target: Arc::new(client::parse_target(&target)?),
@@ -85,7 +91,11 @@ fn main() -> Result<()> {
                     label,
                     cpu_of,
                 };
-                println!("{}", client::run(&scenario).await?);
+                let outcome = client::run(&scenario).await?;
+                println!("{outcome}");
+                if let Some(path) = json_out {
+                    outcome.append_to(&path)?;
+                }
                 Ok(())
             }
         }

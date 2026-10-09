@@ -9,9 +9,20 @@
 # benchmark; the node's CPU per request, printed with each row, is what
 # isolates the node from the two processes it shares the cores with.
 #
-# Usage: ./hack/loadtest.sh [connections] [duration_secs]
+# Usage: ./hack/loadtest.sh [--out FILE] [connections] [duration_secs]
+#
+#   --out FILE   also append each row to FILE as one JSON line, which
+#                `gfe-loadtest compare` reads
 set -euo pipefail
 
+OUT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out) OUT="$2"; shift 2 ;;
+    --*) echo "unknown option: $1" >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
 CONNS="${1:-64}"
 DUR="${2:-6}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -104,7 +115,8 @@ done
 scenario() {
   local label="$1"
   shift
-  "$LT" run --duration-secs "$DUR" --label "$label" --cpu-of "$NODE_PID" "$@"
+  "$LT" run --duration-secs "$DUR" --label "$label" --cpu-of "$NODE_PID" \
+    ${OUT:+--json-out "$OUT"} "$@"
 }
 
 # Connection churn leaves loopback sockets in TIME_WAIT, which exhausts the

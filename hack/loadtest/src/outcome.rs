@@ -1,10 +1,16 @@
-//! What a scenario measured, and the row it is reported on.
+//! What a scenario measured, the row it is reported on, and the JSON line
+//! it is kept as for a later comparison.
 
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::Path;
 use std::time::Duration;
 
 /// What one scenario of the load client measured.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Outcome {
     /// The scenario's name, as printed on its row.
     pub label: String,
@@ -60,6 +66,18 @@ impl Outcome {
             requests => cpu.as_secs_f64() * 1e6 / requests as f64,
         };
         self.cpu_us_per_request = Some(per_request);
+    }
+
+    /// Append this outcome to `path` as one JSON line, creating the file.
+    pub fn append_to(&self, path: &Path) -> Result<()> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("opening {}", path.display()))?;
+        serde_json::to_writer(&mut file, self)?;
+        file.write_all(b"\n")?;
+        Ok(())
     }
 }
 
