@@ -1,6 +1,7 @@
 //! What a scenario measured, and the row it is reported on.
 
 use std::fmt;
+use std::time::Duration;
 
 /// What one scenario of the load client measured.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,6 +21,9 @@ pub struct Outcome {
     /// Attempts that failed: a connection refused, a handshake that did
     /// not complete, a status that was not a success.
     pub errors: u64,
+    /// The CPU a process of interest (the node) spent per answered
+    /// request, in microseconds, when the run was told which process.
+    pub cpu_us_per_request: Option<f64>,
 }
 
 impl Outcome {
@@ -44,7 +48,18 @@ impl Outcome {
             p99_us: percentile_us(latencies, 0.99),
             max_us: percentile_us(latencies, 1.0),
             errors,
+            cpu_us_per_request: None,
         }
+    }
+
+    /// Charge `cpu`, the CPU time a process spent during the run, to the
+    /// answered requests.
+    pub fn charge_cpu(&mut self, cpu: Duration) {
+        let per_request = match self.requests {
+            0 => 0.0,
+            requests => cpu.as_secs_f64() * 1e6 / requests as f64,
+        };
+        self.cpu_us_per_request = Some(per_request);
     }
 }
 
@@ -72,7 +87,11 @@ impl fmt::Display for Outcome {
             self.p99_us,
             self.max_us,
             self.errors
-        )
+        )?;
+        if let Some(cpu) = self.cpu_us_per_request {
+            write!(f, "  cpu={cpu:.0}µs/req")?;
+        }
+        Ok(())
     }
 }
 

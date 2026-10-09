@@ -42,10 +42,49 @@ fn the_mode_names_a_full_handshake_per_request_only_over_tls() {
         reconnect,
         resume,
         label: String::new(),
+        cpu_of: None,
     };
 
     assert_eq!(over("http://h/", false, true).mode(), "keepalive");
     assert_eq!(over("http://h/", true, false).mode(), "reconnect");
     assert_eq!(over("https://h/", true, true).mode(), "reconnect");
     assert_eq!(over("https://h/", true, false).mode(), "reconnect+full-tls");
+}
+
+#[tokio::test]
+async fn charges_the_cpu_of_the_named_process_to_the_requests() {
+    let server = spawn_server_closing_after_each_response().await;
+    let scenario = Scenario {
+        target: Arc::new(parse_target(&format!("http://{server}/")).unwrap()),
+        connections: 2,
+        duration: Duration::from_millis(100),
+        reconnect: true,
+        resume: true,
+        label: "cpu".into(),
+        cpu_of: Some(std::process::id()),
+    };
+
+    let outcome = run(&scenario).await.unwrap();
+
+    assert!(outcome.requests > 0);
+    assert!(
+        outcome.cpu_us_per_request.is_some_and(|cpu| cpu > 0.0),
+        "{outcome}"
+    );
+}
+
+#[tokio::test]
+async fn a_process_that_does_not_exist_fails_the_run() {
+    let server = spawn_server_closing_after_each_response().await;
+    let scenario = Scenario {
+        target: Arc::new(parse_target(&format!("http://{server}/")).unwrap()),
+        connections: 1,
+        duration: Duration::from_millis(10),
+        reconnect: false,
+        resume: true,
+        label: "cpu".into(),
+        cpu_of: Some(u32::MAX),
+    };
+
+    assert!(run(&scenario).await.is_err());
 }

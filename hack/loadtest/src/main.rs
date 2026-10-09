@@ -7,6 +7,7 @@
 //! Not a runtime component; a development tool. See hack/loadtest.sh.
 
 mod client;
+mod cpu;
 mod outcome;
 mod tls;
 mod upstream;
@@ -51,6 +52,10 @@ enum Cmd {
         /// Label for the printed result row.
         #[arg(long, default_value = "")]
         label: String,
+        /// A process (the node) whose CPU per answered request the row
+        /// reports: user and system time, over the run.
+        #[arg(long, value_name = "PID")]
+        cpu_of: Option<u32>,
     },
 }
 
@@ -69,6 +74,7 @@ fn main() -> Result<()> {
                 mode,
                 no_resume,
                 label,
+                cpu_of,
             } => {
                 let scenario = client::Scenario {
                     target: Arc::new(client::parse_target(&target)?),
@@ -77,8 +83,9 @@ fn main() -> Result<()> {
                     reconnect: mode == "reconnect",
                     resume: !no_resume,
                     label,
+                    cpu_of,
                 };
-                println!("{}", client::run(&scenario).await);
+                println!("{}", client::run(&scenario).await?);
                 Ok(())
             }
         }

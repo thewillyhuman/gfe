@@ -51,6 +51,8 @@ pub struct Scenario {
     pub resume: bool,
     /// The scenario's name on its row.
     pub label: String,
+    /// A process whose CPU per answered request the outcome reports.
+    pub cpu_of: Option<u32>,
 }
 
 impl Scenario {
@@ -67,7 +69,8 @@ impl Scenario {
 }
 
 /// Drive the scenario's connections until its deadline and measure them.
-pub async fn run(scenario: &Scenario) -> Outcome {
+pub async fn run(scenario: &Scenario) -> Result<Outcome> {
+    let cpu_before = scenario.cpu_of.map(crate::cpu::cpu_time).transpose()?;
     let connector = scenario
         .target
         .tls
@@ -98,13 +101,17 @@ pub async fn run(scenario: &Scenario) -> Outcome {
     }
     let elapsed = started.elapsed().as_secs_f64();
 
-    Outcome::measure(
+    let mut outcome = Outcome::measure(
         &scenario.label,
         &scenario.mode(),
         &mut latencies,
         errors,
         elapsed,
-    )
+    );
+    if let (Some(pid), Some(before)) = (scenario.cpu_of, cpu_before) {
+        outcome.charge_cpu(crate::cpu::cpu_time(pid)?.saturating_sub(before));
+    }
+    Ok(outcome)
 }
 
 /// One connection reused for many sequential requests until the deadline. A

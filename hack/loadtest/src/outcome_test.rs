@@ -33,3 +33,22 @@ fn the_row_aligns_its_columns() {
         "http · fixed                           keepalive  reqs=2                  2 req/s  p50=     2.5µs p90=     2.5µs p99=      2.5µs max=      2.5µs errors=0"
     );
 }
+
+#[test]
+fn cpu_is_charged_per_answered_request() {
+    let mut outcome = Outcome::measure("x", "keepalive", &mut [1_000; 4], 0, 1.0);
+
+    outcome.charge_cpu(Duration::from_micros(200));
+
+    assert_eq!(outcome.cpu_us_per_request, Some(50.0));
+    assert!(outcome.to_string().ends_with("errors=0  cpu=50µs/req"));
+}
+
+#[test]
+fn cpu_of_a_run_that_answered_nothing_is_zero_not_infinite() {
+    let mut outcome = Outcome::measure("x", "keepalive", &mut [], 3, 1.0);
+
+    outcome.charge_cpu(Duration::from_secs(1));
+
+    assert_eq!(outcome.cpu_us_per_request, Some(0.0));
+}

@@ -99,29 +99,12 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
-# The node's CPU time so far, user and system together, in seconds: from
-# /proc on Linux (10 ms resolution), from ps elsewhere.
-node_cpu_seconds() {
-  if [ -r "/proc/$NODE_PID/stat" ]; then
-    awk -v tck="$(getconf CLK_TCK)" '{ print ($14 + $15) / tck }' "/proc/$NODE_PID/stat"
-  else
-    ps -p "$NODE_PID" -o cputime= |
-      awk -F: '{ print (NF == 3 ? $1 * 3600 + $2 * 60 + $3 : $1 * 60 + $2) }'
-  fi
-}
-
 # Run one scenario (its label, then the load client's arguments) and print
-# its row, with the node's CPU per request appended.
+# its row, which ends with the node's CPU per request.
 scenario() {
   local label="$1"
   shift
-  local before after row requests
-  before=$(node_cpu_seconds)
-  row=$("$LT" run --duration-secs "$DUR" --label "$label" "$@")
-  after=$(node_cpu_seconds)
-  requests=$(sed -E 's/.*reqs=([0-9]+).*/\1/' <<<"$row")
-  awk -v row="$row" -v a="$after" -v b="$before" -v n="$requests" \
-    'BEGIN { printf "%s  node_cpu=%.0fµs/req\n", row, (n > 0 ? (a - b) * 1e6 / n : 0) }'
+  "$LT" run --duration-secs "$DUR" --label "$label" --cpu-of "$NODE_PID" "$@"
 }
 
 # Connection churn leaves loopback sockets in TIME_WAIT, which exhausts the
