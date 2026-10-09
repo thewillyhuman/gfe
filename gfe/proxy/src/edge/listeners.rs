@@ -58,6 +58,7 @@ impl<H: RequestHandler> Listeners<H> {
         let limits = Limits {
             max_connections: shared.limits().max_connections,
             max_connections_per_listener: shared.limits().max_connections_listener,
+            connections_per_peer: None,
         };
         let drain_deadline = shared.timeouts().drain_deadline;
         Listeners {

@@ -1,6 +1,7 @@
 use super::*;
-use crate::accept::Limit;
+use crate::accept::{Limit, PeerRate};
 use crate::test_support::{PATIENCE, Record, Recorder, closed_soon};
+use std::num::{NonZeroU32, NonZeroUsize};
 use tokio::net::TcpStream;
 
 type Set = Listeners<&'static str, Recorder<&'static str>>;
@@ -11,7 +12,28 @@ fn generous() -> Limits {
     Limits {
         max_connections: 100,
         max_connections_per_listener: 100,
+        connections_per_peer: None,
     }
+}
+
+/// `generous`, with each peer allowed one new connection a second, and
+/// `tracked_peers` peers followed at once.
+fn one_per_peer(tracked_peers: usize) -> Limits {
+    Limits {
+        connections_per_peer: Some(PeerRate {
+            per_second: NonZeroU32::new(1).unwrap(),
+            burst: NonZeroU32::new(1).unwrap(),
+            tracked_peers: NonZeroUsize::new(tracked_peers).unwrap(),
+        }),
+        ..generous()
+    }
+}
+
+/// A dual-stack wildcard address whose port was free a moment ago: a
+/// client reaches it as `127.0.0.1` or as `::1`.
+fn free_dual_stack_addr() -> SocketAddr {
+    let probe = std::net::TcpListener::bind("[::]:0").unwrap();
+    probe.local_addr().unwrap()
 }
 
 /// An empty set whose connections are held until their clients close
@@ -235,6 +257,7 @@ async fn each_listener_has_a_cap_of_its_own() {
     let limits = Limits {
         max_connections: 100,
         max_connections_per_listener: 1,
+        connections_per_peer: None,
     };
     let (listeners, mut record, _drain) = listeners_with(limits);
     let (one, other) = (free_addr(), free_addr());
@@ -259,6 +282,7 @@ async fn the_total_cap_spans_every_listener() {
     let limits = Limits {
         max_connections: 1,
         max_connections_per_listener: 100,
+        connections_per_peer: None,
     };
     let (listeners, mut record, _drain) = listeners_with(limits);
     let (one, other) = (free_addr(), free_addr());
@@ -272,6 +296,85 @@ async fn the_total_cap_spans_every_listener() {
         record.next_refused().await,
         ("other", Limit::MaxConnections)
     );
+}
+
+#[tokio::test]
+async fn a_peer_is_rated_across_every_listener() {
+    let (listeners, mut record, _drain) = listeners_with(one_per_peer(100));
+    let (one, other) = (free_addr(), free_addr());
+    reconcile(&listeners, &[(one, "one"), (other, "other")]);
+
+    let _first = TcpStream::connect(one).await.unwrap();
+    record.next_accepted().await;
+    let mut beyond = TcpStream::connect(other).await.unwrap();
+
+    assert_eq!(
+        record.next_refused().await,
+        ("other", Limit::ConnectionsPerPeer)
+    );
+    assert!(closed_soon(&mut beyond).await);
+    assert_eq!(listeners.open_connections(), 1);
+}
+
+#[tokio::test]
+async fn a_peer_is_the_same_on_an_ipv4_and_a_dual_stack_listener() {
+    let (listeners, mut record, _drain) = listeners_with(one_per_peer(100));
+    let (v4, dual) = (free_addr(), free_dual_stack_addr());
+    reconcile(&listeners, &[(v4, "v4"), (dual, "dual")]);
+
+    let _first = TcpStream::connect(v4).await.unwrap();
+    record.next_accepted().await;
+    // The same client, seen by the dual-stack socket as `::ffff:127.0.0.1`.
+    let _beyond = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], dual.port())))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.next_refused().await,
+        ("dual", Limit::ConnectionsPerPeer)
+    );
+}
+
+#[tokio::test]
+async fn peers_are_rated_apart() {
+    let (listeners, mut record, _drain) = listeners_with(one_per_peer(100));
+    let dual = free_dual_stack_addr();
+    reconcile(&listeners, &[(dual, "dual")]);
+
+    let _v4 = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], dual.port())))
+        .await
+        .unwrap();
+    let _v6 = TcpStream::connect(SocketAddr::from((
+        std::net::Ipv6Addr::LOCALHOST,
+        dual.port(),
+    )))
+    .await
+    .unwrap();
+    record.next_accepted().await;
+    record.next_accepted().await;
+
+    assert_eq!(listeners.open_connections(), 2);
+    assert_eq!(listeners.untracked_connections(), 0);
+}
+
+#[tokio::test]
+async fn a_peer_beyond_the_tracked_ones_is_served_uncounted() {
+    let (listeners, mut record, _drain) = listeners_with(one_per_peer(1));
+    let dual = free_dual_stack_addr();
+    reconcile(&listeners, &[(dual, "dual")]);
+    let _tracked = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], dual.port())))
+        .await
+        .unwrap();
+    record.next_accepted().await;
+
+    let v6 = SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, dual.port()));
+    let _first = TcpStream::connect(v6).await.unwrap();
+    let _second = TcpStream::connect(v6).await.unwrap();
+    record.next_accepted().await;
+    record.next_accepted().await;
+
+    assert_eq!(listeners.open_connections(), 3);
+    assert_eq!(listeners.untracked_connections(), 2);
 }
 
 #[tokio::test]

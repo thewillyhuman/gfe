@@ -17,8 +17,9 @@
 //! # The life of an accepted connection
 //!
 //! Each listening socket has an accept loop. A connection it accepts is
-//! counted under the [`Limits`]: one over the total or the per-listener cap
-//! is closed at once and reported to [`Serve::refused`]. Every other one is
+//! counted under the [`Limits`]: one over the total or the per-listener cap,
+//! or from a peer opening connections faster than its [`PeerRate`], is
+//! closed at once and reported to [`Serve::refused`]. Every other one is
 //! handed to [`Serve::serve`] in a task of its own, as an [`Accepted`]: the
 //! stream, both addresses, the listener's `T` as it is now, and the drain
 //! signal. What happens on the connection (TLS, HTTP, timeouts, logs,
@@ -67,7 +68,7 @@ mod metered;
 #[cfg(test)]
 mod test_support;
 
-pub use accept::{Accepted, Limit, Limits, Serve, serve_plain};
+pub use accept::{Accepted, Limit, Limits, PeerRate, Serve, serve_plain};
 pub use drain::Drain;
 pub use keep_alive::keep_alive;
 pub use listeners::{Drained, Listeners, Staged};

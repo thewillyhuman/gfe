@@ -4,14 +4,15 @@
 //!
 //! What is done with a connection is the caller's ([`Serve`]): this module
 //! does not read from it, write to it, time it out or account for it. It
-//! only decides whether the connection may be served at all, and when the
-//! serving is over.
+//! only decides whether the connection may be served at all ([`Admission`]),
+//! and when the serving is over.
 
 use arc_swap::ArcSwap;
-use netkit_rate_limiting::{ConcurrencyLimit, Permit};
-use std::net::SocketAddr;
+use netkit_rate_limiting::{ConcurrencyLimit, KeyedBuckets, Permit};
+use std::net::{IpAddr, SocketAddr};
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Notify, watch};
 
@@ -20,20 +21,44 @@ use tokio::sync::{Notify, watch};
 /// otherwise spin the loop on a core and flood the log.
 const ACCEPT_ERROR_PAUSE: Duration = Duration::from_millis(100);
 
-/// How many connections may be open at once.
+/// How many connections may be open at once, and how fast one peer may
+/// open them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
     /// Over all the listeners of a set.
     pub max_connections: usize,
     /// On any one listener.
     pub max_connections_per_listener: usize,
+    /// How fast any one peer address may open connections, over all the
+    /// listeners of a set; `None` for no cap.
+    pub connections_per_peer: Option<PeerRate>,
+}
+
+/// How fast one peer address may open connections. An IPv4 peer is the
+/// same peer on an IPv4 socket and on a dual-stack one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PeerRate {
+    /// Connections a peer may open per second.
+    pub per_second: NonZeroU32,
+    /// Connections a peer that has been quiet may open at once.
+    pub burst: NonZeroU32,
+    /// The most peers whose rate is followed at once. Beyond it, peers that
+    /// have been quiet long enough to be at their burst again are forgotten,
+    /// and when none can be, a new peer's connection is served without
+    /// counting (see [`Listeners::untracked_connections`]).
+    ///
+    /// [`Listeners::untracked_connections`]: crate::Listeners::untracked_connections
+    pub tracked_peers: NonZeroUsize,
 }
 
 /// Which of the [`Limits`] a refused connection ran into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Limit {
-    /// [`Limits::max_connections`]. Checked first: a connection over both
-    /// limits is reported under this one.
+    /// [`Limits::connections_per_peer`]: the peer opened connections faster
+    /// than it may. Checked first.
+    ConnectionsPerPeer,
+    /// [`Limits::max_connections`]. Checked before the per-listener limit: a
+    /// connection over both is reported under this one.
     MaxConnections,
     /// [`Limits::max_connections_per_listener`].
     MaxConnectionsPerListener,
@@ -110,6 +135,66 @@ impl OpenConnections {
     }
 }
 
+/// What a set of listeners admits connections under: the caps shared by
+/// all of them, and the one each listener applies to its own connections.
+#[derive(Debug, Clone)]
+pub(crate) struct Admission {
+    pub(crate) open: Arc<OpenConnections>,
+    max_per_listener: usize,
+    /// A bucket per peer address, in canonical form, shared by every
+    /// listener.
+    peer_rate: Option<Arc<KeyedBuckets<IpAddr>>>,
+}
+
+impl Admission {
+    pub(crate) fn new(limits: Limits) -> Self {
+        Admission {
+            open: OpenConnections::new(limits.max_connections),
+            max_per_listener: limits.max_connections_per_listener,
+            peer_rate: limits.connections_per_peer.map(|rate| {
+                Arc::new(KeyedBuckets::new(
+                    rate.per_second,
+                    rate.burst,
+                    rate.tracked_peers,
+                ))
+            }),
+        }
+    }
+
+    /// Connections served without counting against their peer's rate,
+    /// because as many peers as may be were already followed. Always 0
+    /// without a per-peer rate.
+    pub(crate) fn untracked_connections(&self) -> u64 {
+        self.peer_rate.as_ref().map_or(0, |rate| rate.untracked())
+    }
+
+    /// Whether a connection from `peer`, on a listener whose connections
+    /// `on_this_listener` counts, may be served now: its places under the
+    /// caps, or the cap it ran into.
+    fn admit(
+        &self,
+        peer: IpAddr,
+        on_this_listener: &Arc<ConcurrencyLimit>,
+    ) -> Result<(Permit, Permit), Limit> {
+        if let Some(rate) = &self.peer_rate
+            && rate
+                .try_acquire(peer.to_canonical(), Instant::now())
+                .is_err()
+        {
+            return Err(Limit::ConnectionsPerPeer);
+        }
+        let total = self
+            .open
+            .limit
+            .try_acquire()
+            .map_err(|_| Limit::MaxConnections)?;
+        let here = on_this_listener
+            .try_acquire()
+            .map_err(|_| Limit::MaxConnectionsPerListener)?;
+        Ok((total, here))
+    }
+}
+
 /// A connection's place under both caps, given back when the connection's
 /// task ends, however it ends.
 struct Slot {
@@ -139,9 +224,10 @@ async fn cut_signalled(cut: &mut watch::Receiver<bool>) {
 /// `listener` is what the caller attached to the socket, read anew for
 /// every connection, so that it can change while the socket stays bound.
 ///
-/// `open` bounds the connections open across all listeners; a limit of its
-/// own bounds this listener's (`max_per_listener`). When either is reached
-/// the connection is closed at once and reported to `serve`.
+/// `admission` holds the caps shared with the other listeners of the set
+/// (the connections open across all of them, how fast a peer may open
+/// them) and the cap on this listener's own. A connection over any of them
+/// is closed at once and reported to `serve`.
 ///
 /// The loop only ever waits in `accept` or in the pause after an accept
 /// error, so aborting its task closes the socket without dropping an
@@ -150,8 +236,7 @@ pub(crate) async fn run_listener<T, S>(
     serve: Arc<S>,
     listener: Arc<ArcSwap<T>>,
     socket: Arc<TcpListener>,
-    open: Arc<OpenConnections>,
-    max_per_listener: usize,
+    admission: Admission,
     mut drain: watch::Receiver<bool>,
     cut: watch::Receiver<bool>,
 ) where
@@ -159,7 +244,7 @@ pub(crate) async fn run_listener<T, S>(
     S: Serve<T>,
 {
     let bound = socket.local_addr();
-    let on_this_listener = ConcurrencyLimit::new(Some(max_per_listener));
+    let on_this_listener = ConcurrencyLimit::new(Some(admission.max_per_listener));
     loop {
         let accepted = tokio::select! {
             _ = drain.wait_for(|draining| *draining) => break,
@@ -176,14 +261,7 @@ pub(crate) async fn run_listener<T, S>(
             }
         };
 
-        let permits = match open.limit.try_acquire() {
-            Err(_) => Err(Limit::MaxConnections),
-            Ok(total) => match on_this_listener.try_acquire() {
-                Err(_) => Err(Limit::MaxConnectionsPerListener),
-                Ok(here) => Ok((total, here)),
-            },
-        };
-        let permits = match permits {
+        let permits = match admission.admit(peer.ip(), &on_this_listener) {
             Ok(permits) => permits,
             Err(limit) => {
                 tracing::debug!(%peer, ?limit, "connection over a limit, closed");
@@ -196,7 +274,7 @@ pub(crate) async fn run_listener<T, S>(
         };
         let slot = Slot {
             permits: Some(permits),
-            open: Arc::clone(&open),
+            open: Arc::clone(&admission.open),
         };
 
         let local = stream
@@ -252,8 +330,11 @@ pub async fn serve_plain<T, S>(
         serve,
         Arc::new(ArcSwap::from_pointee(listener)),
         socket,
-        OpenConnections::new(max_connections),
-        max_connections,
+        Admission::new(Limits {
+            max_connections,
+            max_connections_per_listener: max_connections,
+            connections_per_peer: None,
+        }),
         drain,
         never_cut,
     )

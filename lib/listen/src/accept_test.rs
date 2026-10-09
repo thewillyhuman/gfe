@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_support::{PATIENCE, Recorder, closed_soon};
+use std::num::{NonZeroU32, NonZeroUsize};
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 
@@ -20,15 +21,15 @@ async fn accepting<S: Serve<&'static str>>(serve: Arc<S>, limits: Limits) -> Run
     let socket = Arc::new(TcpListener::bind("127.0.0.1:0").await.unwrap());
     let addr = socket.local_addr().unwrap();
     let listener = Arc::new(ArcSwap::from_pointee("web"));
-    let open = OpenConnections::new(limits.max_connections);
+    let admission = Admission::new(limits);
+    let open = Arc::clone(&admission.open);
     let (drain, drain_rx) = watch::channel(false);
     let (cut, cut_rx) = watch::channel(false);
     let accept_loop = tokio::spawn(run_listener(
         serve,
         Arc::clone(&listener),
         socket,
-        Arc::clone(&open),
-        limits.max_connections_per_listener,
+        admission,
         drain_rx,
         cut_rx,
     ));
@@ -46,6 +47,20 @@ fn generous() -> Limits {
     Limits {
         max_connections: 100,
         max_connections_per_listener: 100,
+        connections_per_peer: None,
+    }
+}
+
+/// `generous`, with each peer allowed `per_second` new connections a
+/// second and as many at once.
+fn per_peer(per_second: u32) -> Limits {
+    Limits {
+        connections_per_peer: Some(PeerRate {
+            per_second: NonZeroU32::new(per_second).unwrap(),
+            burst: NonZeroU32::new(per_second).unwrap(),
+            tracked_peers: NonZeroUsize::new(100).unwrap(),
+        }),
+        ..generous()
     }
 }
 
@@ -70,6 +85,7 @@ async fn a_connection_over_the_per_listener_limit_is_closed_and_reported() {
     let limits = Limits {
         max_connections: 100,
         max_connections_per_listener: 1,
+        connections_per_peer: None,
     };
     let running = accepting(serve, limits).await;
     let _served = TcpStream::connect(running.addr).await.unwrap();
@@ -89,6 +105,7 @@ async fn a_connection_over_the_total_limit_is_closed_and_reported() {
     let limits = Limits {
         max_connections: 1,
         max_connections_per_listener: 100,
+        connections_per_peer: None,
     };
     let running = accepting(serve, limits).await;
     let _served = TcpStream::connect(running.addr).await.unwrap();
@@ -107,6 +124,7 @@ async fn a_closed_connection_makes_room_under_the_limit() {
     let limits = Limits {
         max_connections: 1,
         max_connections_per_listener: 1,
+        connections_per_peer: None,
     };
     let running = accepting(serve, limits).await;
     let first = TcpStream::connect(running.addr).await.unwrap();
@@ -123,11 +141,44 @@ async fn a_closed_connection_makes_room_under_the_limit() {
 }
 
 #[tokio::test]
+async fn a_peer_over_its_connection_rate_is_closed_and_reported() {
+    let (serve, mut record) = Recorder::holding();
+    let running = accepting(serve, per_peer(1)).await;
+    let _first = TcpStream::connect(running.addr).await.unwrap();
+    record.next_accepted().await;
+
+    let mut beyond = TcpStream::connect(running.addr).await.unwrap();
+    let refused = record.next_refused().await;
+
+    assert_eq!(refused, ("web", Limit::ConnectionsPerPeer));
+    assert!(closed_soon(&mut beyond).await);
+    assert_eq!(running.open.count(), 1);
+}
+
+#[tokio::test]
+async fn a_peer_within_its_rate_is_served() {
+    let (serve, mut record) = Recorder::holding();
+    let running = accepting(serve, per_peer(2)).await;
+
+    let first = TcpStream::connect(running.addr).await.unwrap();
+    let second = TcpStream::connect(running.addr).await.unwrap();
+    let seen_first = record.next_accepted().await;
+    let seen_second = record.next_accepted().await;
+
+    let mut served = [seen_first.peer, seen_second.peer];
+    served.sort();
+    let mut opened = [first.local_addr().unwrap(), second.local_addr().unwrap()];
+    opened.sort();
+    assert_eq!(served, opened);
+}
+
+#[tokio::test]
 async fn reports_a_refusal_with_the_listener_as_it_is_now() {
     let (serve, mut record) = Recorder::holding();
     let limits = Limits {
         max_connections: 100,
         max_connections_per_listener: 1,
+        connections_per_peer: None,
     };
     let running = accepting(serve, limits).await;
     let _served = TcpStream::connect(running.addr).await.unwrap();

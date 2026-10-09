@@ -20,7 +20,7 @@
 //! [adopts]: Listeners::adopt
 //! [lends]: Listeners::sockets
 
-use crate::accept::{self, Limits, OpenConnections, Serve};
+use crate::accept::{self, Admission, Limits, Serve};
 use crate::drain::Drain;
 use arc_swap::ArcSwap;
 use std::collections::{HashMap, HashSet};
@@ -83,8 +83,7 @@ pub struct Drained {
 #[derive(Debug)]
 pub struct Listeners<T, S> {
     serve: Arc<S>,
-    limits: Limits,
-    open: Arc<OpenConnections>,
+    admission: Admission,
     drain: watch::Receiver<bool>,
     /// Turned `true` at the drain deadline: what is still open is cut.
     cut: watch::Sender<bool>,
@@ -105,8 +104,7 @@ where
         let (cut, _) = watch::channel(false);
         Listeners {
             serve,
-            limits,
-            open: OpenConnections::new(limits.max_connections),
+            admission: Admission::new(limits),
             drain: drain.subscribe(),
             cut,
             running: Mutex::new(HashMap::new()),
@@ -227,8 +225,7 @@ where
                 Arc::clone(&self.serve),
                 Arc::clone(&listener),
                 Arc::clone(&socket),
-                Arc::clone(&self.open),
-                self.limits.max_connections_per_listener,
+                self.admission.clone(),
                 self.drain.clone(),
                 self.cut.subscribe(),
             ));
@@ -273,7 +270,17 @@ where
 
     /// How many accepted connections are open, over all listeners.
     pub fn open_connections(&self) -> usize {
-        self.open.count()
+        self.admission.open.count()
+    }
+
+    /// How many connections were served without counting against their
+    /// peer's rate ([`Limits::connections_per_peer`]), because the set
+    /// already followed as many peers as it may
+    /// ([`PeerRate::tracked_peers`](crate::PeerRate::tracked_peers)): so
+    /// many times the cap was not applied. Always 0 without a per-peer
+    /// rate.
+    pub fn untracked_connections(&self) -> u64 {
+        self.admission.untracked_connections()
     }
 
     /// Serve until the drain is triggered, then stop accepting and wait for
@@ -296,19 +303,20 @@ where
             let _ = accept_loop.await;
         }
 
-        if tokio::time::timeout_at(deadline, self.open.all_closed())
+        let open = &self.admission.open;
+        if tokio::time::timeout_at(deadline, open.all_closed())
             .await
             .is_ok()
         {
             return Drained { cut: 0, stuck: 0 };
         }
 
-        let cut = self.open.count();
+        let cut = open.count();
         tracing::warn!(open = cut, "drain deadline passed, cutting what is open");
         self.cut.send_replace(true);
-        let stuck = match tokio::time::timeout(CUT_GRACE, self.open.all_closed()).await {
+        let stuck = match tokio::time::timeout(CUT_GRACE, open.all_closed()).await {
             Ok(()) => 0,
-            Err(_) => self.open.count(),
+            Err(_) => open.count(),
         };
         Drained { cut, stuck }
     }
