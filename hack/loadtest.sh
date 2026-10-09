@@ -78,12 +78,14 @@ cp target/release/gfe-node "$HEAD_NODE"
 if [ -n "$AGAINST" ]; then
   echo ">> building the node of $AGAINST"
   git worktree add --quiet --detach "$TMP/base" "$AGAINST"
-  # Into this tree's target directory, so that the dependencies are not
-  # compiled a second time; the binary is copied out, since this tree's
-  # next build replaces it.
-  cargo build --release -q --manifest-path "$TMP/base/Cargo.toml" --target-dir target -p gfe-node
+  # Into a target directory of its own, kept between runs. Not this tree's:
+  # the crates of the two trees have the same names and versions, so cargo
+  # would take one tree's build of a library for the other's whenever the
+  # sources it has are older than that build, and link this tree's node
+  # against the base's libraries, or fail to.
+  cargo build --release -q --manifest-path "$TMP/base/Cargo.toml" --target-dir target/base -p gfe-node
   BASE_NODE="$TMP/gfe-node.base"
-  cp target/release/gfe-node "$BASE_NODE"
+  cp target/base/release/gfe-node "$BASE_NODE"
 fi
 
 # A throwaway ECDSA P-256 certificate for the https listener, gone with the
