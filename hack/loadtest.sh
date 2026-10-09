@@ -183,12 +183,15 @@ settle() {
 # (TIME_WAIT), so the connection-bound rows use low concurrency on purpose.
 RECONN_CONNS=8
 
-# The matrix of scenarios, against the running node.
+# The matrix of scenarios, against the running node. The upload row is
+# the workload of a telemetry collector behind the node: requests of a
+# few hundred KiB, where a node is bound by bytes, not by requests.
 matrix() {
   printf '%-38s %-10s %s\n' "scenario" "mode" "result"
   printf '%-38s %-10s %s\n' "--------" "----" "------"
   scenario "http  · fixed (GFE overhead)"      --target "http://$HTTP/fixed"     --connections "$CONNS"        --mode keepalive
   scenario "http  · proxy (+upstream)"         --target "http://$HTTP/proxy/x"   --connections "$CONNS"        --mode keepalive
+  scenario "http  · upload 400KiB (+upstream)" --target "http://$HTTP/proxy/up"  --connections "$CONNS"        --mode keepalive --upload-bytes 409600
   scenario "https · proxy (warm TLS)"          --target "https://$HTTPS/proxy/x" --connections "$CONNS"        --mode keepalive
   scenario "https · proxy (resumed TLS/req, c=$RECONN_CONNS)" --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --mode reconnect
   settle

@@ -30,6 +30,9 @@ pub struct Outcome {
     /// The CPU a process of interest (the node) spent per answered
     /// request, in microseconds, when the run was told which process.
     pub cpu_us_per_request: Option<f64>,
+    /// What each request uploaded, in bytes; 0 for a GET.
+    #[serde(default)]
+    pub bytes_per_request: u64,
 }
 
 impl Outcome {
@@ -55,7 +58,13 @@ impl Outcome {
             max_us: percentile_us(latencies, 1.0),
             errors,
             cpu_us_per_request: None,
+            bytes_per_request: 0,
         }
+    }
+
+    /// What the requests uploaded per second, in MiB.
+    pub fn upload_mib_per_second(&self) -> f64 {
+        self.requests_per_second * self.bytes_per_request as f64 / (1024.0 * 1024.0)
     }
 
     /// Charge `cpu`, the CPU time a process spent during the run, to the
@@ -118,6 +127,9 @@ impl fmt::Display for Outcome {
             self.max_us,
             self.errors
         )?;
+        if self.bytes_per_request > 0 {
+            write!(f, "  {:.0} MiB/s", self.upload_mib_per_second())?;
+        }
         if let Some(cpu) = self.cpu_us_per_request {
             write!(f, "  cpu={cpu:.0}µs/req")?;
         }

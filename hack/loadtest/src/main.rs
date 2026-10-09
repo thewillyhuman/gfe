@@ -15,6 +15,7 @@ mod tls;
 mod upstream;
 
 use anyhow::Result;
+use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -55,6 +56,10 @@ enum Cmd {
         /// Label for the printed result row.
         #[arg(long, default_value = "")]
         label: String,
+        /// Upload this many bytes with each request, as a POST; the
+        /// requests are GETs without a body otherwise.
+        #[arg(long, default_value_t = 0, value_name = "BYTES")]
+        upload_bytes: usize,
         /// A process (the node) whose CPU per answered request the row
         /// reports: user and system time, over the run.
         #[arg(long, value_name = "PID")]
@@ -95,6 +100,7 @@ fn main() -> Result<()> {
                 mode,
                 no_resume,
                 label,
+                upload_bytes,
                 cpu_of,
                 json_out,
             } => {
@@ -106,6 +112,7 @@ fn main() -> Result<()> {
                     resume: !no_resume,
                     label,
                     cpu_of,
+                    upload: Bytes::from(vec![b'u'; upload_bytes]),
                 };
                 let outcome = client::run(&scenario).await?;
                 println!("{outcome}");

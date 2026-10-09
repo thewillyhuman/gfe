@@ -86,3 +86,15 @@ fn a_file_that_is_not_outcomes_is_rejected() {
     assert!(Outcome::read_all(&dir.join("missing.jsonl")).is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn an_upload_scenario_reports_what_it_sent_per_second() {
+    let mut outcome = Outcome::measure("up", "keepalive", &mut [1_000; 10], 0, 2.0);
+    outcome.bytes_per_request = 1024 * 1024;
+
+    assert_eq!(outcome.upload_mib_per_second(), 5.0);
+    assert!(
+        outcome.to_string().ends_with("errors=0  5 MiB/s"),
+        "{outcome}"
+    );
+}

@@ -4,7 +4,7 @@
 use crate::outcome::Outcome;
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Either, Empty, Full};
 use hyper::Request;
 use hyper_util::rt::TokioIo;
 use std::sync::Arc;
@@ -53,6 +53,9 @@ pub struct Scenario {
     pub label: String,
     /// A process whose CPU per answered request the outcome reports.
     pub cpu_of: Option<u32>,
+    /// What each request uploads: empty, and the request is a GET; else
+    /// a POST with this body.
+    pub upload: Bytes,
 }
 
 impl Scenario {
@@ -80,14 +83,17 @@ pub async fn run(scenario: &Scenario) -> Result<Outcome> {
 
     let mut handles = Vec::with_capacity(scenario.connections);
     for _ in 0..scenario.connections {
-        let target = Arc::clone(&scenario.target);
+        let exchange = Exchange {
+            target: Arc::clone(&scenario.target),
+            upload: scenario.upload.clone(),
+        };
         let connector = connector.clone();
         let reconnect = scenario.reconnect;
         handles.push(tokio::spawn(async move {
             if reconnect {
-                worker_reconnect(target, connector, deadline).await
+                worker_reconnect(exchange, connector, deadline).await
             } else {
-                worker_keepalive(target, connector, deadline).await
+                worker_keepalive(exchange, connector, deadline).await
             }
         }));
     }
@@ -108,24 +114,32 @@ pub async fn run(scenario: &Scenario) -> Result<Outcome> {
         errors,
         elapsed,
     );
+    outcome.bytes_per_request = scenario.upload.len() as u64;
     if let (Some(pid), Some(before)) = (scenario.cpu_of, cpu_before) {
         outcome.charge_cpu(crate::cpu::cpu_time(pid)?.saturating_sub(before));
     }
     Ok(outcome)
 }
 
+/// What every request of a worker is: where it goes and what it uploads.
+#[derive(Clone)]
+struct Exchange {
+    target: Arc<Target>,
+    upload: Bytes,
+}
+
 /// One connection reused for many sequential requests until the deadline. A
 /// server that says `Connection: close` is obeyed, as an HTTP client would:
 /// the next request goes over a new connection, and nothing went wrong.
 async fn worker_keepalive(
-    t: Arc<Target>,
+    exchange: Exchange,
     connector: Option<tokio_rustls::TlsConnector>,
     deadline: Instant,
 ) -> (Vec<u64>, u64) {
     let mut lat = Vec::new();
     let mut errors = 0u64;
     while Instant::now() < deadline {
-        let mut sender = match connect_h1(&t, &connector).await {
+        let mut sender = match connect_h1(&exchange.target, &connector).await {
             Ok(s) => s,
             Err(_) => {
                 errors += 1;
@@ -134,7 +148,7 @@ async fn worker_keepalive(
         };
         while Instant::now() < deadline {
             let start = Instant::now();
-            match send_one(&mut sender, &t).await {
+            match send_one(&mut sender, &exchange).await {
                 Ok(reusable) => {
                     lat.push(start.elapsed().as_nanos() as u64);
                     if !reusable {
@@ -153,7 +167,7 @@ async fn worker_keepalive(
 
 /// A fresh connection (incl. TLS handshake) per request: handshake-bound.
 async fn worker_reconnect(
-    t: Arc<Target>,
+    exchange: Exchange,
     connector: Option<tokio_rustls::TlsConnector>,
     deadline: Instant,
 ) -> (Vec<u64>, u64) {
@@ -164,8 +178,8 @@ async fn worker_reconnect(
         // Bound each attempt so a stalled connect (e.g. transient loopback
         // port pressure) is counted as a fast error, not a multi-second sample.
         let result = tokio::time::timeout(Duration::from_secs(2), async {
-            let mut sender = connect_h1(&t, &connector).await?;
-            send_one(&mut sender, &t).await
+            let mut sender = connect_h1(&exchange.target, &connector).await?;
+            send_one(&mut sender, &exchange).await
         })
         .await;
         match result {
@@ -176,7 +190,10 @@ async fn worker_reconnect(
     (lat, errors)
 }
 
-type Sender = hyper::client::conn::http1::SendRequest<Empty<Bytes>>;
+/// A request's body: none for a GET, the upload for a POST.
+type Body = Either<Empty<Bytes>, Full<Bytes>>;
+
+type Sender = hyper::client::conn::http1::SendRequest<Body>;
 
 async fn connect_h1(t: &Target, connector: &Option<tokio_rustls::TlsConnector>) -> Result<Sender> {
     let tcp = TcpStream::connect(&t.addr).await?;
@@ -205,11 +222,17 @@ where
 /// Send one request and read its response. Returns whether the connection
 /// may carry another request, which it may not once the server has said
 /// `Connection: close`.
-async fn send_one(sender: &mut Sender, t: &Target) -> Result<bool> {
-    let req = Request::builder()
-        .uri(&t.path)
-        .header("host", &t.host)
-        .body(Empty::<Bytes>::new())?;
+async fn send_one(sender: &mut Sender, exchange: &Exchange) -> Result<bool> {
+    let target = &exchange.target;
+    let req = if exchange.upload.is_empty() {
+        Request::get(&target.path)
+            .header("host", &target.host)
+            .body(Either::Left(Empty::new()))?
+    } else {
+        Request::post(&target.path)
+            .header("host", &target.host)
+            .body(Either::Right(Full::new(exchange.upload.clone())))?
+    };
     let resp = sender.send_request(req).await?;
     if !resp.status().is_success() {
         anyhow::bail!("status {}", resp.status());
