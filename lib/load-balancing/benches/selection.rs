@@ -19,6 +19,7 @@ fn pool(policy: Policy, n: usize, weighted: bool) -> PoolSpec<()> {
         policy,
         backends,
         max_in_flight: None,
+        max_requests_per_second: None,
         payload: (),
     }
 }

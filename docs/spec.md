@@ -186,7 +186,7 @@ The crates:
 ├── netkit-load-balancing/           # lib/load-balancing
 │   ├── benches/selection.rs         # Selection throughput per policy
 │   └── src/
-│       ├── pool.rs                  # Pools: selection over the healthy set, max_in_flight
+│       ├── pool.rs                  # Pools: admission (max_in_flight, max_requests_per_second), selection over the healthy set
 │       ├── policy.rs                # RoundRobin, LeastRequest, RingHash
 │       └── error.rs
 │
@@ -326,7 +326,7 @@ netkit-dns  netkit-tls  netkit-rate-limiting  netkit-kernel  netkit-observabilit
 netkit-listen           → rate-limiting
 netkit-http             → dns, tls, rate-limiting
 netkit-health-checking  → http, tls
-netkit-load-balancing   → health-checking
+netkit-load-balancing   → health-checking, rate-limiting
 gfe-config              (nothing from the workspace)
 gfe-proxy               → gfe-config and the libraries
 gfe-node                → gfe-proxy (and what it needs below)

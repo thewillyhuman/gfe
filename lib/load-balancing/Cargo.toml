@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 netkit-health-checking = { workspace = true }
+netkit-rate-limiting = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
 

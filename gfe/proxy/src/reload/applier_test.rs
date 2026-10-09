@@ -210,6 +210,7 @@ fn hands_every_pool_to_the_library_carrying_its_scheme() {
                 weight: 3,
             }],
             max_in_flight: config.max_in_flight,
+            max_requests_per_second: None,
             payload: Scheme::H2c,
         }]
     );

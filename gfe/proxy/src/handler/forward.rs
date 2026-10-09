@@ -30,7 +30,7 @@ use netkit_http::client::Scheme as ClientScheme;
 use netkit_http::header::STRICT_TRANSPORT_SECURITY;
 use netkit_http::uri::PathAndQuery;
 use netkit_http::{HeaderValue, Request, Response, Version};
-use netkit_load_balancing::{InflightGuard, Pool};
+use netkit_load_balancing::{InflightGuard, Limit, Pool};
 use netkit_observability::Gauge;
 use std::sync::Arc;
 use std::time::Instant;
@@ -81,14 +81,16 @@ pub(crate) async fn forward(
     record.forwarding_to(pool.id.clone());
     // The pool's place is shared by every attempt, so that a retry does not
     // count, or get refused, as another request.
-    let Some(admitted) = pool.admit() else {
-        let label = PoolLabel {
-            pool: pool.id.clone(),
-        };
-        metrics.upstream_pool_full.get_or_create(&label).inc();
-        return Err(Refusal::PoolFull.into());
+    let admitted = match pool.admit(Instant::now()) {
+        Ok(admitted) => Arc::new(admitted),
+        Err(Limit::MaxInFlight | Limit::MaxRequestsPerSecond) => {
+            let label = PoolLabel {
+                pool: pool.id.clone(),
+            };
+            metrics.upstream_pool_full.get_or_create(&label).inc();
+            return Err(Refusal::PoolFull.into());
+        }
     };
-    let admitted = Arc::new(admitted);
 
     let (mut head, content) = request.into_parts();
     let is_tls = conn.is_tls();

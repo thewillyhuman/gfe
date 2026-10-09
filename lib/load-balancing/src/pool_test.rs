@@ -2,6 +2,7 @@ use super::*;
 use crate::policy::hash64;
 use netkit_health_checking::HealthStatus;
 use std::num::NonZeroU32;
+use std::time::Duration;
 
 fn pool_with(policy: Policy) -> PoolSpec<()> {
     PoolSpec {
@@ -9,6 +10,7 @@ fn pool_with(policy: Policy) -> PoolSpec<()> {
         policy,
         backends: backends(2, 1),
         max_in_flight: None,
+        max_requests_per_second: None,
         payload: (),
     }
 }
@@ -34,8 +36,15 @@ fn build(config: PoolSpec<()>, health: &HealthMap) -> Arc<Pool<()>> {
 }
 
 fn pool_admitting(max_in_flight: Option<u32>) -> Arc<Pool<()>> {
+    pool_admitting_at(max_in_flight, None)
+}
+
+/// A pool of two backends admitting `max_in_flight` requests at once and
+/// `per_second` a second (`None`: no cap).
+fn pool_admitting_at(max_in_flight: Option<u32>, per_second: Option<u32>) -> Arc<Pool<()>> {
     let mut config = pool_with(Policy::RoundRobin);
     config.max_in_flight = max_in_flight.and_then(NonZeroU32::new);
+    config.max_requests_per_second = per_second.and_then(NonZeroU32::new);
     build(config, &HealthMap::new(true))
 }
 
@@ -74,6 +83,7 @@ fn a_pool_hands_back_the_payload_it_was_built_with() {
         policy: Policy::RoundRobin,
         backends: backends(1, 1),
         max_in_flight: None,
+        max_requests_per_second: None,
         payload: "https",
     };
 
@@ -188,45 +198,105 @@ fn all_backends_lists_every_backend_of_every_pool() {
 #[test]
 fn admits_up_to_max_in_flight_and_no_further() {
     let pool = pool_admitting(Some(2));
+    let now = Instant::now();
 
-    let first = pool.admit();
-    let second = pool.admit();
-    let third = pool.admit();
+    let first = pool.admit(now);
+    let second = pool.admit(now);
+    let third = pool.admit(now);
 
-    assert!(first.is_some() && second.is_some());
-    assert!(third.is_none());
+    assert!(first.is_ok() && second.is_ok());
+    assert_eq!(third.unwrap_err(), Limit::MaxInFlight);
 }
 
 #[test]
 fn a_finished_request_makes_room_again() {
     let pool = pool_admitting(Some(1));
-    let only = pool.admit();
+    let now = Instant::now();
+    let only = pool.admit(now);
 
     drop(only);
 
-    assert!(pool.admit().is_some());
+    assert!(pool.admit(now).is_ok());
 }
 
 #[test]
 fn a_refused_request_does_not_hold_a_place() {
     let pool = pool_admitting(Some(1));
-    let only = pool.admit();
+    let now = Instant::now();
+    let only = pool.admit(now);
     for _ in 0..10 {
-        assert!(pool.admit().is_none());
+        assert!(pool.admit(now).is_err());
     }
 
     drop(only);
 
-    assert!(pool.admit().is_some());
+    assert!(pool.admit(now).is_ok());
 }
 
 #[test]
-fn without_max_in_flight_admits_every_request() {
+fn without_a_cap_admits_every_request() {
     let pool = pool_admitting(None);
+    let now = Instant::now();
 
-    let admitted: Vec<_> = (0..1000).filter_map(|_| pool.admit()).collect();
+    let admitted: Vec<_> = (0..1000).filter_map(|_| pool.admit(now).ok()).collect();
 
     assert_eq!(admitted.len(), 1000);
+}
+
+#[test]
+fn admits_up_to_max_requests_per_second_and_no_further() {
+    let pool = pool_admitting_at(None, Some(2));
+    let now = Instant::now();
+
+    let first = pool.admit(now);
+    let second = pool.admit(now);
+    let third = pool.admit(now);
+
+    assert!(first.is_ok() && second.is_ok());
+    assert_eq!(third.unwrap_err(), Limit::MaxRequestsPerSecond);
+}
+
+#[test]
+fn a_second_later_the_pool_admits_again() {
+    let pool = pool_admitting_at(None, Some(1));
+    let start = Instant::now();
+    pool.admit(start).unwrap();
+
+    let too_early = pool.admit(start + Duration::from_millis(500));
+    let on_time = pool.admit(start + Duration::from_secs(1));
+
+    assert_eq!(too_early.unwrap_err(), Limit::MaxRequestsPerSecond);
+    assert!(on_time.is_ok());
+}
+
+#[test]
+fn a_request_refused_for_its_rate_takes_no_place_in_flight() {
+    let pool = pool_admitting_at(Some(1), Some(1));
+    let start = Instant::now();
+    drop(pool.admit(start).unwrap());
+
+    let over_the_rate = pool.admit(start);
+    let a_second_later = pool.admit(start + Duration::from_secs(1));
+
+    assert_eq!(over_the_rate.unwrap_err(), Limit::MaxRequestsPerSecond);
+    assert!(a_second_later.is_ok(), "the refused request held a place");
+}
+
+#[test]
+fn a_request_over_max_in_flight_spends_none_of_the_rate() {
+    let pool = pool_admitting_at(Some(1), Some(2));
+    let now = Instant::now();
+    let held = pool.admit(now).unwrap();
+
+    let over_in_flight = pool.admit(now);
+    drop(held);
+    let within_the_rate = pool.admit(now);
+
+    assert_eq!(over_in_flight.unwrap_err(), Limit::MaxInFlight);
+    assert!(
+        within_the_rate.is_ok(),
+        "the refused request spent the rate"
+    );
 }
 
 // --- round_robin ----------------------------------------------------------

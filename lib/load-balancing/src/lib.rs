@@ -3,11 +3,11 @@
 //!
 //! Pure selection logic: no HTTP, no I/O. A [`PoolSet`] is built from
 //! [`PoolSpec`]s against a [`HealthMap`](netkit_health_checking::HealthMap)
-//! and swapped whole when they change; each [`Pool`] picks a backend over
-//! the live health of its backends on every call, and counts what is in
-//! flight for `least_request` and for its `max_in_flight` quota. A backend
-//! is a `host:port` that may be a name: resolving it is the caller's
-//! business.
+//! and swapped whole when they change; each [`Pool`] admits a request under
+//! its `max_in_flight` quota and its `max_requests_per_second` rate, picks
+//! a backend over the live health of its backends on every call, and
+//! counts what is in flight for `least_request`. A backend is a `host:port`
+//! that may be a name: resolving it is the caller's business.
 
 mod error;
 pub mod policy;
@@ -15,4 +15,4 @@ mod pool;
 
 pub use error::PoolError;
 pub use policy::Policy;
-pub use pool::{Backend, InflightGuard, Pool, PoolSet, PoolSpec, Selection};
+pub use pool::{Backend, InflightGuard, Limit, Pool, PoolSet, PoolSpec, Selection};

@@ -5,10 +5,12 @@
 use crate::PoolError;
 use crate::policy::{MAX_RING_POINTS, Policy, RING_REPLICAS, build_ring, ring_pick, weighted_pick};
 use netkit_health_checking::{HealthHandle, HealthMap};
+use netkit_rate_limiting::TokenBucket;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 /// One backend of a pool: where it is and its share of the requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,12 +53,28 @@ pub struct PoolSpec<T> {
     /// The most requests that may be in flight to the pool at once; `None`
     /// admits every request.
     pub max_in_flight: Option<NonZeroU32>,
+    /// The most requests the pool admits a second, measured over any one
+    /// second: a pool that has been quiet admits a second's worth at once.
+    /// `None` admits every request.
+    pub max_requests_per_second: Option<NonZeroU32>,
     /// The caller's data, handed back by [`Pool::payload`].
     pub payload: T,
 }
 
+/// Which cap of a [`PoolSpec`] a request was refused under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Limit {
+    /// [`PoolSpec::max_in_flight`] requests are in flight. Checked first:
+    /// a request refused under it spends none of the rate.
+    MaxInFlight,
+    /// [`PoolSpec::max_requests_per_second`] requests were admitted within
+    /// the last second.
+    MaxRequestsPerSecond,
+}
+
 /// Decrements an in-flight counter when dropped: a backend's (for
 /// `least_request`), or a pool's (for its `max_in_flight`).
+#[derive(Debug)]
 pub struct InflightGuard(Option<Arc<AtomicUsize>>);
 
 impl Drop for InflightGuard {
@@ -106,6 +124,9 @@ pub struct Pool<T> {
     in_flight: Arc<AtomicUsize>,
     /// The most requests that may be in flight to the pool at once.
     max_in_flight: Option<NonZeroU32>,
+    /// The requests the pool may still admit this second, when it has a
+    /// rate. Kept per pool snapshot, as `in_flight` is.
+    rate: Option<TokenBucket>,
 }
 
 impl<T: Clone> Pool<T> {
@@ -151,6 +172,9 @@ impl<T: Clone> Pool<T> {
             uniform_weights,
             in_flight: Arc::new(AtomicUsize::new(0)),
             max_in_flight: p.max_in_flight,
+            rate: p
+                .max_requests_per_second
+                .map(|per_second| TokenBucket::new(per_second, per_second)),
         })
     }
 }
@@ -161,18 +185,30 @@ impl<T> Pool<T> {
         &self.payload
     }
 
-    /// Admit one more request to the pool, unless it already has
-    /// `max_in_flight` requests in flight; `None` if it does. The request
-    /// counts as in flight until the returned guard is dropped. A pool
-    /// without `max_in_flight` admits every request.
-    pub fn admit(&self) -> Option<InflightGuard> {
-        let Some(max) = self.max_in_flight else {
-            return Some(InflightGuard(None));
+    /// Admit one more request to the pool, as of `now`, unless it already
+    /// has `max_in_flight` requests in flight or has admitted
+    /// `max_requests_per_second` within the last second; which, if it does.
+    /// The request counts as in flight until the returned guard is dropped.
+    /// A pool with neither cap admits every request.
+    pub fn admit(&self, now: Instant) -> Result<InflightGuard, Limit> {
+        let guard = match self.max_in_flight {
+            None => InflightGuard(None),
+            Some(max) => {
+                let already_in_flight = self.in_flight.fetch_add(1, Ordering::Relaxed);
+                // Dropping the guard gives the place back.
+                let guard = InflightGuard(Some(self.in_flight.clone()));
+                if already_in_flight >= max.get() as usize {
+                    return Err(Limit::MaxInFlight);
+                }
+                guard
+            }
         };
-        let already_in_flight = self.in_flight.fetch_add(1, Ordering::Relaxed);
-        // Dropping the guard gives the place back.
-        let guard = InflightGuard(Some(self.in_flight.clone()));
-        (already_in_flight < max.get() as usize).then_some(guard)
+        if let Some(rate) = &self.rate
+            && rate.try_acquire(now).is_err()
+        {
+            return Err(Limit::MaxRequestsPerSecond);
+        }
+        Ok(guard)
     }
 
     /// Round-robin over the healthy set. Uniform weights → cheap lock-free
