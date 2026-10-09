@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 
 #[test]
 fn proc_stat_cpu_is_user_plus_system_time() {
@@ -38,9 +39,26 @@ fn ps_cputime_of_no_process_is_rejected() {
     assert_eq!(parse_ps_cputime("x:y"), None);
 }
 
+/// Read after the process has worked: a test process of its own, as
+/// nextest starts one per test, may not have used a whole tick of the
+/// kernel's clock (10 ms on Linux) by the time it looks at itself.
 #[test]
-fn this_process_has_used_some_cpu() {
-    let used = cpu_time(std::process::id()).unwrap();
+fn the_cpu_of_this_process_rises_as_it_works() {
+    let pid = std::process::id();
+    let started = Instant::now();
+    let mut sink = 0u64;
+    while cpu_time(pid).unwrap().is_zero() && started.elapsed() < Duration::from_secs(5) {
+        for i in 0..100_000u64 {
+            sink = sink.wrapping_mul(31).wrapping_add(i);
+        }
+        std::hint::black_box(sink);
+    }
 
-    assert!(used > Duration::ZERO, "{used:?}");
+    let used = cpu_time(pid).unwrap();
+
+    assert!(
+        used > Duration::ZERO,
+        "{used:?} after {:?}",
+        started.elapsed()
+    );
 }
