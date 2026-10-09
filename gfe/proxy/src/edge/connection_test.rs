@@ -612,6 +612,16 @@ async fn a_refused_connection_is_counted_as_rejected() {
     node.assert_metric(r#"gfe_connections_rejected_total{reason="limit"} 2"#);
 }
 
+#[tokio::test]
+async fn a_connection_refused_for_its_clients_rate_is_counted_apart() {
+    let node = Node::start(TimeoutsConfig::default());
+    let refused_on = listener("http", ListenProtocol::Http);
+
+    node.edge.refused(&refused_on, Limit::ConnectionsPerPeer);
+
+    node.assert_metric(r#"gfe_connections_rejected_total{reason="client_rate"} 1"#);
+}
+
 // ---------------------------------------------------------------------------
 // HTTP/2 clients
 // ---------------------------------------------------------------------------

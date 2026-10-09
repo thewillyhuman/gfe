@@ -150,7 +150,24 @@ Proven by:
 - `gfe/proxy/tests/retries.rs::retries_once_only`
 - `gfe/proxy/tests/retries.rs::does_not_retry_once_the_response_has_started`
 
-## R11. Graceful drain
+## R11. Rate limiting
+
+A client address may open at most `client_connections_per_second` new
+connections a second, over every listener; a connection over it is
+closed as soon as it is accepted and counted, and costs the other clients
+nothing. The node follows a bounded number of clients and reports the
+connections it served without the cap when it could follow no more.
+
+Proven by:
+
+- `gfe/proxy/tests/connections.rs::refuses_a_client_that_opens_connections_faster_than_its_rate`
+- `gfe/config/src/node_test.rs::rejects_a_zero_client_connection_rate`
+- `lib/listen/src/listeners_test.rs::a_peer_is_rated_across_every_listener`
+- `lib/listen/src/listeners_test.rs::a_peer_is_the_same_on_an_ipv4_and_a_dual_stack_listener`
+- `lib/listen/src/listeners_test.rs::a_peer_beyond_the_tracked_ones_is_served_uncounted`
+- `lib/rate-limiting/src/keyed_buckets_test.rs::forgets_the_keys_that_have_refilled_when_it_is_full`
+
+## R12. Graceful drain
 
 On `SIGTERM` the node fails `/readyz`, stops accepting, and asks its
 clients to leave (`GOAWAY` on HTTP/2, `Connection: close` on HTTP/1)
@@ -166,7 +183,7 @@ Proven by:
 - `gfe/proxy/tests/drain.rs::the_drain_ends_as_soon_as_the_last_client_leaves`
 - `gfe/proxy/tests/drain.rs::a_request_still_in_flight_at_the_deadline_is_cut_and_accounted_for`
 
-## R12. Upgrades in place
+## R13. Upgrades in place
 
 On `SIGUSR2` the node hands its listening sockets to the binary now on
 disk: no connection is refused, no request fails, and the old process
@@ -182,7 +199,7 @@ Proven by:
 - `gfe/node/tests/upgrade.rs::keeps_serving_when_sent_a_hangup`
 - `gfe/node/tests/upgrade.rs::keeps_serving_when_sent_the_other_user_signal`
 
-## R13. Observability
+## R14. Observability
 
 The node exposes Prometheus metrics on `/metrics` and its health on
 `/healthz` and `/readyz`, and logs one structured event per request and
@@ -201,7 +218,7 @@ Proven by:
 Not yet proven: no test checks the alert rules or the dashboard against
 the metrics the node exposes.
 
-## R14. Kernel view (eBPF)
+## R15. Kernel view (eBPF)
 
 Where the node has `CAP_BPF` and `CAP_NET_ADMIN`, it reports accept-queue
 wait, round-trip time, retransmissions and how connections end, per
@@ -220,7 +237,7 @@ Proven by:
 Not yet proven: no test checks the alert that fires when a node serves
 without the kernel view.
 
-## R15. Performance does not regress
+## R16. Performance does not regress
 
 A change does not raise the node's CPU per request on any scenario of the
 end-to-end load test by more than 10% against the commit it is based on,
@@ -233,7 +250,7 @@ the micro-benchmarks (`cargo bench`) of both commits, which say where in
 the node a regression happened, and fails on a bench slower by more than
 a quarter.
 
-## R16. The build is sound
+## R17. The build is sound
 
 Every crate compiles without warnings, is formatted, passes clippy, its
 documentation builds, and its dependencies pass the advisory, license and

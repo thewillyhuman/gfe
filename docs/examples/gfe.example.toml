@@ -28,6 +28,10 @@ max_connections_listener  = 50000
 max_header_bytes          = 65536    # request head limit (431 above it); minimum 8192
 max_h2_concurrent_streams = 256
 max_upstream_connections  = 20000    # open upstream connections, all backends together (503 above it)
+# client_connections_per_second = 100 # new connections one client address may open per second, over all
+                                     # listeners (a client that has been quiet may open a second's worth at
+                                     # once); a connection above it is closed as soon as it is accepted
+                                     # (gfe_connections_rejected_total{reason="client_rate"}); absent: no cap
 
 # Every timeout must be greater than "0s", which would expire at once.
 [timeouts]

@@ -14,6 +14,7 @@ use gfe_config::{DynamicConfig, ListenProtocol};
 use http_body_util::Full;
 use hyper::Response;
 use netkit_http::Bytes;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -195,6 +196,31 @@ async fn drops_connections_beyond_the_node_wide_limit_until_one_closes() {
     node.wait_for_metric("gfe_connections_active 0").await;
     let (status, _) = http_get(addr, "a.example.org", "/").await;
     assert_eq!(status, 200);
+}
+
+#[tokio::test]
+async fn refuses_a_client_that_opens_connections_faster_than_its_rate() {
+    let node = Node::serving_with("client-rate", &fixed_response_config(), |node| {
+        node.limits.client_connections_per_second = NonZeroU32::new(1);
+    });
+    let addr = node.addr("http");
+
+    let mut first = TcpStream::connect(addr).await.unwrap();
+    let mut second = TcpStream::connect(addr).await.unwrap();
+
+    // The second connection is closed without a byte; the first is served
+    // as any other.
+    assert_eq!(read_until_closed(&mut second).await, "");
+    first
+        .write_all(b"GET / HTTP/1.1\r\nhost: a.example.org\r\nconnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let response = read_until_closed(&mut first).await;
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    node.wait_for_metric(r#"gfe_connections_rejected_total{reason="client_rate"} 1"#)
+        .await;
+    assert!(node.has_metric("gfe_client_rate_untracked 0"));
+    node.wait_for_metric("gfe_connections_active 0").await;
 }
 
 #[tokio::test]

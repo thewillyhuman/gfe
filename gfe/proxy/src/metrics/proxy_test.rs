@@ -17,6 +17,7 @@ fn exposes_every_proxy_metric_with_its_type() {
         ("gfe_connections_limit", "gauge"),
         ("gfe_listener_connections_limit", "gauge"),
         ("gfe_connections_rejected", "counter"),
+        ("gfe_client_rate_untracked", "gauge"),
         ("gfe_connections_closed", "counter"),
         ("gfe_connection_duration_seconds", "histogram"),
         ("gfe_accept_queue_wait_seconds", "histogram"),

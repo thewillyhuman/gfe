@@ -178,15 +178,20 @@ impl<H: RequestHandler> Serve<Listener> for Edge<H> {
         self.serve_connection(accepted)
     }
 
-    /// Counted as `gfe_connections_rejected_total{reason="limit"}`, which
-    /// of the two limits it was.
-    fn refused(&self, _listener: &Listener, _limit: Limit) {
+    /// Counted as `gfe_connections_rejected_total`: `reason="client_rate"`
+    /// for a client over `client_connections_per_second`, `reason="limit"`
+    /// for either connection limit.
+    fn refused(&self, _listener: &Listener, limit: Limit) {
+        let reason = match limit {
+            Limit::ConnectionsPerPeer => "client_rate",
+            Limit::MaxConnections | Limit::MaxConnectionsPerListener => "limit",
+        };
         self.shared
             .metrics()
             .proxy
             .connections_rejected
             .get_or_create(&RejectLabel {
-                reason: "limit".into(),
+                reason: reason.into(),
             })
             .inc();
     }

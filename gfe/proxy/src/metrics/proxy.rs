@@ -129,6 +129,7 @@ pub struct ProxyMetrics {
     pub connections_limit: Gauge,
     pub listener_connections_limit: Gauge,
     pub connections_rejected: Family<RejectLabel, Counter>,
+    pub client_rate_untracked: Gauge,
     pub connections_closed: Family<CloseLabels, Counter>,
     pub connection_duration_seconds: Family<ListenerLabel, Histogram>,
     pub accept_queue_wait_seconds: Family<ListenerLabel, Histogram>,
@@ -196,6 +197,7 @@ impl ProxyMetrics {
             connections_limit: Gauge::default(),
             listener_connections_limit: Gauge::default(),
             connections_rejected: Family::default(),
+            client_rate_untracked: Gauge::default(),
             connections_closed: Family::default(),
             connection_duration_seconds: Family::new_with_constructor(lifetime_histogram),
             accept_queue_wait_seconds: Family::new_with_constructor(queue_wait_histogram),
@@ -253,8 +255,13 @@ impl ProxyMetrics {
         );
         registry.register(
             "gfe_connections_rejected",
-            "Connections refused at accept because a connection limit was reached",
+            "Connections closed at accept, by reason: a connection limit (limit), the client's connection rate (client_rate), a TLS handshake that did not finish in time (handshake_timeout)",
             m.connections_rejected.clone(),
+        );
+        registry.register(
+            "gfe_client_rate_untracked",
+            "Connections served without counting against their client's connection rate, because the node already followed as many clients as it can",
+            m.client_rate_untracked.clone(),
         );
         registry.register(
             "gfe_connections_closed",

@@ -56,7 +56,8 @@ Where they go is set by `[log] file` in the bootstrap config:
 | Is a backend far, or slow? (kernel view) | `gfe_upstream_tcp_rtt_seconds{backend}` against `gfe_upstream_request_duration_seconds` | `gfe::tcp` with `side=upstream` |
 | Is the node keeping up with new connections? (kernel view) | `gfe_accept_queue_wait_seconds{listener}` | connection log `accept_wait_ms` |
 | Is the node saturated? | `gfe_connections_active / gfe_connections_limit`, `process_open_fds / process_max_fds`, `rate(process_cpu_seconds_total[5m])`, `gfe_runtime_global_queue_depth` | — |
-| Is it refusing work? | `gfe_connections_rejected_total{reason="limit"}` | — |
+| Is it refusing work? | `gfe_connections_rejected_total{reason="limit"}` (at a connection limit); `gfe_connections_rejected_total{reason="client_rate"}` (a client over `client_connections_per_second`) | — |
+| Is the client rate being applied? | `gfe_client_rate_untracked`: rising means new clients are served without the cap, the node following as many client addresses as it can | — |
 | Is the log complete? | `gfe_log_lost_lines{destination}` | — |
 | Did a config or certificate change land? | `gfe_config_reload_failed` (1 until a reload succeeds), `gfe_config_last_reload_timestamp`, `gfe_config_reload_errors_total`, `gfe_cert_expiry_timestamp` | node log |
 | Did an upgrade in place land? | `gfe_upgrade_failures_total` (above 0 until the process is replaced); `process_start_time_seconds` moves when it did | node log, from both processes; `systemctl status` |

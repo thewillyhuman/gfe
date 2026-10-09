@@ -4,6 +4,7 @@ use crate::duration::deserialize_duration;
 use crate::{HealthCheckConfig, TlsConfig};
 use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -178,6 +179,12 @@ pub struct LimitsConfig {
     pub max_h2_concurrent_streams: u32,
     #[serde(default = "default_max_upstream_connections")]
     pub max_upstream_connections: usize,
+    /// The most new connections one client address may open per second,
+    /// over every listener; a client that has been quiet may open a
+    /// second's worth at once. A connection over it is closed as soon as
+    /// it is accepted. Absent: no cap.
+    #[serde(default)]
+    pub client_connections_per_second: Option<NonZeroU32>,
 }
 
 impl Default for LimitsConfig {
@@ -188,6 +195,7 @@ impl Default for LimitsConfig {
             max_header_bytes: default_max_header_bytes(),
             max_h2_concurrent_streams: default_max_h2_streams(),
             max_upstream_connections: default_max_upstream_connections(),
+            client_connections_per_second: None,
         }
     }
 }

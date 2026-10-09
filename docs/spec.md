@@ -449,7 +449,7 @@ Why a request to a backend failed is logged at debug level under the target `gfe
 One accept loop runs per configured listener. Each loop:
 
 1. Binds the listener address (`TcpListener`) with `SO_REUSEADDR`; `TCP_NODELAY` and TCP keepalive (Section 6.8) are set on accepted sockets.
-2. Accepts connections and enforces a **global and per-listener max concurrent connection limit**. When the limit is hit, new connections are accepted and immediately closed (counted via `gfe_connections_rejected_total{reason="limit"}`) rather than being left to pile up in the backlog.
+2. Accepts connections and enforces the **per-client connection rate** (`client_connections_per_second`: the most new connections one client address may open a second, over every listener, with a second's worth allowed at once to a client that has been quiet) and the **global and per-listener max concurrent connection limit**, in that order. A connection over any of them is accepted and immediately closed (counted via `gfe_connections_rejected_total`, `reason="client_rate"` or `reason="limit"`) rather than being left to pile up in the backlog. The node follows the rate of at most 65,536 client addresses at once; beyond that, clients quiet for a second are forgotten, and when none can be, a new client's connection is served without counting, which `gfe_client_rate_untracked` reports.
 3. Spawns one Tokio task per accepted connection (`connection.rs`). The accept loop never blocks on per-connection work. After a failed `accept` it waits 100 ms before accepting again (still stopping at once on shutdown), so an error that persists, such as running out of file descriptors, neither spins a core nor floods the log.
 4. Applies an **accept-to-first-byte / handshake timeout** so slow-loris-style connections that never make progress are reaped early.
 
@@ -573,7 +573,7 @@ Bounded, predictable behaviour under stress:
 
   Timeouts that cannot be served (a `client_idle` so short that a quarter of it is zero) fail the start of the node.
 - **Retries (conservative, `retry.rs`).** Only **idempotent** requests without a body (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `DELETE`, and only when the request ends with its head: a chunked or HTTP/2 body counts as a body whatever its headers say) are retried, and only on **connection-establishment / pre-response** failures (including a TLS failure or a reset before any response), at most once (two attempts), against a new backend selection. The node's own connection limit and a timeout are not retried. GFE never retries after any response bytes have been forwarded. This avoids amplifying load during incidents.
-- **Limits:** max header bytes (an HTTP/1.1 head over it is answered `431` by the HTTP layer, Section 6.3; on HTTP/2 it is the header list size the node advertises; at least 8192), max concurrent connections (global + per listener), max concurrent h2 streams, and max upstream connections. Exceeding a limit yields a clean `4xx`/`5xx` (or connection refusal) and a counter — never unbounded growth.
+- **Limits:** max header bytes (an HTTP/1.1 head over it is answered `431` by the HTTP layer, Section 6.3; on HTTP/2 it is the header list size the node advertises; at least 8192), max concurrent connections (global + per listener), the new connections one client address may open per second (`client_connections_per_second`, Section 6.1; absent: no cap), max concurrent h2 streams, and max upstream connections. Exceeding a limit yields a clean `4xx`/`5xx` (or connection refusal) and a counter — never unbounded growth.
 - **Synthetic errors (`respond.rs`).** GFE emits compact, consistent error responses (400 request target that is not a path or host error, 404 no-route, 408 stalled upload, 421 misdirected request, 501 protocol upgrade, 502 upstream error, 503 no-healthy-upstream / overloaded, 504 timeout) with a request id, suitable for debugging without leaking internals. To a gRPC caller the same failures are sent as a `grpc-status` (Section 6.7).
 
 ---
@@ -720,6 +720,7 @@ max_header_bytes         = 65536
 max_h2_concurrent_streams = 256
 max_upstream_connections = 20000        # global, across all pools
                                         # every limit must be > 0: 0 is not "unlimited"
+# client_connections_per_second = 100   # new connections one client address may open per second (absent: no cap)
 
 [timeouts]                              # every timeout must be > 0s
 tls_handshake     = "10s"
@@ -860,7 +861,8 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`. With `
 | `gfe_connections_accepted_total` | Counter | Client connections accepted (labels: listener) |
 | `gfe_connections_active` | Gauge | Currently open client connections |
 | `gfe_listener_connections_active` | Gauge | Currently open client connections (label: listener) |
-| `gfe_connections_rejected_total` | Counter | Connections rejected (label: reason ∈ {limit, handshake_timeout}) |
+| `gfe_connections_rejected_total` | Counter | Connections closed at accept (label: reason ∈ {limit, client_rate, handshake_timeout}: a connection limit, the client's `client_connections_per_second`, a TLS handshake that did not finish in time) |
+| `gfe_client_rate_untracked` | Gauge | Connections served without counting against their client's rate because the node already followed as many client addresses as it can (65,536); sampled at scrape time |
 | `gfe_connections_closed_total` | Counter | Closed connections (labels: listener, reason ∈ {closed, client_abort, client_unresponsive, idle_timeout, header_timeout, drain, protocol_error, tls_handshake_failed, tls_handshake_timeout, error, shutdown}; see below) |
 | `gfe_connection_duration_seconds` | Histogram | Lifetime of client connections (label: listener) |
 | `gfe_bytes_in_total` / `gfe_bytes_out_total` | Counter | Bytes read from / written to client sockets, on the wire (TLS included), counted as they flow (label: listener) |
@@ -1005,7 +1007,7 @@ GET /readyz    → 200 if at least one listener is bound and a valid config is l
 GET /metrics   → Prometheus exposition (?histograms=untyped: histograms as plain series)
 ```
 
-The ops server (`gfe/node/src/ops.rs`) serves at most 64 connections at once and closes any over that at once, so it cannot use up the descriptors the proxy needs. A client has 5 s to send a request head, and a connection it keeps is closed after 5 s without one. It speaks HTTP/1.1, and HTTP/2 with prior knowledge (at most 4 streams on a connection), and answers pipelined requests. Every method is answered as `GET` is; any other path gets a `404`. `/metrics` samples the runtime gauges, `gfe_upstream_connections`, `gfe_log_lost_lines` and `gfe_ebpf_lost_events` at scrape time. Once the ops socket has been handed to a successor (Section 13), the connections still open to the node are drained, so that the next probe or scrape reaches the successor.
+The ops server (`gfe/node/src/ops.rs`) serves at most 64 connections at once and closes any over that at once, so it cannot use up the descriptors the proxy needs. A client has 5 s to send a request head, and a connection it keeps is closed after 5 s without one. It speaks HTTP/1.1, and HTTP/2 with prior knowledge (at most 4 streams on a connection), and answers pipelined requests. Every method is answered as `GET` is; any other path gets a `404`. `/metrics` samples the runtime gauges, `gfe_upstream_connections`, `gfe_client_rate_untracked`, `gfe_log_lost_lines` and `gfe_ebpf_lost_events` at scrape time. Once the ops socket has been handed to a successor (Section 13), the connections still open to the node are drained, so that the next probe or scrape reaches the successor.
 
 When the node starts it logs one warning for each deprecated key its bootstrap config sets (Section 8.1), right after the log is started.
 
@@ -1121,7 +1123,7 @@ What a node does not do, so that nobody has to find out the hard way:
 - **Fleet-shared TLS ticket keys.** `[tls] ticket_key_file` is accepted and not used. Resumption works on the node that issued the ticket; a resumed session that lands on another node makes a full handshake.
 - **WebSocket and other protocol upgrades** are refused with `501` (Section 6.7).
 - **HTTP/3 (QUIC)** downstream.
-- **Rate limiting** beyond the connection, stream and quota limits of Section 6.8.
+- **Rate limiting of requests.** What is capped is how fast a client address opens connections (Section 6.1), and the connection, stream and quota limits of Section 6.8; not how many requests a client, a route or a pool gets.
 - **Certificate issuance or renewal.** Certificates are files that deployment tooling writes.
 - **An access event for what the HTTP layer answers itself**: a malformed head (`400`), a head over `max_header_bytes` (`431`) (Section 6.3). The connection log records them.
 - **Closing a backend's idle connections when it turns unhealthy or drains.** They are closed after `[upstream] idle_timeout`.
@@ -1140,6 +1142,7 @@ Configuration and start:
 - The kernel view is always attempted and never fatal. `gfe_ebpf_enabled` is gone, and `GfeKernelViewNotAttached` fires on `gfe_ebpf_attached == 0`. A node that cannot attach it logs why at error level. The systemd unit grants `CAP_BPF` and `CAP_NET_ADMIN` itself, and the `gfe-node-ebpf.conf` drop-in is no longer shipped; a drop-in installed from it must be removed (see the [RPM guide](rpm.md)).
 - A config directory that cannot be watched fails the start before any socket is bound.
 - Client timeouts that cannot be served (a `client_idle` so small that a quarter of it is zero) fail the start, instead of every connection.
+- `[limits] client_connections_per_second` caps how fast one client address opens connections (Section 6.1). Absent, as in a `v1.1.0` file, there is no cap.
 
 Clients:
 

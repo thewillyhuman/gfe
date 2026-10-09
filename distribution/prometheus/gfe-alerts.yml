@@ -104,6 +104,14 @@ groups:
         annotations:
           summary: "{{ $labels.instance }} is refusing connections at its connection limit"
 
+      - alert: GfeClientRateNotApplied
+        expr: increase(gfe_client_rate_untracked[10m]) > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.instance }} served connections without applying client_connections_per_second"
+          description: "The node follows the connection rate of at most 65,536 client addresses at once; the connections of new clients beyond that are served without the cap."
+
       - alert: GfeUpstreamConnectionsNearLimit
         expr: gfe_upstream_connections / gfe_upstream_connections_limit > 0.8
         for: 5m

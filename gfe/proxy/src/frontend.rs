@@ -179,10 +179,17 @@ impl Frontend {
     }
 
     /// Bring up to date the metrics that are sampled rather than counted as
-    /// things happen: the upstream connections open now, and what the
-    /// kernel view could not report. Call it before each scrape.
+    /// things happen: the upstream connections open now, the connections
+    /// whose client's rate was not applied, and what the kernel view could
+    /// not report. Call it before each scrape.
     pub fn refresh_metrics(&self) {
         self.state.refresh_metrics();
+        let untracked = i64::try_from(self.listeners.untracked_connections()).unwrap_or(i64::MAX);
+        self.state
+            .metrics()
+            .proxy
+            .client_rate_untracked
+            .set(untracked);
         if let Some(kernel) = &self.kernel {
             let lost = i64::try_from(kernel.lost_events()).unwrap_or(i64::MAX);
             self.state.metrics().kernel.ebpf_lost_events.set(lost);

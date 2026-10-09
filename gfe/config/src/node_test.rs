@@ -1,4 +1,5 @@
 use super::*;
+use std::num::NonZeroU32;
 
 /// The smallest bootstrap config there is, with `extra` (whole TOML tables,
 /// headers included) appended.
@@ -128,6 +129,29 @@ fn upstream_idle_per_host_is_unset_by_default() {
 #[test]
 fn upstream_idle_connections_is_not_a_key() {
     let parsed = toml::from_str::<UpstreamConfig>("idle_connections = 64");
+    assert!(parsed.is_err(), "{parsed:?}");
+}
+
+#[test]
+fn client_connections_per_second_is_unset_by_default() {
+    assert_eq!(LimitsConfig::default().client_connections_per_second, None);
+    assert_eq!(node_config("").limits.client_connections_per_second, None);
+}
+
+#[test]
+fn client_connections_per_second_is_read() {
+    let cfg = node_config("[limits]\nclient_connections_per_second = 100");
+
+    assert_eq!(
+        cfg.limits.client_connections_per_second,
+        NonZeroU32::new(100)
+    );
+}
+
+#[test]
+fn rejects_a_zero_client_connection_rate() {
+    let parsed = toml::from_str::<LimitsConfig>("client_connections_per_second = 0");
+
     assert!(parsed.is_err(), "{parsed:?}");
 }
 

@@ -10,12 +10,19 @@
 
 use crate::edge::{Edge, RequestHandler};
 use gfe_config::{Listener, ListenerId};
-use netkit_listen::{Drain, Drained, Limits};
+use netkit_listen::{Drain, Drained, Limits, PeerRate};
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
+
+/// The most client addresses whose connection rate the node follows at
+/// once (`client_connections_per_second`): a few megabytes. Beyond it,
+/// clients quiet for a second are forgotten, and when none can be, a new
+/// client's connection is served uncounted (`gfe_client_rate_untracked`).
+const TRACKED_CLIENTS: NonZeroUsize = NonZeroUsize::new(65_536).unwrap();
 
 /// The address a listener's socket is configured on.
 fn socket_addr(listener: &Listener) -> SocketAddr {
@@ -58,7 +65,15 @@ impl<H: RequestHandler> Listeners<H> {
         let limits = Limits {
             max_connections: shared.limits().max_connections,
             max_connections_per_listener: shared.limits().max_connections_listener,
-            connections_per_peer: None,
+            // A client that has been quiet may open a second's worth at once.
+            connections_per_peer: shared
+                .limits()
+                .client_connections_per_second
+                .map(|per_second| PeerRate {
+                    per_second,
+                    burst: per_second,
+                    tracked_peers: TRACKED_CLIENTS,
+                }),
         };
         let drain_deadline = shared.timeouts().drain_deadline;
         Listeners {
@@ -165,6 +180,14 @@ impl<H: RequestHandler> Listeners<H> {
     /// How many accepted connections are open, over all listeners.
     pub fn open_connections(&self) -> usize {
         self.inner.open_connections()
+    }
+
+    /// How many connections were served without counting against their
+    /// client's rate, because the node already followed as many clients as
+    /// it can: what `gfe_client_rate_untracked` reports. Always 0 without
+    /// `client_connections_per_second`.
+    pub fn untracked_connections(&self) -> u64 {
+        self.inner.untracked_connections()
     }
 
     /// Serve until the drain is triggered, then stop accepting and wait for
