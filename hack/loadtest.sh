@@ -9,16 +9,29 @@
 # benchmark; the node's CPU per request, printed with each row, is what
 # isolates the node from the two processes it shares the cores with.
 #
-# Usage: ./hack/loadtest.sh [--out FILE] [connections] [duration_secs]
+# Usage: ./hack/loadtest.sh [options] [connections] [duration_secs]
 #
-#   --out FILE   also append each row to FILE as one JSON line, which
-#                `gfe-loadtest compare` reads
+#   --out FILE        also append each row to FILE as one JSON line, which
+#                     `gfe-loadtest compare` reads
+#   --against REF     also build the node of git ref REF, run the matrix
+#                     against REF's node and this tree's in turn, ROUNDS
+#                     times each, and compare them: the exit status says
+#                     whether this tree's node is slower than REF's by more
+#                     than TOLERANCE percent on any scenario
+#   --rounds N        with --against, rounds per node (default 2)
+#   --tolerance PCT   with --against, the tolerance in percent (default 10)
 set -euo pipefail
 
 OUT=""
+AGAINST=""
+ROUNDS=2
+TOLERANCE=10
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="$2"; shift 2 ;;
+    --against) AGAINST="$2"; shift 2 ;;
+    --rounds) ROUNDS="$2"; shift 2 ;;
+    --tolerance) TOLERANCE="$2"; shift 2 ;;
     --*) echo "unknown option: $1" >&2; exit 2 ;;
     *) break ;;
   esac
@@ -38,12 +51,31 @@ HTTP=127.0.0.1:$HTTP_PORT
 HTTPS=127.0.0.1:$HTTPS_PORT
 METRICS=127.0.0.1:29101
 
+TMP="$(mktemp -d)"
+NODE_PID=""
+cleanup() {
+  kill "${UP_PID:-}" "${NODE_PID:-}" 2>/dev/null || true
+  [ -d "$TMP/base" ] && git worktree remove --force "$TMP/base" 2>/dev/null
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
+
 echo ">> building release binaries"
 cargo build --release -q -p gfe-node -p gfe-loadtest
+LT=./target/release/gfe-loadtest
+HEAD_NODE="$TMP/gfe-node.head"
+cp target/release/gfe-node "$HEAD_NODE"
 
-TMP="$(mktemp -d)"
-cleanup() { kill "${UP_PID:-}" "${NODE_PID:-}" 2>/dev/null || true; rm -rf "$TMP"; }
-trap cleanup EXIT
+if [ -n "$AGAINST" ]; then
+  echo ">> building the node of $AGAINST"
+  git worktree add --quiet --detach "$TMP/base" "$AGAINST"
+  # Into this tree's target directory, so that the dependencies are not
+  # compiled a second time; the binary is copied out, since this tree's
+  # next build replaces it.
+  cargo build --release -q --manifest-path "$TMP/base/Cargo.toml" --target-dir target -p gfe-node
+  BASE_NODE="$TMP/gfe-node.base"
+  cp target/release/gfe-node "$BASE_NODE"
+fi
 
 # A throwaway ECDSA P-256 certificate for the https listener, gone with the
 # run: what a node should serve with (an RSA signature costs several times
@@ -90,33 +122,48 @@ file = "$TMP/gfe.log"
 [health_check_defaults]
 TOML
 
-LT=./target/release/gfe-loadtest
-NODE=./target/release/gfe-node
-
 echo ">> starting mock upstream ($UPSTREAM)"
 "$LT" upstream --listen "$UPSTREAM" --body-bytes 64 >/dev/null 2>&1 &
 UP_PID=$!
 disown
 
-echo ">> starting gfe-node"
-RUST_LOG=info "$NODE" --config "$TMP/node.toml" >"$TMP/node.log" 2>&1 &
-NODE_PID=$!
-disown
+# Start the node binary $1 and wait until it is ready: the ops endpoints
+# answer before the listeners are bound, with a 503 until they are.
+start_node() {
+  RUST_LOG=info "$1" --config "$TMP/node.toml" >>"$TMP/node.log" 2>&1 &
+  NODE_PID=$!
+  disown
+  for _ in $(seq 1 100); do
+    if curl -sf -o /dev/null "http://$METRICS/readyz"; then return; fi
+    sleep 0.1
+  done
+  echo "the node did not become ready; its log:" >&2
+  cat "$TMP/node.log" >&2
+  exit 1
+}
 
-# Wait for readiness: the ops endpoints answer before the listeners are
-# bound, with a 503 until they are.
-for _ in $(seq 1 50); do
-  if curl -sf -o /dev/null "http://$METRICS/readyz"; then break; fi
-  sleep 0.1
-done
+# Stop the running node and wait until it has left.
+stop_node() {
+  kill "$NODE_PID" 2>/dev/null || true
+  for _ in $(seq 1 100); do
+    if ! kill -0 "$NODE_PID" 2>/dev/null; then
+      NODE_PID=""
+      return
+    fi
+    sleep 0.1
+  done
+  kill -9 "$NODE_PID" 2>/dev/null || true
+  NODE_PID=""
+}
 
-# Run one scenario (its label, then the load client's arguments) and print
-# its row, which ends with the node's CPU per request.
+# Run one scenario (its label, then the load client's arguments) against
+# the running node and print its row, which ends with the node's CPU per
+# request; the row is also appended to $JSON_OUT when that is set.
 scenario() {
   local label="$1"
   shift
   "$LT" run --duration-secs "$DUR" --label "$label" --cpu-of "$NODE_PID" \
-    ${OUT:+--json-out "$OUT"} "$@"
+    ${JSON_OUT:+--json-out "$JSON_OUT"} "$@"
 }
 
 # Connection churn leaves loopback sockets in TIME_WAIT, which exhausts the
@@ -132,27 +179,63 @@ settle() {
   done
 }
 
-echo ">> ready; running scenarios (connections=$CONNS, duration=${DUR}s each)"
-echo
-
-printf '%-38s %-10s %s\n' "scenario" "mode" "result"
-printf '%-38s %-10s %s\n' "--------" "----" "------"
-
 # Reconnect churn exhausts loopback ephemeral ports at high concurrency
 # (TIME_WAIT), so the connection-bound rows use low concurrency on purpose.
 RECONN_CONNS=8
 
-scenario "http  · fixed (GFE overhead)"      --target "http://$HTTP/fixed"     --connections "$CONNS"        --mode keepalive
-scenario "http  · proxy (+upstream)"         --target "http://$HTTP/proxy/x"   --connections "$CONNS"        --mode keepalive
-scenario "https · proxy (warm TLS)"          --target "https://$HTTPS/proxy/x" --connections "$CONNS"        --mode keepalive
-scenario "https · proxy (resumed TLS/req, c=$RECONN_CONNS)" --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --mode reconnect
-settle
-scenario "https · proxy (full TLS/req, c=$RECONN_CONNS)"    --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --mode reconnect --no-resume
+# The matrix of scenarios, against the running node.
+matrix() {
+  printf '%-38s %-10s %s\n' "scenario" "mode" "result"
+  printf '%-38s %-10s %s\n' "--------" "----" "------"
+  scenario "http  · fixed (GFE overhead)"      --target "http://$HTTP/fixed"     --connections "$CONNS"        --mode keepalive
+  scenario "http  · proxy (+upstream)"         --target "http://$HTTP/proxy/x"   --connections "$CONNS"        --mode keepalive
+  scenario "https · proxy (warm TLS)"          --target "https://$HTTPS/proxy/x" --connections "$CONNS"        --mode keepalive
+  scenario "https · proxy (resumed TLS/req, c=$RECONN_CONNS)" --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --mode reconnect
+  settle
+  scenario "https · proxy (full TLS/req, c=$RECONN_CONNS)"    --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --mode reconnect --no-resume
+  echo
+  # What the node counted, so that the rows can be read for what they were:
+  # the TLS connections by version and whether they resumed a session.
+  echo ">> tls connections, as the node counted them:"
+  curl -s "http://$METRICS/metrics" | grep '^gfe_tls_connections_total' | sed 's/^/   /'
+  echo ">> access log: $(wc -l < "$TMP/gfe.log" | tr -d ' ') lines ($(du -h "$TMP/gfe.log" | cut -f1))"
+  : > "$TMP/gfe.log"
+}
 
+echo ">> ready; running scenarios (connections=$CONNS, duration=${DUR}s each)"
 echo
-# What the node counted, so that the rows can be read for what they were:
-# the TLS connections by version and whether they resumed a session.
-echo ">> tls connections, as the node counted them:"
-curl -s "http://$METRICS/metrics" | grep '^gfe_tls_connections_total' | sed 's/^/   /'
-echo ">> access log: $(wc -l < "$TMP/gfe.log" | tr -d ' ') lines ($(du -h "$TMP/gfe.log" | cut -f1))"
-echo ">> done"
+
+if [ -z "$AGAINST" ]; then
+  start_node "$HEAD_NODE"
+  JSON_OUT="$OUT"
+  matrix
+  stop_node
+  echo ">> done"
+  exit 0
+fi
+
+# The two nodes in turn, so that whatever else the host does during the
+# run weighs on both; the comparison takes the best round of each.
+HEAD_OUT="${OUT:-$TMP/head.jsonl}"
+BASE_OUT="$TMP/base.jsonl"
+for round in $(seq 1 "$ROUNDS"); do
+  for side in base head; do
+    if [ "$side" = base ]; then
+      echo ">> round $round of $ROUNDS: the node of $AGAINST"
+      bin="$BASE_NODE"
+      JSON_OUT="$BASE_OUT"
+    else
+      echo ">> round $round of $ROUNDS: this tree's node"
+      bin="$HEAD_NODE"
+      JSON_OUT="$HEAD_OUT"
+    fi
+    settle
+    start_node "$bin"
+    matrix
+    stop_node
+    echo
+  done
+done
+
+echo ">> this tree's node against the node of $AGAINST, on the best round of each:"
+"$LT" compare --base "$BASE_OUT" --head "$HEAD_OUT" --tolerance "$TOLERANCE"
