@@ -29,11 +29,25 @@ fn one_per_peer(tracked_peers: usize) -> Limits {
     }
 }
 
-/// A dual-stack wildcard address whose port was free a moment ago: a
-/// client reaches it as `127.0.0.1` or as `::1`.
-fn free_dual_stack_addr() -> SocketAddr {
-    let probe = std::net::TcpListener::bind("[::]:0").unwrap();
-    probe.local_addr().unwrap()
+/// A dual-stack wildcard address whose port was free a moment ago, which a
+/// client reaches as `127.0.0.1` and as `::1`; `None`, saying why, on a
+/// host that cannot listen on `[::]`, has no IPv6 loopback, or whose `[::]`
+/// sockets take no IPv4 client (`bindv6only`), where the test is skipped.
+fn free_dual_stack_addr() -> Option<SocketAddr> {
+    let Ok(probe) = std::net::TcpListener::bind("[::]:0") else {
+        println!("skipped: this host cannot listen on [::]");
+        return None;
+    };
+    let port = probe.local_addr().unwrap().port();
+    if std::net::TcpStream::connect(("::1", port)).is_err() {
+        println!("skipped: this host has no IPv6 loopback");
+        return None;
+    }
+    if std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+        println!("skipped: [::] does not accept IPv4 clients here (bindv6only)");
+        return None;
+    }
+    Some(probe.local_addr().unwrap())
 }
 
 /// An empty set whose connections are held until their clients close
@@ -318,8 +332,11 @@ async fn a_peer_is_rated_across_every_listener() {
 
 #[tokio::test]
 async fn a_peer_is_the_same_on_an_ipv4_and_a_dual_stack_listener() {
+    let Some(dual) = free_dual_stack_addr() else {
+        return;
+    };
     let (listeners, mut record, _drain) = listeners_with(one_per_peer(100));
-    let (v4, dual) = (free_addr(), free_dual_stack_addr());
+    let v4 = free_addr();
     reconcile(&listeners, &[(v4, "v4"), (dual, "dual")]);
 
     let _first = TcpStream::connect(v4).await.unwrap();
@@ -337,8 +354,10 @@ async fn a_peer_is_the_same_on_an_ipv4_and_a_dual_stack_listener() {
 
 #[tokio::test]
 async fn peers_are_rated_apart() {
+    let Some(dual) = free_dual_stack_addr() else {
+        return;
+    };
     let (listeners, mut record, _drain) = listeners_with(one_per_peer(100));
-    let dual = free_dual_stack_addr();
     reconcile(&listeners, &[(dual, "dual")]);
 
     let _v4 = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], dual.port())))
@@ -359,8 +378,10 @@ async fn peers_are_rated_apart() {
 
 #[tokio::test]
 async fn a_peer_beyond_the_tracked_ones_is_served_uncounted() {
+    let Some(dual) = free_dual_stack_addr() else {
+        return;
+    };
     let (listeners, mut record, _drain) = listeners_with(one_per_peer(1));
-    let dual = free_dual_stack_addr();
     reconcile(&listeners, &[(dual, "dual")]);
     let _tracked = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], dual.port())))
         .await
