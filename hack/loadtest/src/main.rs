@@ -60,6 +60,11 @@ enum Cmd {
         /// requests are GETs without a body otherwise.
         #[arg(long, default_value_t = 0, value_name = "BYTES")]
         upload_bytes: usize,
+        /// Open this many connections before the run and hold them idle
+        /// through it, each having carried one request: the kept
+        /// connections of clients that seldom send.
+        #[arg(long, default_value_t = 0, value_name = "N")]
+        idle_connections: usize,
         /// A process (the node) whose CPU per answered request the row
         /// reports: user and system time, over the run.
         #[arg(long, value_name = "PID")]
@@ -101,6 +106,7 @@ fn main() -> Result<()> {
                 no_resume,
                 label,
                 upload_bytes,
+                idle_connections,
                 cpu_of,
                 json_out,
             } => {
@@ -113,6 +119,7 @@ fn main() -> Result<()> {
                     label,
                     cpu_of,
                     upload: Bytes::from(vec![b'u'; upload_bytes]),
+                    idle_connections,
                 };
                 let outcome = client::run(&scenario).await?;
                 println!("{outcome}");

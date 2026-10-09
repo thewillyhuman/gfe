@@ -56,6 +56,10 @@ pub struct Scenario {
     /// What each request uploads: empty, and the request is a GET; else
     /// a POST with this body.
     pub upload: Bytes,
+    /// Connections opened before the run and held idle through it, each
+    /// having carried one request, as the kept connections of clients
+    /// that seldom send are: what their presence costs the requests.
+    pub idle_connections: usize,
 }
 
 impl Scenario {
@@ -73,11 +77,12 @@ impl Scenario {
 
 /// Drive the scenario's connections until its deadline and measure them.
 pub async fn run(scenario: &Scenario) -> Result<Outcome> {
-    let cpu_before = scenario.cpu_of.map(crate::cpu::cpu_time).transpose()?;
     let connector = scenario
         .target
         .tls
         .then(|| tokio_rustls::TlsConnector::from(crate::tls::client_config(scenario.resume)));
+    let idle = hold_idle_connections(scenario, &connector).await?;
+    let cpu_before = scenario.cpu_of.map(crate::cpu::cpu_time).transpose()?;
     let deadline = Instant::now() + scenario.duration;
     let started = Instant::now();
 
@@ -106,6 +111,7 @@ pub async fn run(scenario: &Scenario) -> Result<Outcome> {
         errors += errs;
     }
     let elapsed = started.elapsed().as_secs_f64();
+    drop(idle);
 
     let mut outcome = Outcome::measure(
         &scenario.label,
@@ -119,6 +125,29 @@ pub async fn run(scenario: &Scenario) -> Result<Outcome> {
         outcome.charge_cpu(crate::cpu::cpu_time(pid)?.saturating_sub(before));
     }
     Ok(outcome)
+}
+
+/// Open the scenario's idle connections, each having carried one request
+/// of the scenario, and keep them open until they are dropped.
+async fn hold_idle_connections(
+    scenario: &Scenario,
+    connector: &Option<tokio_rustls::TlsConnector>,
+) -> Result<Vec<Sender>> {
+    let exchange = Exchange {
+        target: Arc::clone(&scenario.target),
+        upload: scenario.upload.clone(),
+    };
+    let mut held = Vec::with_capacity(scenario.idle_connections);
+    for _ in 0..scenario.idle_connections {
+        let mut sender = connect_h1(&exchange.target, connector)
+            .await
+            .with_context(|| format!("opening idle connection {}", held.len() + 1))?;
+        send_one(&mut sender, &exchange)
+            .await
+            .context("the request of an idle connection")?;
+        held.push(sender);
+    }
+    Ok(held)
 }
 
 /// What every request of a worker is: where it goes and what it uploads.

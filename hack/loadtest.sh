@@ -41,6 +41,13 @@ DUR="${2:-6}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# The idle-connections row holds thousands of sockets open on both sides,
+# and the node inherits this shell's limit on open files: raise it where
+# the hard limit allows, and size the row to what is allowed.
+ulimit -n 16384 2>/dev/null || true
+IDLE_CONNS=$(( $(ulimit -n) / 4 ))
+[ "$IDLE_CONNS" -gt 2000 ] && IDLE_CONNS=2000
+
 # Loopback ports of the run. They stay clear of the ones the demo publishes
 # (hack/demo: 18080, 18443, 19000, 19101), so both can run at once.
 UPSTREAM_PORT=29000
@@ -183,9 +190,11 @@ settle() {
 # (TIME_WAIT), so the connection-bound rows use low concurrency on purpose.
 RECONN_CONNS=8
 
-# The matrix of scenarios, against the running node. The upload row is
-# the workload of a telemetry collector behind the node: requests of a
-# few hundred KiB, where a node is bound by bytes, not by requests.
+# The matrix of scenarios, against the running node. Two rows are the
+# workload of a telemetry collector behind the node: requests of a few
+# hundred KiB, where a node is bound by bytes, not by requests; and
+# thousands of kept connections that seldom send, which the requests of
+# the others should not pay for.
 matrix() {
   printf '%-38s %-10s %s\n' "scenario" "mode" "result"
   printf '%-38s %-10s %s\n' "--------" "----" "------"
@@ -193,6 +202,7 @@ matrix() {
   scenario "http  · proxy (+upstream)"         --target "http://$HTTP/proxy/x"   --connections "$CONNS"        --mode keepalive
   scenario "http  · upload 400KiB (+upstream)" --target "http://$HTTP/proxy/up"  --connections "$CONNS"        --mode keepalive --upload-bytes 409600
   scenario "https · proxy (warm TLS)"          --target "https://$HTTPS/proxy/x" --connections "$CONNS"        --mode keepalive
+  scenario "https · proxy + $IDLE_CONNS idle conns"   --target "https://$HTTPS/proxy/x" --connections "$CONNS"        --mode keepalive --idle-connections "$IDLE_CONNS"
   scenario "https · proxy (resumed TLS/req, c=$RECONN_CONNS)" --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --mode reconnect
   settle
   scenario "https · proxy (full TLS/req, c=$RECONN_CONNS)"    --target "https://$HTTPS/proxy/x" --connections "$RECONN_CONNS" --mode reconnect --no-resume

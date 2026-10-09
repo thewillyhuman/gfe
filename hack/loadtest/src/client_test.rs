@@ -1,5 +1,6 @@
 use super::*;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -50,6 +51,7 @@ fn the_mode_names_a_full_handshake_per_request_only_over_tls() {
         label: String::new(),
         cpu_of: None,
         upload: Bytes::new(),
+        idle_connections: 0,
     };
 
     assert_eq!(over("http://h/", false, true).mode(), "keepalive");
@@ -70,6 +72,7 @@ async fn charges_the_cpu_of_the_named_process_to_the_requests() {
         label: "cpu".into(),
         cpu_of: Some(std::process::id()),
         upload: Bytes::new(),
+        idle_connections: 0,
     };
 
     let outcome = run(&scenario).await.unwrap();
@@ -93,6 +96,7 @@ async fn a_process_that_does_not_exist_fails_the_run() {
         label: "cpu".into(),
         cpu_of: Some(u32::MAX),
         upload: Bytes::new(),
+        idle_connections: 0,
     };
 
     assert!(run(&scenario).await.is_err());
@@ -160,4 +164,88 @@ async fn without_an_upload_the_request_is_a_get_without_a_body() {
     send_one(&mut sender, &exchange).await.unwrap();
 
     assert_eq!(*record.lock().unwrap(), ["GET 0"]);
+}
+
+/// A server that keeps its connections and counts how many are open at
+/// once and how many it has accepted; its address and the counts.
+async fn spawn_server_counting_connections() -> (std::net::SocketAddr, Arc<Counts>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let counts = Arc::new(Counts::default());
+    let served = Arc::clone(&counts);
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let served = Arc::clone(&served);
+            tokio::spawn(async move {
+                served.accepted.fetch_add(1, Ordering::SeqCst);
+                let open = served.open.fetch_add(1, Ordering::SeqCst) + 1;
+                served.most_open.fetch_max(open, Ordering::SeqCst);
+                let service = hyper::service::service_fn(
+                    |_req: hyper::Request<hyper::body::Incoming>| async {
+                        Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(
+                            Bytes::from("ok"),
+                        )))
+                    },
+                );
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await;
+                served.open.fetch_sub(1, Ordering::SeqCst);
+            });
+        }
+    });
+    (addr, counts)
+}
+
+#[derive(Default)]
+struct Counts {
+    accepted: AtomicUsize,
+    open: AtomicUsize,
+    most_open: AtomicUsize,
+}
+
+#[tokio::test]
+async fn idle_connections_are_held_open_through_the_run_and_closed_after_it() {
+    let (server, counts) = spawn_server_counting_connections().await;
+    let scenario = Scenario {
+        target: Arc::new(parse_target(&format!("http://{server}/")).unwrap()),
+        connections: 1,
+        duration: Duration::from_millis(100),
+        reconnect: false,
+        resume: true,
+        label: "idle".into(),
+        cpu_of: None,
+        upload: Bytes::new(),
+        idle_connections: 5,
+    };
+
+    let outcome = run(&scenario).await.unwrap();
+
+    assert_eq!(outcome.errors, 0);
+    assert_eq!(counts.accepted.load(Ordering::SeqCst), 6);
+    assert_eq!(counts.most_open.load(Ordering::SeqCst), 6);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(counts.open.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn an_idle_connection_that_cannot_be_opened_fails_the_run() {
+    let unreachable = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap()
+    };
+    let scenario = Scenario {
+        target: Arc::new(parse_target(&format!("http://{unreachable}/")).unwrap()),
+        connections: 1,
+        duration: Duration::from_millis(10),
+        reconnect: false,
+        resume: true,
+        label: "idle".into(),
+        cpu_of: None,
+        upload: Bytes::new(),
+        idle_connections: 1,
+    };
+
+    assert!(run(&scenario).await.is_err());
 }
