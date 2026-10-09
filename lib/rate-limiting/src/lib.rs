@@ -16,4 +16,4 @@ mod token_bucket;
 
 pub use concurrency::{ConcurrencyLimit, LimitReached, Permit};
 pub use keyed_buckets::KeyedBuckets;
-pub use token_bucket::{InvalidBucket, RateLimited, TokenBucket};
+pub use token_bucket::{RateLimited, TokenBucket};

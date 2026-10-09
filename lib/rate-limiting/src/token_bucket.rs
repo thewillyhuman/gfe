@@ -7,32 +7,13 @@
 
 use std::error::Error;
 use std::fmt;
+use std::num::NonZeroU32;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 /// How much of a permit a bucket holds, in billionths: a permit earned over
 /// part of a second is kept, not rounded away.
 const UNITS_PER_PERMIT: u64 = 1_000_000_000;
-
-/// Why a [`TokenBucket`] could not be built.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InvalidBucket {
-    /// A rate of zero permits per second would never refill.
-    ZeroRate,
-    /// A burst of zero would hold no permit at all.
-    ZeroBurst,
-}
-
-impl fmt::Display for InvalidBucket {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InvalidBucket::ZeroRate => f.write_str("a token bucket needs a rate above zero"),
-            InvalidBucket::ZeroBurst => f.write_str("a token bucket needs a burst above zero"),
-        }
-    }
-}
-
-impl Error for InvalidBucket {}
 
 /// Why a [`TokenBucket`] gave no permit: it is empty until it refills.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,19 +110,14 @@ pub struct TokenBucket {
 
 impl TokenBucket {
     /// A full bucket of `burst` permits, refilled at `per_second` permits a
-    /// second. Fails if either is zero.
-    pub fn new(per_second: u32, burst: u32) -> Result<TokenBucket, InvalidBucket> {
-        if per_second == 0 {
-            return Err(InvalidBucket::ZeroRate);
+    /// second. A rate of zero would never refill and a burst of zero would
+    /// hold no permit, so neither can be asked for.
+    pub fn new(per_second: NonZeroU32, burst: NonZeroU32) -> TokenBucket {
+        TokenBucket {
+            per_second: per_second.get(),
+            burst: burst.get(),
+            level: Mutex::new(Level::full(burst.get())),
         }
-        if burst == 0 {
-            return Err(InvalidBucket::ZeroBurst);
-        }
-        Ok(TokenBucket {
-            per_second,
-            burst,
-            level: Mutex::new(Level::full(burst)),
-        })
     }
 
     /// Take one permit, as of `now`, unless the bucket is empty.

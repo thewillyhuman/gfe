@@ -2,22 +2,17 @@ use super::*;
 
 const MS: Duration = Duration::from_millis(1);
 
-#[test]
-fn rejects_a_zero_rate() {
-    assert_eq!(TokenBucket::new(0, 5).unwrap_err(), InvalidBucket::ZeroRate);
-}
-
-#[test]
-fn rejects_a_zero_burst() {
-    assert_eq!(
-        TokenBucket::new(5, 0).unwrap_err(),
-        InvalidBucket::ZeroBurst
-    );
+/// A bucket of `burst` permits refilled at `per_second` a second.
+fn bucket_of(per_second: u32, burst: u32) -> TokenBucket {
+    TokenBucket::new(
+        NonZeroU32::new(per_second).unwrap(),
+        NonZeroU32::new(burst).unwrap(),
+    )
 }
 
 #[test]
 fn starts_full() {
-    let bucket = TokenBucket::new(1, 3).unwrap();
+    let bucket = bucket_of(1, 3);
     let now = Instant::now();
 
     let taken = (0..3).filter(|_| bucket.try_acquire(now).is_ok()).count();
@@ -27,7 +22,7 @@ fn starts_full() {
 
 #[test]
 fn refuses_when_empty() {
-    let bucket = TokenBucket::new(1, 2).unwrap();
+    let bucket = bucket_of(1, 2);
     let now = Instant::now();
     bucket.try_acquire(now).unwrap();
     bucket.try_acquire(now).unwrap();
@@ -45,7 +40,7 @@ fn refuses_when_empty() {
 
 #[test]
 fn refills_at_the_rate() {
-    let bucket = TokenBucket::new(10, 1).unwrap();
+    let bucket = bucket_of(10, 1);
     let start = Instant::now();
     bucket.try_acquire(start).unwrap();
 
@@ -59,7 +54,7 @@ fn refills_at_the_rate() {
 
 #[test]
 fn keeps_the_fraction_of_a_permit_already_earned() {
-    let bucket = TokenBucket::new(10, 1).unwrap();
+    let bucket = bucket_of(10, 1);
     let start = Instant::now();
     bucket.try_acquire(start).unwrap();
 
@@ -71,7 +66,7 @@ fn keeps_the_fraction_of_a_permit_already_earned() {
 
 #[test]
 fn never_holds_more_than_the_burst() {
-    let bucket = TokenBucket::new(10, 2).unwrap();
+    let bucket = bucket_of(10, 2);
     let start = Instant::now();
     bucket.try_acquire(start).unwrap();
     let later = start + Duration::from_secs(3600);
@@ -85,7 +80,7 @@ fn never_holds_more_than_the_burst() {
 
 #[test]
 fn a_clock_that_goes_backwards_does_no_harm() {
-    let bucket = TokenBucket::new(10, 1).unwrap();
+    let bucket = bucket_of(10, 1);
     let start = Instant::now() + Duration::from_secs(1);
     bucket.try_acquire(start).unwrap();
 
