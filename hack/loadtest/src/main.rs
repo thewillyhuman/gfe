@@ -45,7 +45,10 @@ enum Cmd {
         connections: usize,
         #[arg(long, default_value_t = 8)]
         duration_secs: u64,
-        /// `keepalive` (reuse each connection) or `reconnect` (new conn/request).
+        /// `keepalive` (reuse each connection), `reconnect` (new
+        /// conn/request) or `refused` (a new connection per attempt that
+        /// the server is expected to close unread, as a node does over a
+        /// connection limit; counted when it does).
         #[arg(long, default_value = "keepalive")]
         mode: String,
         /// Do not resume TLS sessions across connections: every `reconnect`
@@ -115,6 +118,7 @@ fn main() -> Result<()> {
                     connections,
                     duration: Duration::from_secs(duration_secs),
                     reconnect: mode == "reconnect",
+                    expect_refusal: mode == "refused",
                     resume: !no_resume,
                     label,
                     cpu_of,

@@ -103,6 +103,7 @@ sharing the cores, the node's CPU is not.
 | `https · proxy + 2000 idle conns` | what thousands of kept connections that seldom send cost the requests of the others |
 | `https · proxy (resumed TLS/req)` | a new connection per request: accept, a resumed handshake, the close |
 | `https · proxy (full TLS/req)` | the same with a full handshake, as from a client without a session |
+| `http · refused at max_connections` | what a connection the node closes at a limit costs it: accept, the close, the count, on a node capped at one connection; the regime of a connection flood. Its "requests" are refused connections |
 
 To decide about a change, run it against the commit the change is based
 on:

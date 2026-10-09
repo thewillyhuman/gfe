@@ -192,7 +192,12 @@ https · proxy (warm TLS)              keepalive            73895 req/s   p50 83
 https · proxy + 2000 idle conns       keepalive            74734 req/s   p50 832µs   p99 1.57ms  errors=0             69 µs/req
 https · proxy (resumed TLS/req, c=8)  reconnect            11835 req/s   p50 654µs   p99 871µs   errors=0            274 µs/req
 https · proxy (full TLS/req, c=8)     reconnect+full-tls   11660 req/s   p50 665µs   p99 884µs   errors=0            289 µs/req
+http  · refused at max_connections    refused              32366 conn/s  p50 230µs   p99 344µs   errors=0              9 µs/conn
 ```
+
+The last row runs against the node capped at one connection: every other
+connection is accepted and closed at once, and the row's count is of
+refused connections.
 
 - **The node's own work is small.** Answering a request itself (routing and
   a fixed response, no backend) costs the node about 33 µs of CPU, its log
@@ -221,6 +226,11 @@ https · proxy (full TLS/req, c=8)     reconnect+full-tls   11660 req/s   p50 66
   request, the close, its log line. An RSA-2048 certificate makes a full
   handshake about 2.4 times as dear per connection (in a measurement with
   `curl`, which does not resume: 930 µs against 390 µs).
+- **Refusing a connection costs the node about 9 µs**: the accept, the
+  close and the count, with eight clients reconnecting as fast as the
+  node closes them. That is what a connection over a limit, or from a
+  client over its connection rate, costs the node's own CPU; what the
+  kernel spends on the handshake before `accept` is not in the number.
 
 `v1.1.0`, measured by the earlier form of the load test (access log off,
 RSA certificate), ran within noise of this version's previous build on kept
@@ -239,6 +249,11 @@ connections; the comparison is in the spec (Section 15).
   matter: an RSA-2048 signature costs several times an ECDSA P-256 one, an
   RSA-4096 one far more. Session resumption saves the client a round trip
   and the node little.
+- **Connections the node refuses** (over a limit, or from a client over
+  `client_connections_per_second`) cost it about 9 µs each: a core refuses
+  some 100,000 per second. A flood of connections is thirty times cheaper
+  to refuse than to serve, so the caps hold a node up long before its
+  network does.
 - **Pooled upstream connections.** Leave `[upstream] idle_per_host` unset.
   A cap below the requests in flight to a backend makes the pool close a
   connection on every response beyond the cap and dial a new one for the

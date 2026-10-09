@@ -9,7 +9,7 @@ use hyper::Request;
 use hyper_util::rt::TokioIo;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 
 /// Where the requests go, from a URL.
@@ -46,6 +46,10 @@ pub struct Scenario {
     pub duration: Duration,
     /// A new connection per request, instead of one reused until the end.
     pub reconnect: bool,
+    /// A new connection per attempt that the server is expected to close
+    /// without reading anything, as a node does at a connection limit;
+    /// nothing is sent, and the attempt counts as answered when it does.
+    pub expect_refusal: bool,
     /// Resume TLS sessions across connections, as a browser does; otherwise
     /// every connection is a full handshake.
     pub resume: bool,
@@ -63,10 +67,14 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    /// `keepalive` (reuse each connection) or `reconnect` (a new
-    /// connection per request), as the mode is named on the command line
-    /// and on the row.
+    /// `keepalive` (reuse each connection), `reconnect` (a new connection
+    /// per request) or `refused` (a new connection per attempt, closed by
+    /// the server), as the mode is named on the command line and on the
+    /// row.
     pub fn mode(&self) -> String {
+        if self.expect_refusal {
+            return "refused".to_string();
+        }
         match (self.reconnect, self.target.tls && !self.resume) {
             (true, true) => "reconnect+full-tls".to_string(),
             (true, false) => "reconnect".to_string(),
@@ -94,8 +102,11 @@ pub async fn run(scenario: &Scenario) -> Result<Outcome> {
         };
         let connector = connector.clone();
         let reconnect = scenario.reconnect;
+        let expect_refusal = scenario.expect_refusal;
         handles.push(tokio::spawn(async move {
-            if reconnect {
+            if expect_refusal {
+                worker_refused(exchange.target, deadline).await
+            } else if reconnect {
                 worker_reconnect(exchange, connector, deadline).await
             } else {
                 worker_keepalive(exchange, connector, deadline).await
@@ -217,6 +228,37 @@ async fn worker_reconnect(
         }
     }
     (lat, errors)
+}
+
+/// A fresh TCP connection per attempt, expected to be closed by the server
+/// before anything is sent on it: what a node does with a connection over
+/// a limit. An attempt counts as answered when the server closes it, and
+/// as an error when it cannot be opened or the server sends something
+/// instead.
+async fn worker_refused(target: Arc<Target>, deadline: Instant) -> (Vec<u64>, u64) {
+    let mut lat = Vec::new();
+    let mut errors = 0u64;
+    while Instant::now() < deadline {
+        let start = Instant::now();
+        let result = tokio::time::timeout(Duration::from_secs(2), closed_unread(&target)).await;
+        match result {
+            Ok(Ok(())) => lat.push(start.elapsed().as_nanos() as u64),
+            _ => errors += 1,
+        }
+    }
+    (lat, errors)
+}
+
+/// Connect to the target and wait for the server to close the connection
+/// without having been sent anything. A reset counts as a close; a byte
+/// from the server does not.
+async fn closed_unread(target: &Target) -> Result<()> {
+    let mut tcp = TcpStream::connect(&target.addr).await?;
+    let mut byte = [0u8; 1];
+    match tcp.read(&mut byte).await {
+        Ok(0) | Err(_) => Ok(()),
+        Ok(_) => anyhow::bail!("the server answered instead of closing"),
+    }
 }
 
 /// A request's body: none for a GET, the upload for a POST.

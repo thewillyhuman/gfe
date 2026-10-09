@@ -7,7 +7,9 @@
 # three processes share this host's CPUs, so req/s and latencies are
 # conservative/comparative (relative cost per layer), not a tuned NIC
 # benchmark; the node's CPU per request, printed with each row, is what
-# isolates the node from the two processes it shares the cores with.
+# isolates the node from the two processes it shares the cores with. A last
+# row runs against a node capped at one connection, every other connection
+# refused at accept: what refusing a connection costs the node.
 #
 # Usage: ./hack/loadtest.sh [options] [connections] [duration_secs]
 #
@@ -129,15 +131,23 @@ file = "$TMP/gfe.log"
 [health_check_defaults]
 TOML
 
+# The same node capped at one connection: with one held open, every other
+# connection is accepted and closed at once, as over any connection limit.
+sed 's/^id = "gfe-load"$/id = "gfe-load-capped"/; /^\[log\]$/i\
+[limits]\
+max_connections = 1
+' "$TMP/node.toml" > "$TMP/node-capped.toml"
+
 echo ">> starting mock upstream ($UPSTREAM)"
 "$LT" upstream --listen "$UPSTREAM" --body-bytes 64 >/dev/null 2>&1 &
 UP_PID=$!
 disown
 
-# Start the node binary $1 and wait until it is ready: the ops endpoints
-# answer before the listeners are bound, with a 503 until they are.
+# Start the node binary $1 on the bootstrap config $2 and wait until it is
+# ready: the ops endpoints answer before the listeners are bound, with a
+# 503 until they are.
 start_node() {
-  RUST_LOG=info "$1" --config "$TMP/node.toml" >>"$TMP/node.log" 2>&1 &
+  RUST_LOG=info "$1" --config "$2" >>"$TMP/node.log" 2>&1 &
   NODE_PID=$!
   disown
   for _ in $(seq 1 100); do
@@ -215,14 +225,36 @@ matrix() {
   : > "$TMP/gfe.log"
 }
 
+# Against the capped node: one connection held open, and every other one
+# closed at accept. The row's "requests" are refused connections, and its
+# CPU per request is what refusing a connection costs the node, which a
+# flood of connections pays for each of them.
+refused_row() {
+  scenario "http  · refused at max_connections (c=$RECONN_CONNS)" --target "http://$HTTP/fixed" --connections "$RECONN_CONNS" --mode refused --idle-connections 1
+  echo ">> connections refused, as the node counted them:"
+  curl -s "http://$METRICS/metrics" | grep '^gfe_connections_rejected_total' | sed 's/^/   /'
+  echo
+}
+
+# The whole run against the node binary $1: the matrix on the node as
+# configured, then the refused row on the node capped at one connection.
+run_against() {
+  settle
+  start_node "$1" "$TMP/node.toml"
+  matrix
+  stop_node
+  settle
+  start_node "$1" "$TMP/node-capped.toml"
+  refused_row
+  stop_node
+}
+
 echo ">> ready; running scenarios (connections=$CONNS, duration=${DUR}s each)"
 echo
 
 if [ -z "$AGAINST" ]; then
-  start_node "$HEAD_NODE"
   JSON_OUT="$OUT"
-  matrix
-  stop_node
+  run_against "$HEAD_NODE"
   echo ">> done"
   exit 0
 fi
@@ -242,11 +274,7 @@ for round in $(seq 1 "$ROUNDS"); do
       bin="$HEAD_NODE"
       JSON_OUT="$HEAD_OUT"
     fi
-    settle
-    start_node "$bin"
-    matrix
-    stop_node
-    echo
+    run_against "$bin"
   done
 done
 

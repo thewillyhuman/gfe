@@ -47,6 +47,7 @@ fn the_mode_names_a_full_handshake_per_request_only_over_tls() {
         connections: 1,
         duration: Duration::ZERO,
         reconnect,
+        expect_refusal: false,
         resume,
         label: String::new(),
         cpu_of: None,
@@ -60,6 +61,77 @@ fn the_mode_names_a_full_handshake_per_request_only_over_tls() {
     assert_eq!(over("https://h/", true, false).mode(), "reconnect+full-tls");
 }
 
+#[test]
+fn the_mode_is_refused_whatever_else_when_a_refusal_is_expected() {
+    let mut scenario = Scenario {
+        target: Arc::new(parse_target("https://h/").unwrap()),
+        connections: 1,
+        duration: Duration::ZERO,
+        reconnect: true,
+        expect_refusal: true,
+        resume: false,
+        label: String::new(),
+        cpu_of: None,
+        upload: Bytes::new(),
+        idle_connections: 0,
+    };
+
+    assert_eq!(scenario.mode(), "refused");
+    scenario.reconnect = false;
+    assert_eq!(scenario.mode(), "refused");
+}
+
+/// A server that closes every connection as soon as it accepts it, as a
+/// node over a connection limit does.
+async fn spawn_server_closing_unread() -> std::net::SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            drop(stream);
+        }
+    });
+    addr
+}
+
+/// A server that greets every connection with a byte and keeps it.
+async fn spawn_server_greeting() -> std::net::SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut kept = Vec::new();
+        loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let _ = stream.write_all(b"x").await;
+            kept.push(stream);
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn a_refused_connection_counts_as_answered_without_sending_anything() {
+    let server = spawn_server_closing_unread().await;
+    let target = Arc::new(parse_target(&format!("http://{server}/")).unwrap());
+    let deadline = Instant::now() + Duration::from_millis(200);
+
+    let (answered, errors) = worker_refused(target, deadline).await;
+
+    assert_eq!(errors, 0);
+    assert!(answered.len() > 1, "{} refusals counted", answered.len());
+}
+
+#[tokio::test]
+async fn a_server_that_answers_instead_of_refusing_is_an_error() {
+    let server = spawn_server_greeting().await;
+    let target = Arc::new(parse_target(&format!("http://{server}/")).unwrap());
+
+    let refused = closed_unread(&target).await;
+
+    assert!(refused.is_err(), "{refused:?}");
+}
+
 #[tokio::test]
 async fn charges_the_cpu_of_the_named_process_to_the_requests() {
     let server = spawn_server_closing_after_each_response().await;
@@ -68,6 +140,7 @@ async fn charges_the_cpu_of_the_named_process_to_the_requests() {
         connections: 2,
         duration: Duration::from_millis(100),
         reconnect: true,
+        expect_refusal: false,
         resume: true,
         label: "cpu".into(),
         cpu_of: Some(std::process::id()),
@@ -92,6 +165,7 @@ async fn a_process_that_does_not_exist_fails_the_run() {
         connections: 1,
         duration: Duration::from_millis(10),
         reconnect: false,
+        expect_refusal: false,
         resume: true,
         label: "cpu".into(),
         cpu_of: Some(u32::MAX),
@@ -213,6 +287,7 @@ async fn idle_connections_are_held_open_through_the_run_and_closed_after_it() {
         connections: 1,
         duration: Duration::from_millis(100),
         reconnect: false,
+        expect_refusal: false,
         resume: true,
         label: "idle".into(),
         cpu_of: None,
@@ -240,6 +315,7 @@ async fn an_idle_connection_that_cannot_be_opened_fails_the_run() {
         connections: 1,
         duration: Duration::from_millis(10),
         reconnect: false,
+        expect_refusal: false,
         resume: true,
         label: "idle".into(),
         cpu_of: None,
