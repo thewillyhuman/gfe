@@ -320,52 +320,31 @@ cargo fmt --all -- --check
 cargo deny check                # advisories, licenses, sources
 ```
 
-Tests are the only thing that stands between a change and a regression, and
-there are three kinds:
+Tests are the only thing that stands between a change and a regression.
+Unit tests sit next to the code (`foo.rs` has its tests in `foo_test.rs`),
+functional tests are in each crate's `tests/`, one file per feature, and
+the tests of the binary in `gfe/node/tests/` start `gfe-node` as an
+operator would. [`docs/requirements.md`](docs/requirements.md) maps every
+feature listed above to the tests that fail when it breaks, and a test
+keeps that map true.
 
-- **Unit tests** sit next to the code: `foo.rs` has its tests in
-  `foo_test.rs`.
-- **Functional tests** are in each crate's `tests/` directory, one file per
-  feature. Those of `gfe-proxy` run a whole proxy in-process, with real TLS
-  termination, in front of mock backends.
-- **Tests of the binary** are in `gfe/node/tests/`: they start `gfe-node` as
-  an operator would and cover what only the process can show (its flags, its
-  log, the ops endpoints, signals, draining, upgrading in place), and a
-  smoke test walks through the product end to end.
-
-Every feature listed above has at least one functional test, or test of the
-binary, that fails when the feature breaks.
-
-The kernel view needs Linux and privileges. Its tests skip themselves where
-they cannot run and say so; CI runs them as root. On a development machine
-that is not Linux, run the suite in a container as well:
+Whether a change made the node slower is measured against the commit it
+is based on, on the same machine, by the end-to-end load test; the `perf`
+workflow runs it on every pull request:
 
 ```bash
-docker run --rm -v "$PWD":/gfe:ro -w /gfe -e CARGO_TARGET_DIR=/tmp/target \
-    --cap-add BPF --cap-add NET_ADMIN rust:1 bash -c \
-    'apt-get update -qq && apt-get install -y -qq clang >/dev/null && cargo test --workspace'
+./hack/loadtest.sh --against main   # the real binary of each, compared on CPU per request
+cargo bench -p gfe-proxy --bench routing        # where in the node: criterion micro-benchmarks
 ```
 
-CI runs the tests with [cargo-nextest](https://nexte.st), which reports the
-whole workspace as one result instead of one per test binary:
-
-```bash
-cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
-cargo test --workspace --doc    # doctests, which nextest does not run
-```
-
-Benchmarks and the load test:
-
-```bash
-cargo bench -p gfe-proxy --bench routing
-cargo bench -p netkit-load-balancing --bench selection
-cargo bench -p netkit-tls --bench handshake
-./hack/loadtest.sh 64 6         # end-to-end load test (mock upstream + real node)
-```
+The [testing guide](docs/testing.md) describes the suite, the requirements
+map, the load test and the benchmarks, and how to read them.
 
 ## Documentation
 
 - **[Specification](docs/spec.md)** — architecture and behaviour, in detail.
+- **[Requirements](docs/requirements.md)** — each feature and the tests that prove it.
+- **[Testing guide](docs/testing.md)** — what a change has to prove, and how.
 - **[Observability guide](docs/observability.md)** — which signal answers which question.
 - **[Demo guide](docs/demo.md)** — the local playground and what to try in it.
 - **[RPM guide](docs/rpm.md)** — building the package and managing a node with Puppet.
