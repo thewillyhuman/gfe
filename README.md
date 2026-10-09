@@ -179,12 +179,14 @@ certificate on the HTTPS listener. Each row ends with the node's own CPU per
 request. `./hack/loadtest.sh 64 6` (64 connections, 6 s per scenario):
 
 ```
-scenario                              mode                result                                         node CPU
-http  · fixed (GFE overhead)          keepalive           145477 req/s   p50 418µs  p99 907µs   errors=0   33 µs/req
-http  · proxy (+upstream)             keepalive            73947 req/s   p50 842µs  p99 1.51ms  errors=0   69 µs/req
-https · proxy (warm TLS)              keepalive            72602 req/s   p50 855µs  p99 1.59ms  errors=0   69 µs/req
-https · proxy (resumed TLS/req, c=8)  reconnect            11613 req/s   p50 663µs  p99 925µs   errors=0  274 µs/req
-https · proxy (full TLS/req, c=8)     reconnect+full-tls   11644 req/s   p50 668µs  p99 916µs   errors=0  289 µs/req
+scenario                              mode                result                                                     node CPU
+http  · fixed (GFE overhead)          keepalive           148046 req/s   p50 412µs   p99 879µs   errors=0             33 µs/req
+http  · proxy (+upstream)             keepalive            74294 req/s   p50 839µs   p99 1.48ms  errors=0             70 µs/req
+http  · upload 400KiB (+upstream)     keepalive            10294 req/s   p50 6.21ms  p99 7.43ms  errors=0  4021 MiB/s  314 µs/req
+https · proxy (warm TLS)              keepalive            73895 req/s   p50 839µs   p99 1.53ms  errors=0             70 µs/req
+https · proxy + 2000 idle conns       keepalive            74734 req/s   p50 832µs   p99 1.57ms  errors=0             69 µs/req
+https · proxy (resumed TLS/req, c=8)  reconnect            11835 req/s   p50 654µs   p99 871µs   errors=0            274 µs/req
+https · proxy (full TLS/req, c=8)     reconnect+full-tls   11660 req/s   p50 665µs   p99 884µs   errors=0            289 µs/req
 ```
 
 - **The node's own work is small.** Answering a request itself (routing and
@@ -192,11 +194,20 @@ https · proxy (full TLS/req, c=8)     reconnect+full-tls   11644 req/s   p50 66
   line included (the access log is 6 to 9 µs of any request), and runs at
   about 145k req/s on kept connections.
 - **The hop to the backend is the main cost of a proxied request**, not
-  TLS: the backend doubles the CPU per request (33 → 69 µs) and halves the
+  TLS: the backend doubles the CPU per request (33 → 70 µs) and halves the
   throughput, and TLS on a connection that is already established costs
   nothing measurable. Most of a proxied request's CPU goes to the kernel,
   moving bytes on four sockets, and to the HTTP stack on both legs; GFE's
   own code is a few microseconds of it.
+- **Bytes are cheaper than requests.** An upload of 400 KiB, the request
+  of a telemetry collector behind the node, costs the node some 314 µs of
+  CPU, under 1 µs per KiB, and 4 GiB/s go through it on loopback at
+  10,000 such requests per second: a node in front of such a collector is
+  bound by its network, not by its CPU.
+- **Idle connections cost the requests nothing.** With 2,000 kept TLS
+  connections that send nothing, the CPU per request of the others is
+  the same (69 against 70 µs); what an idle connection costs is memory
+  and a file descriptor.
 - **A new TLS connection per request costs the node about 280 µs**, of
   which the handshake is a small part: a full TLS 1.3 handshake with a
   P-256 certificate costs some 15 µs more than a resumed one, because
