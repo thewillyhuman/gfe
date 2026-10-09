@@ -48,6 +48,22 @@ fn pool_in_flight_quota_cannot_be_zero() {
 }
 
 #[test]
+fn pool_has_no_request_rate_by_default() {
+    let json = r#"{"id":"p","upstreams":[]}"#;
+    let p: UpstreamPool = serde_json::from_str(json).unwrap();
+    assert_eq!(p.max_requests_per_second, None);
+}
+
+#[test]
+fn pool_request_rate_cannot_be_zero() {
+    let json = r#"{"id":"p","max_requests_per_second":0,"upstreams":[]}"#;
+    assert!(serde_json::from_str::<UpstreamPool>(json).is_err());
+    let json = r#"{"id":"p","max_requests_per_second":250,"upstreams":[]}"#;
+    let p: UpstreamPool = serde_json::from_str(json).unwrap();
+    assert_eq!(p.max_requests_per_second, NonZeroU32::new(250));
+}
+
+#[test]
 fn pool_scheme_h2c_is_spelled_h2c() {
     let json = r#"{"id":"p","scheme":"h2c","upstreams":[{"host":"10.0.0.1","port":50051}]}"#;
     let p: UpstreamPool = serde_json::from_str(json).unwrap();

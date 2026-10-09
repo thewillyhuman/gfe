@@ -74,6 +74,36 @@ async fn answers_503_when_a_pool_has_max_in_flight_requests() {
 }
 
 #[tokio::test]
+async fn answers_429_when_a_pool_has_admitted_its_rate_this_second() {
+    let (logs, _guard) = CapturedLogs::start();
+    let upstream = spawn_upstream().await;
+    let mut cfg = forwarding_config(upstream);
+    cfg.pools[0].max_requests_per_second = std::num::NonZeroU32::new(1);
+    let proxy = Proxy::start(&cfg).await;
+    let addr = proxy.addr;
+
+    let (first_status, _) = http_get(addr, "a.example.org", "/first").await;
+    let (second_status, second_body) = http_get(addr, "a.example.org", "/second").await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let (later_status, _) = http_get(addr, "a.example.org", "/third").await;
+    let refused = logs.access_event_for("/second").await;
+
+    assert_eq!(first_status, 200);
+    assert_eq!(second_status, 429);
+    assert!(
+        second_body.starts_with("429 upstream pool rate limited"),
+        "{second_body}"
+    );
+    assert_eq!(later_status, 200);
+    assert_eq!(refused["error"], "upstream_pool_rate_limited");
+    assert_eq!(refused["pool"], "pool");
+    assert_eq!(refused["attempts"], 0);
+    proxy
+        .wait_for_metric(r#"gfe_upstream_pool_rate_limited_total{pool="pool"} 1"#)
+        .await;
+}
+
+#[tokio::test]
 async fn answers_503_at_the_upstream_connection_limit() {
     let (logs, _guard) = CapturedLogs::start();
     let upstream = spawn_upstream_answering_after(Duration::from_millis(400)).await;

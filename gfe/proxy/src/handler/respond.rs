@@ -10,7 +10,7 @@
 use crate::handler::failure::FailureKind;
 use crate::handler::request::X_REQUEST_ID;
 use netkit_http::body::{self, BoxBody};
-use netkit_http::header::{CONTENT_TYPE, LOCATION};
+use netkit_http::header::{CONTENT_TYPE, LOCATION, RETRY_AFTER};
 use netkit_http::{HeaderName, HeaderValue, Response, StatusCode};
 
 /// The headers a gRPC "trailers-only" failure carries.
@@ -38,6 +38,9 @@ pub(crate) enum Refusal {
     PoolNotFound,
     /// The pool has `max_in_flight` requests in flight.
     PoolFull,
+    /// The pool has admitted `max_requests_per_second` requests within the
+    /// last second.
+    PoolRateLimited,
     /// The pool has no backend that may receive requests.
     NoHealthyUpstream,
     /// The client stopped sending the request body.
@@ -59,6 +62,7 @@ impl Refusal {
             Refusal::UpgradeNotSupported => StatusCode::NOT_IMPLEMENTED,
             Refusal::PoolNotFound => StatusCode::BAD_GATEWAY,
             Refusal::PoolFull | Refusal::NoHealthyUpstream => StatusCode::SERVICE_UNAVAILABLE,
+            Refusal::PoolRateLimited => StatusCode::TOO_MANY_REQUESTS,
             Refusal::RequestBodyTimeout => StatusCode::REQUEST_TIMEOUT,
             Refusal::Upstream(FailureKind::ConnectionLimit) => StatusCode::SERVICE_UNAVAILABLE,
             Refusal::Upstream(FailureKind::Timeout) => StatusCode::GATEWAY_TIMEOUT,
@@ -77,6 +81,7 @@ impl Refusal {
             Refusal::UpgradeNotSupported => "upgrade_not_supported",
             Refusal::PoolNotFound => "pool_not_found",
             Refusal::PoolFull => "upstream_pool_full",
+            Refusal::PoolRateLimited => "upstream_pool_rate_limited",
             Refusal::NoHealthyUpstream => "no_healthy_upstream",
             Refusal::RequestBodyTimeout => "request_body_timeout",
             Refusal::Upstream(kind) => kind.reason(),
@@ -94,6 +99,7 @@ impl Refusal {
             Refusal::UpgradeNotSupported => "protocol upgrade not supported",
             Refusal::PoolNotFound => "pool not found",
             Refusal::PoolFull => "upstream pool full",
+            Refusal::PoolRateLimited => "upstream pool rate limited",
             Refusal::NoHealthyUpstream => "no healthy upstream",
             Refusal::RequestBodyTimeout => "request body timeout",
             Refusal::Upstream(FailureKind::ConnectionLimit) => "upstream connection limit",
@@ -101,23 +107,38 @@ impl Refusal {
             Refusal::Upstream(_) => "upstream error",
         }
     }
+
+    /// How many seconds the client should wait before trying again, when
+    /// that is known: a pool over its rate admits again within a second.
+    fn retry_after(self) -> Option<u32> {
+        match self {
+            Refusal::PoolRateLimited => Some(1),
+            _ => None,
+        }
+    }
 }
 
-/// How GFE answers a request it refuses: a compact `text/plain` answer, or,
-/// to a gRPC call (`grpc`), a gRPC failure carrying the same reason. A gRPC
-/// client reads a call's outcome from `grpc-status`, not from the HTTP
-/// status.
+/// How GFE answers a request it refuses: a compact `text/plain` answer,
+/// saying when to retry where that is known, or, to a gRPC call (`grpc`),
+/// a gRPC failure carrying the same reason. A gRPC client reads a call's
+/// outcome from `grpc-status`, not from the HTTP status, and backs off on
+/// its own.
 pub(crate) fn refusal(refusal: Refusal, request_id: &str, grpc: bool) -> Response<BoxBody> {
     if grpc {
         let message = format!("gfe: {}", refusal.reason());
-        grpc_failure(
+        return grpc_failure(
             GrpcCode::for_http_status(refusal.status()),
             &message,
             request_id,
-        )
-    } else {
-        synthetic(refusal.status(), refusal.message(), request_id)
+        );
     }
+    let mut response = synthetic(refusal.status(), refusal.message(), request_id);
+    if let Some(seconds) = refusal.retry_after() {
+        response
+            .headers_mut()
+            .insert(RETRY_AFTER, HeaderValue::from(seconds));
+    }
+    response
 }
 
 /// A compact `text/plain` answer carrying the request id for correlation.

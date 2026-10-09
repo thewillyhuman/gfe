@@ -85,7 +85,7 @@ pub(crate) fn pool_specs(pools: &[UpstreamPool]) -> Vec<PoolSpec<Scheme>> {
                 })
                 .collect(),
             max_in_flight: pool.max_in_flight,
-            max_requests_per_second: None,
+            max_requests_per_second: pool.max_requests_per_second,
             payload: pool.scheme,
         })
         .collect()

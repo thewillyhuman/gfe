@@ -232,6 +232,7 @@ pub(crate) fn pool_config(
             .collect(),
         health_check: None,
         max_in_flight: max_in_flight.and_then(NonZeroU32::new),
+        max_requests_per_second: None,
     }
 }
 

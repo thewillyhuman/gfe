@@ -41,6 +41,7 @@ fn exposes_every_proxy_metric_with_its_type() {
         ("gfe_upstream_errors", "counter"),
         ("gfe_upstream_retries", "counter"),
         ("gfe_upstream_pool_full", "counter"),
+        ("gfe_upstream_pool_rate_limited", "counter"),
         ("gfe_upstream_requests_in_flight", "gauge"),
         ("gfe_upstream_connections", "gauge"),
         ("gfe_upstream_connections_limit", "gauge"),

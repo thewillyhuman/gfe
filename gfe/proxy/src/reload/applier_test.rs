@@ -18,6 +18,7 @@ fn pool(id: &str, backend: (&str, u16)) -> UpstreamPool {
         }],
         health_check: None,
         max_in_flight: None,
+        max_requests_per_second: None,
     }
 }
 
@@ -195,6 +196,7 @@ fn hands_every_pool_to_the_library_carrying_its_scheme() {
         }],
         health_check: None,
         max_in_flight: std::num::NonZeroU32::new(7),
+        max_requests_per_second: std::num::NonZeroU32::new(9),
     };
 
     let specs = pool_specs(std::slice::from_ref(&config));
@@ -210,7 +212,7 @@ fn hands_every_pool_to_the_library_carrying_its_scheme() {
                 weight: 3,
             }],
             max_in_flight: config.max_in_flight,
-            max_requests_per_second: None,
+            max_requests_per_second: config.max_requests_per_second,
             payload: Scheme::H2c,
         }]
     );

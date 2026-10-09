@@ -92,6 +92,11 @@ pub struct UpstreamPool {
     /// may open. A request beyond it is answered `503`. Absent: no quota.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_in_flight: Option<NonZeroU32>,
+    /// The most requests the node sends the pool a second, measured over
+    /// any one second: a pool that has been quiet gets a second's worth at
+    /// once. A request beyond it is answered `429`. Absent: no cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_requests_per_second: Option<NonZeroU32>,
 }
 
 #[cfg(test)]

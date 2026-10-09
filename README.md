@@ -44,8 +44,10 @@ traffic reaches a node.
   pre-response failures, against a freshly selected backend; never after any
   response byte is forwarded.
 - **Rate limiting** — a cap on the new connections one client address may
-  open per second, over all listeners; a connection over it is closed as
-  soon as it is accepted and counted, and costs the other clients nothing.
+  open per second, over all listeners, and a cap on the requests a pool is
+  sent per second; a connection over the first is closed as soon as it is
+  accepted, a request over the second is answered `429` (`UNAVAILABLE` to a
+  gRPC caller) with when to retry, and both are counted.
 - **Graceful drain** — `SIGTERM` fails `/readyz` (so whatever sends the node
   traffic withdraws it), stops accepting, and asks clients to leave without
   losing a request (`GOAWAY` on HTTP/2, `Connection: close` on HTTP/1), up to

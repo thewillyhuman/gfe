@@ -156,7 +156,10 @@ A client address may open at most `client_connections_per_second` new
 connections a second, over every listener; a connection over it is
 closed as soon as it is accepted and counted, and costs the other clients
 nothing. The node follows a bounded number of clients and reports the
-connections it served without the cap when it could follow no more.
+connections it served without the cap when it could follow no more. A
+pool is sent at most `max_requests_per_second` requests a second; a
+request over it is answered `429` with when to retry (`UNAVAILABLE` to a
+gRPC caller), counted, and holds no place in the pool.
 
 Proven by:
 
@@ -166,6 +169,9 @@ Proven by:
 - `lib/listen/src/listeners_test.rs::a_peer_is_the_same_on_an_ipv4_and_a_dual_stack_listener`
 - `lib/listen/src/listeners_test.rs::a_peer_beyond_the_tracked_ones_is_served_uncounted`
 - `lib/rate-limiting/src/keyed_buckets_test.rs::forgets_the_keys_that_have_refilled_when_it_is_full`
+- `gfe/proxy/tests/limits.rs::answers_429_when_a_pool_has_admitted_its_rate_this_second`
+- `gfe/proxy/tests/grpc.rs::fails_a_call_to_a_pool_over_its_rate_as_unavailable`
+- `lib/load-balancing/src/pool_test.rs::a_request_refused_for_its_rate_takes_no_place_in_flight`
 
 ## R12. Graceful drain
 

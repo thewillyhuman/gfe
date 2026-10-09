@@ -52,6 +52,7 @@ Where they go is set by `[log] file` in the bootstrap config:
 | Which backend is failing, and how? | `gfe_upstream_errors_total{pool,backend,kind}`, `gfe_backend_health_status` | `pool`, `backend`, `attempts`, `error` |
 | How loaded is each backend? | `gfe_upstream_requests_in_flight{pool,backend}` | — |
 | Is a pool at its `max_in_flight` quota? | `gfe_upstream_pool_full_total{pool}`; `sum by (pool) (gfe_upstream_requests_in_flight)` against the quota | `error=upstream_pool_full`, `pool` |
+| Is a pool over its `max_requests_per_second`? | `gfe_upstream_pool_rate_limited_total{pool}` (requests answered `429`) | `error=upstream_pool_rate_limited`, `pool` |
 | Is a slow exchange the network's fault? (kernel view) | `gfe_client_tcp_rtt_seconds`, `gfe_client_tcp_retransmits_total / gfe_client_tcp_segments_sent_total` | `gfe::tcp`: `rtt_ms`, `retransmits`, joined on `client` + `client_port` |
 | Is a backend far, or slow? (kernel view) | `gfe_upstream_tcp_rtt_seconds{backend}` against `gfe_upstream_request_duration_seconds` | `gfe::tcp` with `side=upstream` |
 | Is the node keeping up with new connections? (kernel view) | `gfe_accept_queue_wait_seconds{listener}` | connection log `accept_wait_ms` |

@@ -26,6 +26,7 @@ fn pool(id: &str) -> UpstreamPool {
         }],
         health_check: None,
         max_in_flight: None,
+        max_requests_per_second: None,
     }
 }
 

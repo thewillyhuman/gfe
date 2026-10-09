@@ -13,6 +13,7 @@ fn pool(id: &str, scheme: Scheme, health_check: Option<HealthCheckConfig>) -> Up
         }],
         health_check,
         max_in_flight: None,
+        max_requests_per_second: None,
     }
 }
 

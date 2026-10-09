@@ -91,6 +91,7 @@ fn refusals_keep_the_old_statuses_and_reasons() {
         (Refusal::UpgradeNotSupported, 501, "upgrade_not_supported"),
         (Refusal::PoolNotFound, 502, "pool_not_found"),
         (Refusal::PoolFull, 503, "upstream_pool_full"),
+        (Refusal::PoolRateLimited, 429, "upstream_pool_rate_limited"),
         (Refusal::NoHealthyUpstream, 503, "no_healthy_upstream"),
         (Refusal::RequestBodyTimeout, 408, "request_body_timeout"),
         (
@@ -119,6 +120,30 @@ fn refusals_keep_the_old_statuses_and_reasons() {
         assert_eq!(refusal.status().as_u16(), status, "{refusal:?}");
         assert_eq!(refusal.reason(), reason, "{refusal:?}");
     }
+}
+
+#[tokio::test]
+async fn a_pool_over_its_rate_tells_the_client_when_to_retry() {
+    let answer = refusal(Refusal::PoolRateLimited, "abc123", false);
+
+    assert_eq!(answer.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(header(&answer, "retry-after"), "1");
+    assert_eq!(
+        text(answer).await,
+        "429 upstream pool rate limited\nrequest-id: abc123\n"
+    );
+}
+
+#[test]
+fn a_grpc_call_to_a_pool_over_its_rate_is_unavailable() {
+    let answer = refusal(Refusal::PoolRateLimited, "abc123", true);
+
+    assert_eq!(header(&answer, "grpc-status"), "14");
+    assert_eq!(
+        header(&answer, "grpc-message"),
+        "gfe: upstream_pool_rate_limited"
+    );
+    assert!(!answer.headers().contains_key("retry-after"));
 }
 
 #[test]

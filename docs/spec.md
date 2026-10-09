@@ -378,6 +378,7 @@ An **upstream pool** is a named set of application backends serving the same rol
 - `lb_policy`: how requests are distributed across healthy upstreams (Section 6.5).
 - `health_check`: L7 probe config (Section 7.1).
 - `max_in_flight` (optional, at least 1): the most requests the node may have in flight to the pool at once, counted from backend selection until the response has been relayed to its end or abandoned (the span of `gfe_upstream_requests_in_flight`). A request beyond it is answered `503` (`error=upstream_pool_full`, `UNAVAILABLE` to a gRPC caller) without being retried, and counted in `gfe_upstream_pool_full_total{pool}`. It keeps one slow pool from holding every connection `max_upstream_connections` allows, at the expense of the other pools. Absent: no quota. A reload that changes the pool starts the count afresh.
+- `max_requests_per_second` (optional, at least 1): the most requests the node sends the pool a second, measured over any one second (a token bucket refilled at that rate, holding a second's worth: a pool that has been quiet gets that many at once). A request beyond it is answered `429` with `Retry-After: 1` (`error=upstream_pool_rate_limited`, `UNAVAILABLE` to a gRPC caller) without being retried, holds no place under `max_in_flight`, and is counted in `gfe_upstream_pool_rate_limited_total{pool}`. `max_in_flight` is checked first, so a request refused as full spends none of the rate. Absent: no cap. A reload that changes the pool starts afresh.
 - Pools may be **referenced by multiple routes**. Health checks are deduplicated across pools by `(host, port)`.
 
 ### Certificates
@@ -573,8 +574,8 @@ Bounded, predictable behaviour under stress:
 
   Timeouts that cannot be served (a `client_idle` so short that a quarter of it is zero) fail the start of the node.
 - **Retries (conservative, `retry.rs`).** Only **idempotent** requests without a body (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `DELETE`, and only when the request ends with its head: a chunked or HTTP/2 body counts as a body whatever its headers say) are retried, and only on **connection-establishment / pre-response** failures (including a TLS failure or a reset before any response), at most once (two attempts), against a new backend selection. The node's own connection limit and a timeout are not retried. GFE never retries after any response bytes have been forwarded. This avoids amplifying load during incidents.
-- **Limits:** max header bytes (an HTTP/1.1 head over it is answered `431` by the HTTP layer, Section 6.3; on HTTP/2 it is the header list size the node advertises; at least 8192), max concurrent connections (global + per listener), the new connections one client address may open per second (`client_connections_per_second`, Section 6.1; absent: no cap), max concurrent h2 streams, and max upstream connections. Exceeding a limit yields a clean `4xx`/`5xx` (or connection refusal) and a counter — never unbounded growth.
-- **Synthetic errors (`respond.rs`).** GFE emits compact, consistent error responses (400 request target that is not a path or host error, 404 no-route, 408 stalled upload, 421 misdirected request, 501 protocol upgrade, 502 upstream error, 503 no-healthy-upstream / overloaded, 504 timeout) with a request id, suitable for debugging without leaking internals. To a gRPC caller the same failures are sent as a `grpc-status` (Section 6.7).
+- **Limits:** max header bytes (an HTTP/1.1 head over it is answered `431` by the HTTP layer, Section 6.3; on HTTP/2 it is the header list size the node advertises; at least 8192), max concurrent connections (global + per listener), the new connections one client address may open per second (`client_connections_per_second`, Section 6.1; absent: no cap), max concurrent h2 streams, max upstream connections, and per pool its `max_in_flight` and `max_requests_per_second` (Section 4). Exceeding a limit yields a clean `4xx`/`5xx` (or connection refusal) and a counter — never unbounded growth.
+- **Synthetic errors (`respond.rs`).** GFE emits compact, consistent error responses (400 request target that is not a path or host error, 404 no-route, 408 stalled upload, 421 misdirected request, 429 pool over its rate, with `Retry-After`, 501 protocol upgrade, 502 upstream error, 503 no-healthy-upstream / overloaded, 504 timeout) with a request id, suitable for debugging without leaking internals. To a gRPC caller the same failures are sent as a `grpc-status` (Section 6.7).
 
 ---
 
@@ -885,6 +886,7 @@ Each GFE node exposes Prometheus metrics at `http://<node>:9101/metrics`. With `
 | `gfe_upstream_connect_errors_total` | Counter | The same, all kinds together (kept for existing dashboards) |
 | `gfe_upstream_retries_total` | Counter | Requests retried against a new backend selection (label: pool) |
 | `gfe_upstream_pool_full_total` | Counter | Requests answered `503` because their pool had `max_in_flight` requests in flight (label: pool) |
+| `gfe_upstream_pool_rate_limited_total` | Counter | Requests answered `429` because their pool had admitted `max_requests_per_second` requests within the last second (label: pool) |
 | `gfe_upstream_requests_in_flight` | Gauge | Requests a backend is working on, until the response has been relayed to its end (labels: pool, backend) |
 | `gfe_upstream_connections` / `gfe_upstream_connections_limit` | Gauge | Upstream connections open or being opened over all backends, sampled at scrape time, and the configured `max_upstream_connections` |
 
@@ -980,7 +982,7 @@ TLS termination and HTTP parsing, which are where the CPU goes, cannot be offloa
   | `status` | Response status; `499` when the client left before a response existed |
   | `grpc_status` | For gRPC calls (`content-type: application/grpc*`), the numeric status the call ended with, read from the response trailers (or headers, for calls that fail before any message). A gRPC call is HTTP `200` whatever its outcome, so this is the field that tells success from failure |
   | `route`, `pool`, `backend`, `attempts` | Routing decision, the backend of the last attempt, and how many attempts were made |
-  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_connection_limit`, `upstream_pool_full` (a `503`: the pool has `max_in_flight` requests in flight), `upstream_error`, `upstream_timeout`, `request_body_timeout` (a `408`: the client stalled while sending the body), `unsupported_request_target` (a `400`: the target of a forwarded request is not a path, as in `OPTIONS *` or `CONNECT`), `upgrade_not_supported` (a `501`: the request asked for a protocol upgrade, such as WebSocket), `host_conflict` / `host_missing` (a `400`), `misdirected_request` (a `421`; see Section 6.3) |
+  | `error` | Why GFE answered itself: `no_route`, `pool_not_found`, `no_healthy_upstream`, `upstream_connect_timeout`, `upstream_connect_refused`, `upstream_connect_error`, `upstream_tls`, `upstream_reset`, `upstream_connection_limit`, `upstream_pool_full` (a `503`: the pool has `max_in_flight` requests in flight), `upstream_pool_rate_limited` (a `429`: the pool has admitted `max_requests_per_second` requests within the last second), `upstream_error`, `upstream_timeout`, `request_body_timeout` (a `408`: the client stalled while sending the body), `unsupported_request_target` (a `400`: the target of a forwarded request is not a path, as in `OPTIONS *` or `CONNECT`), `upgrade_not_supported` (a `501`: the request asked for a protocol upgrade, such as WebSocket), `host_conflict` / `host_missing` (a `400`), `misdirected_request` (a `421`; see Section 6.3) |
   | `termination` | `complete`, `client_abort` (client left before or during the response) or `upstream_abort` (upstream failed mid-body) |
   | `request_bytes`, `response_bytes` | Body bytes actually read from / written to the client |
   | `duration_ms` | Request head to last response byte, microsecond resolution |
@@ -1123,7 +1125,7 @@ What a node does not do, so that nobody has to find out the hard way:
 - **Fleet-shared TLS ticket keys.** `[tls] ticket_key_file` is accepted and not used. Resumption works on the node that issued the ticket; a resumed session that lands on another node makes a full handshake.
 - **WebSocket and other protocol upgrades** are refused with `501` (Section 6.7).
 - **HTTP/3 (QUIC)** downstream.
-- **Rate limiting of requests.** What is capped is how fast a client address opens connections (Section 6.1), and the connection, stream and quota limits of Section 6.8; not how many requests a client, a route or a pool gets.
+- **Rate limiting per client or per route.** What is capped is how fast a client address opens connections (Section 6.1), how many requests a pool is sent a second (Section 4), and the connection, stream and quota limits of Section 6.8; not how many requests one client, or one route, gets.
 - **Certificate issuance or renewal.** Certificates are files that deployment tooling writes.
 - **An access event for what the HTTP layer answers itself**: a malformed head (`400`), a head over `max_header_bytes` (`431`) (Section 6.3). The connection log records them.
 - **Closing a backend's idle connections when it turns unhealthy or drains.** They are closed after `[upstream] idle_timeout`.
@@ -1142,7 +1144,7 @@ Configuration and start:
 - The kernel view is always attempted and never fatal. `gfe_ebpf_enabled` is gone, and `GfeKernelViewNotAttached` fires on `gfe_ebpf_attached == 0`. A node that cannot attach it logs why at error level. The systemd unit grants `CAP_BPF` and `CAP_NET_ADMIN` itself, and the `gfe-node-ebpf.conf` drop-in is no longer shipped; a drop-in installed from it must be removed (see the [RPM guide](rpm.md)).
 - A config directory that cannot be watched fails the start before any socket is bound.
 - Client timeouts that cannot be served (a `client_idle` so small that a quarter of it is zero) fail the start, instead of every connection.
-- `[limits] client_connections_per_second` caps how fast one client address opens connections (Section 6.1). Absent, as in a `v1.1.0` file, there is no cap.
+- `[limits] client_connections_per_second` caps how fast one client address opens connections (Section 6.1), and a pool's `max_requests_per_second` how many requests it is sent a second (Section 4). Absent, as in a `v1.1.0` file, there is no cap.
 
 Clients:
 

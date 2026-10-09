@@ -284,6 +284,21 @@ async fn fails_a_call_to_a_pool_with_max_in_flight_calls_as_unavailable() {
     assert!(message.contains("upstream_pool_full"), "{message}");
 }
 
+#[tokio::test]
+async fn fails_a_call_to_a_pool_over_its_rate_as_unavailable() {
+    let mut cfg = grpc_config(spawn_grpc_upstream().await);
+    cfg.pools[0].max_requests_per_second = std::num::NonZeroU32::new(1);
+    let proxy = Proxy::start(&cfg).await;
+
+    let first = GrpcCall::open(proxy.addr).await;
+    let second = GrpcCall::open(proxy.addr).await;
+
+    assert_eq!(first.response.headers().get("grpc-status"), None);
+    let message = second.response.headers()["grpc-message"].to_str().unwrap();
+    assert_eq!(second.response.headers()["grpc-status"], "14");
+    assert!(message.contains("upstream_pool_rate_limited"), "{message}");
+}
+
 /// A backend is busy with a call until its response has been relayed to
 /// the end, not merely until the response headers arrive.
 #[tokio::test]

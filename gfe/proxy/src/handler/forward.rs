@@ -83,12 +83,19 @@ pub(crate) async fn forward(
     // count, or get refused, as another request.
     let admitted = match pool.admit(Instant::now()) {
         Ok(admitted) => Arc::new(admitted),
-        Err(Limit::MaxInFlight | Limit::MaxRequestsPerSecond) => {
+        Err(limit) => {
             let label = PoolLabel {
                 pool: pool.id.clone(),
             };
-            metrics.upstream_pool_full.get_or_create(&label).inc();
-            return Err(Refusal::PoolFull.into());
+            let (refused_as, refusal) = match limit {
+                Limit::MaxInFlight => (&metrics.upstream_pool_full, Refusal::PoolFull),
+                Limit::MaxRequestsPerSecond => (
+                    &metrics.upstream_pool_rate_limited,
+                    Refusal::PoolRateLimited,
+                ),
+            };
+            refused_as.get_or_create(&label).inc();
+            return Err(refusal.into());
         }
     };
 

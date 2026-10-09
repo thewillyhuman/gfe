@@ -50,6 +50,7 @@ fn swap_installs_routes_and_pools_together() {
             upstreams: vec![],
             health_check: None,
             max_in_flight: None,
+            max_requests_per_second: None,
         }],
         ..Default::default()
     };

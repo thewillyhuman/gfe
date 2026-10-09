@@ -8,6 +8,7 @@ use netkit_http::body::{BodyExt, Frame};
 use netkit_http::{Bytes, HeaderMap, Method, StatusCode};
 use netkit_tls::TlsInfo;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::time::Duration;
 
 /// Forwards every request for `a.example.org` to its pool, and answers a
@@ -977,6 +978,41 @@ async fn answers_503_when_the_pool_has_max_in_flight_requests() {
         r#"gfe_upstream_pool_full_total{pool="pool"} 1"#
     ));
     assert_eq!(first.await.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn answers_429_when_the_pool_has_admitted_its_rate_this_second() {
+    let quick = backend(|_request| async { Response::new(body::full("ok")) }).await;
+    let mut config = pool_config(Scheme::Http, LbPolicy::RoundRobin, &[quick], None);
+    config.max_requests_per_second = NonZeroU32::new(1);
+    let (proxy, state) = forwarding(pool_of(config)).await;
+    let (logs, _capturing) = Logs::capture();
+
+    let first = send(proxy, get("a.example.org", "/first")).await;
+    let second = send(proxy, get("a.example.org", "/second")).await;
+
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        text(second)
+            .await
+            .starts_with("429 upstream pool rate limited")
+    );
+    let refused = logs
+        .access_events()
+        .into_iter()
+        .find(|event| event["path"] == "/second")
+        .unwrap();
+    assert_eq!(refused["error"], "upstream_pool_rate_limited");
+    assert_eq!(refused["attempts"], 0);
+    assert!(exposes(
+        &state,
+        r#"gfe_upstream_pool_rate_limited_total{pool="pool"} 1"#
+    ));
+    assert!(!exposes(
+        &state,
+        r#"gfe_upstream_pool_full_total{pool="pool"} 1"#
+    ));
 }
 
 #[tokio::test]
